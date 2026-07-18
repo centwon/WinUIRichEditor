@@ -8,7 +8,7 @@ name: Publish NuGet
 #   - Repository owner: centwon
 #   - Repository:       WinUIRichEditor
 #   - Workflow file:    publish.yml
-#   - (Package: WinUIRichEditor / 소유자 계정)
+#   - (Package: WinUIRichEditor / nuget.org 사용자명 kanu)
 on:
   push:
     tags:
@@ -60,7 +60,7 @@ jobs:
         id: login
         uses: NuGet/login@v1
         with:
-          user: centwon
+          user: kanu
 
       - name: Push to nuget.org
         run: >
