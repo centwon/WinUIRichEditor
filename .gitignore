@@ -1,0 +1,16 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Pp]ublish/
+*.user
+
+## Visual Studio
+.vs/
+*.suo
+
+## Rider
+.idea/
+
+## NuGet
+*.nupkg
+*.snupkg

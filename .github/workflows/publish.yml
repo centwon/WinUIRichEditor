@@ -1,0 +1,60 @@
+name: Publish NuGet
+
+# 태그(v*)를 푸시하거나 수동 실행하면 라이브러리를 pack 해서 nuget.org 에 게시한다.
+# API 키는 저장소 Settings > Secrets and variables > Actions 에 NUGET_API_KEY 로 등록해야 한다.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g. 0.8.0). Overrides the tag.'
+        required: false
+        default: ''
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = '${{ github.event.inputs.version }}'
+          if ([string]::IsNullOrWhiteSpace($v)) {
+            $v = '${{ github.ref_name }}' -replace '^v', ''
+          }
+          if ([string]::IsNullOrWhiteSpace($v)) { throw 'No version resolved.' }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Publishing version $v"
+
+      - name: Pack
+        run: >
+          dotnet pack src/WinUIRichEditor/WinUIRichEditor.csproj
+          -c Release -p:Platform=x64
+          -p:Version=${{ steps.ver.outputs.version }}
+          -p:ContinuousIntegrationBuild=true
+          -o ${{ github.workspace }}/artifacts
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: >
+          dotnet nuget push "${{ github.workspace }}/artifacts/*.nupkg"
+          --api-key $env:NUGET_API_KEY
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: ${{ github.workspace }}/artifacts/*

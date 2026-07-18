@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="WinUIRichEditor.Demo.ToolbarPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:editor="using:WinUIRichEditor.Controls"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!-- Layer ②: RichEditor driven by the library's RichEditorToolbar (built in code-behind into ToolbarHost). -->
+    <Grid Background="White">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="Caption" Grid.Row="0" Margin="10,8,10,4" Foreground="#666666" FontSize="13"
+                   Text="RichEditor + RichEditorToolbar — 라이브러리 툴바가 컨트롤을 구동합니다." />
+        <Border x:Name="ToolbarHost" Grid.Row="1" BorderThickness="0,0,0,1" BorderBrush="#22000000" />
+        <editor:RichEditor x:Name="Editor" Grid.Row="2" />
+    </Grid>
+</Page>

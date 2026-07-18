@@ -1,0 +1,8 @@
+# 텍스트 파일 줄바꿈 정규화 (저장소는 LF, 체크아웃 시 OS 기본)
+* text=auto
+
+# 바이너리 (diff/정규화 금지)
+*.png binary
+*.ico binary
+*.jpg binary
+*.pdf binary

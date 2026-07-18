@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>WinUIRichEditor.Demo</RootNamespace>
+    <CsWinRTIncludes>Microsoft.Graphics.Canvas</CsWinRTIncludes>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Unpackaged (no MSIX). Self-bootstraps the Windows App Runtime. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.1839" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WinUIRichEditor\WinUIRichEditor.csproj" />
+  </ItemGroup>
+
+  <!-- Publish Properties -->
+  <PropertyGroup>
+    <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
+    <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
+  </PropertyGroup>
+
+  <!-- AOT/self-contained workaround: Win2D 1.4.0 transitively pulls WinUI 1.8.x's runtime PRI, which
+       conflicts with WinAppSDK 2.2's WinUI PRI during the self-contained merge (PRI277
+       'TextCommandDescriptionCopy'). Drop the stale 1.8.x WinAppSDK runtime PRIs before the merge so
+       only the 2.2 line is bundled. Remove once Win2D ships a WinAppSDK-2.2-aligned release. -->
+  <Target Name="_StripStaleWinAppSdkRuntimePri" BeforeTargets="_GenerateProjectPriConfigurationFiles">
+    <ItemGroup>
+      <_PriFile Remove="@(_PriFile)" Condition="$([System.String]::Copy('%(Identity)').Contains('windowsappsdk.winui\1.8'))" />
+      <_PriFilesFromPayloadRaw Remove="@(_PriFilesFromPayloadRaw)" Condition="$([System.String]::Copy('%(Identity)').Contains('windowsappsdk.winui\1.8'))" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Deployment diet (publish only): drop the Windows-ML stack (onnxruntime.dll ~21MB +
+       DirectML.dll ~18MB) that the WinAppSDK self-contained runtime bundles for AI APIs this
+       editor never calls and never loads (confirmed absent from the running process' module list).
+       The ~64MB AOT .pdb is handled separately via CopyOutputSymbolsToPublishDirectory in the
+       publish profile. Together these save ~101MB. -->
+  <Target Name="_TrimUnusedWindowsMlRuntime" AfterTargets="Publish">
+    <ItemGroup>
+      <_DietFile Include="$(PublishDir)onnxruntime.dll" />
+      <_DietFile Include="$(PublishDir)DirectML.dll" />
+    </ItemGroup>
+    <Delete Files="@(_DietFile)" />
+    <Message Importance="high" Text="Deployment diet: trimmed Windows-ML runtime DLLs from $(PublishDir)" />
+  </Target>
+</Project>

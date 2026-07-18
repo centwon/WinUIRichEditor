@@ -1,0 +1,102 @@
+<!-- TreatAsLocalProperty: 호스트 앱(NewSchool)이 `dotnet publish` 로 AOT/트림 게시하면
+     PublishTrimmed·PublishAot·PublishReadyToRun·RID 가 프로젝트 그래프 전체에 '전역 속성'으로
+     적용된다. 전역 속성은 일반 할당으로 못 덮으므로(빌드 로그: "전역 속성이므로 수정할 수 없습니다"),
+     이 라이브러리에서 로컬 재정의를 허용해 자체 ILLink/R2R 게시 후처리를 끈다(아래 PropertyGroup).
+     라이브러리에 ILLink 가 단독 실행되면 엔트리포인트가 없어 IL1034 로 실패하기 때문이다.
+     호스트의 AOT/트림은 WinUIRichEditor.dll 을 입력 어셈블리로 함께 처리하므로 영향 없다. -->
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishTrimmed;PublishReadyToRun;PublishAot;PublishSingleFile">
+  <PropertyGroup Label="Globals">
+    <!-- Now that WinUI/WindowsAppSDK is referenced directly (see below), use the CsWinRT projection flavor
+         of WebView2 like the host apps do. Leaving this False forces WebView2's plain-.NET branch, which
+         references Microsoft.Web.WebView2.Wpf.dll (net5-windows → WindowsBase 5.0.0.0) and conflicts with
+         the framework's WindowsBase 4.0.0.0 (MSB3277). True selects the projection-only reference. -->
+    <WebView2EnableCsWinRTProjection>true</WebView2EnableCsWinRTProjection>
+  </PropertyGroup>
+  <!-- 자체 게시 후처리(ILLink/R2R) 비활성화. 위 TreatAsLocalProperty 덕분에 전역값을 로컬로 덮을 수 있다. -->
+  <PropertyGroup>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishAot>false</PublishAot>
+    <PublishSingleFile>false</PublishSingleFile>
+  </PropertyGroup>
+  <!-- NuGet 패키지 메타데이터. 버전은 태그(release)로 덮어쓸 수 있게 CI에서 -p:Version 전달 가능. -->
+  <PropertyGroup Label="Packaging">
+    <PackageId>WinUIRichEditor</PackageId>
+    <Version>0.8.0</Version>
+    <Authors>centwon</Authors>
+    <Company>centwon</Company>
+    <Product>WinUIRichEditor</Product>
+    <Title>WinUIRichEditor</Title>
+    <Description>A from-scratch rich text editor control for WinUI 3, rendered with Win2D (CanvasVirtualControl / CanvasTextLayout). A port of AvaloniaRichEditor: text/paragraph formatting, tables (nested, colspan/rowspan, resize), inline &amp; block images, hyperlinks, undo/redo, CJK/Korean IME, clipboard (rich/HTML/RTF), page view, print/PDF, find, and drop-in host controls. Byte-compatible .flow document format. Native AOT ready.</Description>
+    <Copyright>Copyright (c) 2026 centwon</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/centwon/WinUIRichEditor</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/centwon/WinUIRichEditor</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>winui;winui3;win2d;richtextbox;richtext;rich-text-editor;editor;wysiwyg;flowdocument;rtf;directwrite</PackageTags>
+    <PackageReleaseNotes>See CHANGELOG.md. Feature parity with AvaloniaRichEditor 0.8.0. The control API may still change.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <!-- pack 은 명시적으로만(테스트/데모는 pack 대상 아님). CI 에서 이 프로젝트만 pack. -->
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup Label="Packaging">
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>WinUIRichEditor</RootNamespace>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <!-- WinUI 클래스 라이브러리가 자체 .pri 를 생성하도록 함. 없으면 호스트 앱(NewSchool)의
+         PRI 생성 단계가 WinUIRichEditor.pri 를 못 찾아 PRI252 발생(특히 Release). -->
+    <GenerateLibraryLayout>true</GenerateLibraryLayout>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+
+    <!-- RID-specific 호스트 앱(예: NewSchool, win-x64)이 ProjectReference 로 참조할 때
+         라이브러리 복원이 win-x64 대상을 생성하도록 RID 선언. VS 솔루션 복원에서
+         NETSDK1047('...win-x64 대상이 없습니다') 방지. 출력 경로는
+         AppendRuntimeIdentifierToOutputPath=false 라 RID 하위폴더 없이 유지됨. -->
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+
+    <!-- Native AOT readiness: surface trim/AOT warnings from the library itself. -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <Deterministic>true</Deterministic>
+
+    <!-- Win2D is platform-specific (C++). This library targets x64 only so it matches its
+         x64 host apps (e.g. NewSchool) directly — no AnyCPU↔x64 platform negotiation, which
+         avoids VS building it to bin\Debug (AnyCPU) and the host hitting CS0006. -->
+    <Win2DWarnNoPlatform>false</Win2DWarnNoPlatform>
+    <Platforms>x64</Platforms>
+    <!-- Coerce an empty/AnyCPU invocation (e.g. VS dependency build of a ProjectReference) to x64
+         so output always lands in bin\x64\Debug where x64 consumers resolve it. -->
+    <Platform Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU'">x64</Platform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pin the runtime the host apps ship on. Win2D 1.4.0 only declares a *floor* of WindowsAppSDK.WinUI
+         1.8, so a standalone library/test restore would otherwise resolve 1.8.x while the apps run on 2.2 —
+         validating the library on a different SDK than it ships against. We lift just the WinUI component
+         (2.2.1 == the 2.2.0 SDK's WinUI) rather than the full Microsoft.WindowsAppSDK meta-package: the
+         library only needs the WinUI/Win2D surface, and the meta-package drags WebView2 (WPF flavor →
+         WindowsBase 4/5 conflict warning), AI, ML, and Widgets we never use. The host apps still reference
+         the full 2.2.0 meta-package for the runtime; this only unifies the version. Consumers must be 2.2+. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinUIRichEditor.Tests" />
+  </ItemGroup>
+</Project>

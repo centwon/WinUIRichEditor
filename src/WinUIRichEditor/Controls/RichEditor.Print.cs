@@ -1,0 +1,104 @@
+using System;
+using System.IO;
+using System.Numerics;
+using Windows.Foundation;
+using Microsoft.UI;
+using Microsoft.Graphics.Canvas;
+using WinUIRichEditor.Formatters;
+
+namespace WinUIRichEditor.Controls;
+
+// Print / PDF export. Pages are rendered off-screen to a Win2D CanvasRenderTarget at the requested DPI
+// (content only — no caret/selection/handles, gated by _printMode), then handed to the ported PdfWriter
+// as raw RGB. Mirrors the Avalonia original's RenderPrintPage / SavePdf.
+public partial class RichEditor
+{
+    // True while rendering for print/PDF: suppresses caret, selection highlight, and resize handles.
+    private bool _printMode;
+
+    /// <summary>Number of pages the document occupies when paginated at the current <see cref="PageSize"/>
+    /// (Continuous falls back to A4). Printing always paginates, even from the continuous layout.</summary>
+    // Paged mode reuses the cached breaks (same width/height inputs) — the status bar calls this on every
+    // StatusChanged, and recomputing walked the whole document per keystroke.
+    public int GetPrintPageCount()
+        => IsPaged ? EnsurePageBreaks().Count : ComputePageBreaks(PaperContentWidth, PaperContentHeight).Count;
+
+    /// <summary>Renders one page to a Win2D bitmap at the given DPI (96 = screen, 300 = print quality).
+    /// Content only — no caret, selection, or handles. The caller owns/disposes the result. UI thread.</summary>
+    public CanvasRenderTarget RenderPrintPage(int pageIndex, double dpi = 96)
+    {
+        CanvasRenderTarget result = null!;
+        WithPrintLayout(() => result = RenderPageToTarget(pageIndex, dpi, EnsurePageBreaks().Count));
+        return result;
+    }
+
+    /// <summary>Writes the document to <paramref name="stream"/> as a PDF, one rasterized page per
+    /// document page (at <paramref name="dpi"/>, default 150). Pages are rendered and disposed one at a
+    /// time. Must run on the UI thread (Win2D rendering).</summary>
+    public void SavePdf(Stream stream, double dpi = 150)
+    {
+        if (Document == null) return;
+        WithPrintLayout(() =>
+        {
+            int count = EnsurePageBreaks().Count;
+            double ptW = PaperWidth * 72.0 / 96.0, ptH = PaperHeight * 72.0 / 96.0;
+            PdfWriter.Write(stream, ptW, ptH, count, i =>
+            {
+                using var rt = RenderPageToTarget(i, dpi, count);
+                return ReadRgb(rt);
+            });
+        });
+    }
+
+    // Forces the paged layout (paper content width + line-aware breaks) and print mode for the duration
+    // of `body`, then restores the on-screen layout. Printing always paginates, even from Continuous.
+    private void WithPrintLayout(Action body)
+    {
+        double savedWidth = _layoutWidth;
+        var savedBreaks = _pageBreaks;
+        bool savedPrint = _printMode;
+        _layoutWidth = PaperContentWidth;
+        _pageBreaks = ComputePageBreaks(PaperContentWidth, PaperContentHeight);
+        _printMode = true;
+        try { body(); }
+        finally { _layoutWidth = savedWidth; _pageBreaks = savedBreaks; _printMode = savedPrint; }
+    }
+
+    private CanvasRenderTarget RenderPageToTarget(int pageIndex, double dpi, int pageCount)
+    {
+        var device = CanvasDevice.GetSharedDevice();
+        var rt = new CanvasRenderTarget(device, (float)PaperWidth, (float)PaperHeight, (float)dpi);
+        using (var ds = rt.CreateDrawingSession())
+        {
+            ds.Clear(Colors.White);
+            var breaks = EnsurePageBreaks();
+            double docTop = breaks[Math.Clamp(pageIndex, 0, breaks.Count - 1)];
+            using (ds.CreateLayer(1f, new Rect(PagePadX, PagePadY, PaperContentWidth, PaperContentHeight)))
+            {
+                ds.Transform = Matrix3x2.CreateTranslation((float)(PagePadX - DocContentLeft), (float)(PagePadY - docTop));
+                // _printMode gates all geometry recording, so this walk can't pollute hit-test caches.
+                // Clip to this page's doc range so printing/PDF renders O(page), not O(document) per page.
+                DrawContentWalk(ds, docTop - 1, docTop + PaperContentHeight + 1);
+                ds.Transform = Matrix3x2.Identity;
+            }
+            DrawPageMarginChrome(ds, new Rect(0, 0, PaperWidth, PaperHeight), pageIndex, pageCount);
+        }
+        return rt;
+    }
+
+    // Reads a render target's pixels as top-down 24-bit RGB (PdfWriter's expected format).
+    private static (int width, int height, byte[] rgb) ReadRgb(CanvasRenderTarget rt)
+    {
+        var size = rt.SizeInPixels;
+        int w = (int)size.Width, h = (int)size.Height;
+        byte[] bgra = rt.GetPixelBytes();
+        var rgb = new byte[w * h * 3];
+        for (int s = 0, d = 0; d < rgb.Length; s += 4, d += 3)
+        {
+            rgb[d] = bgra[s + 2];     // R
+            rgb[d + 1] = bgra[s + 1]; // G
+            rgb[d + 2] = bgra[s];     // B
+        }
+        return (w, h, rgb);
+    }
+}

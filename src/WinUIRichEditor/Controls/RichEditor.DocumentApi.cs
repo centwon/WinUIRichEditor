@@ -1,0 +1,130 @@
+using System.Linq;
+using System.Threading.Tasks;
+using WinUIRichEditor.Documents;
+using WinUIRichEditor.Formatters;
+
+namespace WinUIRichEditor.Controls;
+
+// Document-level I/O API: HTML/RTF/JSON/.flow load-save (sync + async snapshot variants), Clear,
+// plain-text extraction and undo availability. Mirrors the Avalonia original's RichEditor.DocumentApi.
+// Unlike Avalonia, the model's colors are value types (Windows.UI.Color), so serialization is
+// thread-safe over a cloned snapshot — the async variants Clone on the UI thread, then encode in the
+// background; parsing builds the model on the UI thread (CanvasBitmap decode is deferred to render).
+public partial class RichEditor
+{
+    /// <summary>When true, <c>file://</c> and local-path images are loaded when parsing HTML
+    /// via <see cref="LoadHtml"/>/<see cref="InsertHtml"/>. Default true.</summary>
+    public bool AllowLocalFileImages { get; set; } = true;
+
+    /// <summary>Serializes the document to HTML.</summary>
+    public string ToHtml() => Document != null ? HtmlDocumentFormatter.ToHtml(Document) : "";
+
+    /// <summary>Replaces the document with one parsed from HTML (empty document if null/empty).</summary>
+    public void LoadHtml(string? html)
+        => LoadDocument(string.IsNullOrEmpty(html) ? new FlowDocument() : HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages));
+
+    /// <summary>Replaces the document with one parsed from HTML, downloading remote (<c>http</c>)
+    /// images off the UI thread first so a slow network can't freeze the UI. Await from the UI thread.</summary>
+    public async Task LoadHtmlAsync(string? html)
+        => LoadDocument(string.IsNullOrEmpty(html)
+            ? new FlowDocument()
+            : await HtmlDocumentFormatter.ParseHtmlAsync(html, AllowLocalFileImages));
+
+    /// <summary>Serializes the document to RTF (Rich Text Format) — readable by Word, WordPad, LibreOffice,
+    /// and HWP.</summary>
+    public string ToRtf() => Document != null ? RtfDocumentFormatter.Write(Document) : "";
+
+    /// <summary>Replaces the document with one parsed from RTF (empty document if null/empty or not RTF).</summary>
+    public void LoadRtf(string? rtf)
+        => LoadDocument(string.IsNullOrEmpty(rtf) || !RtfDocumentFormatter.LooksLikeRtf(rtf)
+            ? new FlowDocument()
+            : RtfDocumentFormatter.Parse(rtf));
+
+    /// <summary>Serializes the document to the library's JSON format.</summary>
+    public string ToJson() => Document != null ? DocumentSerializer.Serialize(Document) : "";
+
+    /// <summary>Replaces the document with one loaded from the library's JSON format.</summary>
+    public void LoadJson(string json) => LoadDocument(DocumentSerializer.Deserialize(json));
+
+    /// <summary>Serializes the document to JSON on a background thread, keeping the UI responsive for
+    /// large documents. A clone is taken on the calling (UI) thread so concurrent edits can't tear the
+    /// output; only JSON encoding runs in the background. Call from the UI thread.</summary>
+    public Task<string> ToJsonAsync()
+    {
+        if (Document == null) return Task.FromResult("");
+        var snapshot = Document.Clone();
+        return Task.Run(() => DocumentSerializer.Serialize(snapshot));
+    }
+
+    /// <summary>Parses JSON into a document on a background thread, then swaps it in. Model objects are
+    /// built in the background (value-type colors are thread-safe; image decode is deferred to first
+    /// render), so only the document swap touches the UI. Call (and await) from the UI thread.</summary>
+    public async Task LoadJsonAsync(string json)
+        => LoadDocument(await Task.Run(() => DocumentSerializer.Deserialize(json)));
+
+    /// <summary>Writes the document to <paramref name="destination"/> as a <c>.flow</c> package
+    /// (ZIP: document.json + raw image entries, no base64 overhead) on a background thread. A clone is
+    /// taken on the calling thread; only the zip writing runs in the background.</summary>
+    public Task SavePackageAsync(System.IO.Stream destination)
+    {
+        var snapshot = (Document ?? new FlowDocument()).Clone();
+        return Task.Run(() => DocumentPackage.Save(snapshot, destination));
+    }
+
+    /// <summary>Reads a <c>.flow</c> package from <paramref name="source"/> on a background thread, then
+    /// swaps the document in. Call (and await) from the UI thread.</summary>
+    public async Task LoadPackageAsync(System.IO.Stream source)
+        => LoadDocument(await Task.Run(() => DocumentPackage.Load(source)));
+
+    /// <summary>Clears the document to a single empty paragraph.</summary>
+    public void Clear() => LoadDocument(new FlowDocument());
+
+    /// <summary>The document's text content as plain text (paragraphs/cells separated by the platform
+    /// newline — CRLF on Windows — so the result shows real line breaks when written to a file or pasted
+    /// into a native text control; soft '\n' breaks inside a paragraph are normalized too).</summary>
+    public string GetPlainText()
+    {
+        if (Document == null) return "";
+        var sb = new System.Text.StringBuilder();
+        bool first = true;
+        void AddPara(Paragraph p) { if (!first) sb.Append('\n'); first = false; sb.Append(BuildPlain(p)); }
+        foreach (var block in Document.Blocks)
+        {
+            if (block is Paragraph p) AddPara(p);
+            else if (block is TableBlock tb)
+                foreach (var (_, _, cell) in tb.LogicalCells())
+                    foreach (var cb in cell.Blocks)
+                        if (cb is Paragraph cp) AddPara(cp);
+        }
+        return sb.ToString().ReplaceLineEndings();
+    }
+
+    /// <summary>True if there is an edit to undo.</summary>
+    public bool CanUndo => _undo.CanUndo;
+
+    /// <summary>True if there is an undone edit to redo.</summary>
+    public bool CanRedo => _undo.CanRedo;
+
+    /// <summary>Parses an HTML fragment and inserts the resulting blocks at the caret position.</summary>
+    public void InsertHtml(string html)
+    {
+        if (Document == null || IsReadOnly || string.IsNullOrEmpty(html)) return;
+        var parsed = HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages);
+        if (parsed.Blocks.Count == 0) return;
+        PushUndo(null);
+        InsertDocumentAtCaret(parsed);
+        AfterEdit();
+    }
+
+    // Swaps in a new document and resets caret/selection/undo to a clean state. Shared by Load*/Clear.
+    // Setting the Document DP fires OnDocumentChanged → OnDocumentAssigned (wires parents, normalizes
+    // blocks, resets caret to the first paragraph) and RelayoutToViewport.
+    private void LoadDocument(FlowDocument doc)
+    {
+        Document = doc;
+        _undo.Clear();
+        _coalesceKey = null;
+        MarkSaved(); // freshly loaded content is the baseline, not a pending modification
+        InvalidateCanvas();
+    }
+}

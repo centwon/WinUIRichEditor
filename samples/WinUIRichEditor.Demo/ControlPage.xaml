@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="WinUIRichEditor.Demo.ControlPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:editor="using:WinUIRichEditor.Controls"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!-- Bare RichEditor (no toolbar). Read-only vs editable is chosen by the navigation parameter. -->
+    <Grid Background="White">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="Caption" Grid.Row="0" Margin="10,8" Foreground="#666666" FontSize="13" />
+        <editor:RichEditor x:Name="Editor" Grid.Row="1" />
+    </Grid>
+</Page>

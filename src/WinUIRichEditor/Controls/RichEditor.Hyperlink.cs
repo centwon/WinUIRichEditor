@@ -1,0 +1,95 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.UI.Xaml.Controls;
+using WinUIRichEditor.Documents;
+
+namespace WinUIRichEditor.Controls;
+
+// Phase 5: hyperlinks. A run's NavigateUri is rendered underlined (BuildTextLayout) and editable via a
+// ContentDialog (context menu "Edit Link..."). Opening a link launches the system handler.
+public partial class RichEditor
+{
+    /// <summary>Applies a hyperlink to the selection (or the caret word); pass null/empty to remove it.</summary>
+    public void SetHyperlink(string? url)
+    {
+        var u = string.IsNullOrWhiteSpace(url) ? null : url.Trim();
+        ApplyStyleToSelection(r => r.NavigateUri = u);
+    }
+
+    /// <summary>The hyperlink URL at the caret, or null if the caret is not on a linked run.</summary>
+    public string? CurrentLinkUri()
+    {
+        if (_caret.Paragraph is not { } p) return null;
+        return RunAtOffset(p, _caret.Offset > 0 ? _caret.Offset - 1 : 0)?.NavigateUri;
+    }
+
+    /// <summary>Opens a dialog to set/edit the hyperlink on the selection (or caret word). The dialog
+    /// offers OK (apply), Remove (clear), and Cancel.</summary>
+    public async Task EditHyperlinkAsync()
+    {
+        if (Document == null || IsReadOnly || XamlRoot == null) return;
+        var box = new TextBox
+        {
+            Text = CurrentLinkUri() ?? "https://",
+            AcceptsReturn = false,
+            Width = 360,
+            SelectionStart = 0,
+        };
+        box.SelectAll();
+        var dlg = new ContentDialog
+        {
+            Title = RichEditorLocalization.GetString("Hyperlink"),
+            Content = box,
+            PrimaryButtonText = RichEditorLocalization.GetString("OK"),
+            SecondaryButtonText = RichEditorLocalization.GetString("RemoveLink"),
+            CloseButtonText = RichEditorLocalization.GetString("Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot,
+        };
+        var result = await dlg.ShowAsync();
+        if (result == ContentDialogResult.Primary) SetHyperlink(box.Text);
+        else if (result == ContentDialogResult.Secondary) SetHyperlink(null);
+    }
+
+    /// <summary>When true (default), typing a space/tab/Enter right after a URL-looking token
+    /// (http://, https://, www.) turns it into a hyperlink (Word/HWP behavior).</summary>
+    public bool AutoLinkOnType { get; set; } = true;
+
+    // Called after a whitespace commit at `boundary` (the offset just past the token). Applies
+    // NavigateUri to the completed token when it parses as an http(s) URL; runs inside the same undo
+    // group as the typing. "www." tokens link to "https://" + token. Trailing sentence punctuation is
+    // excluded, an already-linked token is left alone (don't clobber a manually edited link).
+    private void TryAutoLink(Paragraph p, int boundary)
+    {
+        string plain = BuildPlain(p);
+        int end = Math.Clamp(boundary, 0, plain.Length);
+        int start = end;
+        while (start > 0 && !char.IsWhiteSpace(plain[start - 1]) && plain[start - 1] != '￼') start--;
+        if (end - start < 8) return; // shortest sensible candidate ("http://x", "www.a.bc")
+        string token = plain.Substring(start, end - start).TrimEnd('.', ',', ';', ':', ')', ']', '!', '?', '"', '\'');
+        if (token.Length < 8) return;
+
+        bool www = token.StartsWith("www.", StringComparison.OrdinalIgnoreCase);
+        bool http = token.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                 || token.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        if (!www && !http) return;
+        string url = www ? "https://" + token : token;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || !uri.Host.Contains('.')) return;
+        if (RunAtOffset(p, start)?.NavigateUri is { Length: > 0 }) return;
+
+        new Documents.TextRange(new Documents.TextPointer(p, start), new Documents.TextPointer(p, start + token.Length))
+            .ApplyPropertyValue(r => r.NavigateUri = url);
+    }
+
+    /// <summary>Launches the hyperlink at the caret in the system browser, if any.</summary>
+    public async Task OpenLinkAtCaretAsync()
+    {
+        if (CurrentLinkUri() is not { } url) return;
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            try { await Windows.System.Launcher.LaunchUriAsync(uri); } catch { }
+        }
+    }
+}

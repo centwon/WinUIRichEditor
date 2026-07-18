@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "WinUIRichEditor.Demo (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "WinUIRichEditor.Demo (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
