@@ -3,9 +3,14 @@
 All notable changes to WinUIRichEditor. This project is a WinUI 3 + Win2D port of AvaloniaRichEditor;
 the format follows [Keep a Changelog](https://keepachangelog.com/). The control API is not yet stable.
 
-## [Unreleased] — porting in progress
+## [Unreleased]
 
-The port proceeds in phases (see [`Project_Roadmap.md`](Project_Roadmap.md)). Done so far:
+_No unreleased changes yet._
+
+## [0.8.0] - 2026-07-18
+
+First published release — feature parity with AvaloniaRichEditor `0.8.0`. The port was developed in phases
+(see [`Project_Roadmap.md`](Project_Roadmap.md)):
 
 ### Phase 0 — Scaffold
 - WinUI 3 class library `src/WinUIRichEditor` + **unpackaged** WinExe demo `samples/WinUIRichEditor.Demo`,
@@ -302,3 +307,6 @@ tests 43/43 (9 new).
   caret/selection/table interaction is verified manually in the demo.
 - The original's arrow-key "block caret" (selecting an adjacent image/table as an intermediate caret stop,
   `_caretBlock`) isn't ported — images/tables are selected by click and traversed by arrow keys instead.
+
+[Unreleased]: https://github.com/centwon/WinUIRichEditor/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/centwon/WinUIRichEditor/releases/tag/v0.8.0
