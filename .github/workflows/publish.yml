@@ -62,12 +62,19 @@ jobs:
         with:
           user: kanu
 
+      # pwsh 로 실제 .nupkg 경로를 해석해 넘긴다(dotnet nuget push 는 pwsh 에서 와일드카드를
+      # 확장하지 못해 "File does not exist" 로 실패했다). .nupkg 를 밀면 옆의 .snupkg 도 함께 올라간다.
       - name: Push to nuget.org
-        run: >
-          dotnet nuget push "${{ github.workspace }}/artifacts/*.nupkg"
-          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
-          --source https://api.nuget.org/v3/index.json
-          --skip-duplicate
+        shell: pwsh
+        run: |
+          $pkg = Get-ChildItem "${{ github.workspace }}/artifacts" -Filter '*.nupkg' |
+                 Where-Object { $_.Name -notlike '*.snupkg' } | Select-Object -First 1
+          if (-not $pkg) { throw 'No .nupkg produced by pack.' }
+          Write-Host "Pushing $($pkg.Name)"
+          dotnet nuget push $pkg.FullName `
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} `
+            --source https://api.nuget.org/v3/index.json `
+            --skip-duplicate
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
