@@ -5,7 +5,32 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Fixed
+- `RichEditorPrintHelper.ShowPrintUIAsync` never printed: the dialog opened but preview stayed on
+  "loading" and no output was produced. The `PrintDocument` and its `IPrintDocumentSource` were locals,
+  and nothing in the print system holds a managed reference back to them — they were collectable as soon
+  as the method awaited, taking the pagination/preview/page callbacks with them. Both are now rooted in
+  static fields for the life of the job and released on `PrintTask.Completed`.
+- `ShowPrintUIAsync` returned `false` after the dialog had already opened, so callers with a fallback path
+  (e.g. export to PDF) showed it on top of a live print dialog. It now reports success once the dialog has
+  asked for the document, regardless of what `ShowPrintUIForWindowAsync` reports afterwards.
+- Page rasters no longer go through `WriteableBitmap.PixelBuffer.AsStream()`, which only covers buffers
+  backed by managed arrays under CsWinRT (.NET 5+) and not the native buffer XAML returns; they are encoded
+  to an in-memory PNG and decoded through `BitmapImage` instead. PDF export was never affected — it uses a
+  separate raster path.
+
+### Changed
+- `ShowPrintUIAsync` renders every page before opening the dialog — the `PrintDocument` callbacks are
+  synchronous and image decoding cannot be awaited inside them. Its `dpi` default drops from 300 to 150
+  (matching `SavePdf`), holding roughly 8 MB per A4 page; lower it further for very long documents.
+- `ShowPrintUIAsync` now returns `false` immediately on hosts with dynamic code disabled (Native AOT, or
+  any build setting `PublishAot`, which bakes `IsDynamicCodeSupported=false` into `runtimeconfig.json`).
+  `PrintManagerInterop.ShowPrintUIForWindowAsync` casts its result to `IAsyncOperation<bool>` through
+  `IDynamicInterfaceCastable`, and CsWinRT 2.2 refuses to resolve that ABI helper without dynamic code —
+  the throw lands *after* the native call has already put the dialog on screen, stranding a window with no
+  document behind it. Neither `CsWinRTAotOptimizerEnabled` (it emits CCW vtables only) nor manual
+  registration (`WinRT.TypeExtensions.RegisterHelperType` and the ABI types are internal) covers that
+  instantiation, so AOT callers need their own path — e.g. `SavePdf` and a viewer.
 
 ## [0.8.0] - 2026-07-18
 

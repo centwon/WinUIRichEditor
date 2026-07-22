@@ -1,11 +1,14 @@
 using System;
-using System.Runtime.InteropServices.WindowsRuntime;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
+using Microsoft.Graphics.Canvas;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Printing;
 using Windows.Foundation;
 using Windows.Graphics.Printing;
+using Windows.Storage.Streams;
 
 namespace WinUIRichEditor.Controls;
 
@@ -15,53 +18,137 @@ namespace WinUIRichEditor.Controls;
 /// <c>PrintManagerInterop</c>, which works for unpackaged apps given the host window's HWND.</summary>
 public static class RichEditorPrintHelper
 {
+    // The print flow outlives ShowPrintUIAsync: the dialog calls back into PrintDocument for pagination,
+    // preview, and the pages themselves, and the spooler runs later still. Nothing in the print system
+    // holds a managed reference back, so locals here are collectable the moment the method awaits — with
+    // the PrintDocument gone its callbacks never run and the dialog sits on "loading preview" forever.
+    // These fields are the strong reference for the whole job; PrintTask.Completed releases them.
+    private static PrintDocument? _document;
+    private static IPrintDocumentSource? _documentSource;
+    private static PrintManager? _manager;
+    private static TypedEventHandler<PrintManager, PrintTaskRequestedEventArgs>? _onTaskRequested;
+    private static List<BitmapImage>? _pages;
+
     /// <summary>Shows the system print UI for the editor's current document.
     /// <paramref name="windowHandle"/> is the host window's HWND
     /// (<c>WinRT.Interop.WindowNative.GetWindowHandle(window)</c>). Returns <see langword="false"/>
     /// when printing is unavailable on this system or the dialog could not be shown; the print job
-    /// itself (after the dialog) is asynchronous and owned by the spooler. UI thread only.</summary>
-    public static async Task<bool> ShowPrintUIAsync(RichEditor editor, nint windowHandle, string jobTitle = "Document", double dpi = 300)
+    /// itself (after the dialog) is asynchronous and owned by the spooler. UI thread only.
+    /// <para><paramref name="dpi"/> (default 150, same as <see cref="RichEditor.SavePdf"/>) sets the
+    /// raster resolution for both preview and output. Every page is rendered before the dialog opens
+    /// — the print callbacks are synchronous, so encoding cannot be awaited inside them — which costs
+    /// roughly 8 MB per A4 page at 150 DPI. Lower it for very long documents.</para></summary>
+    public static async Task<bool> ShowPrintUIAsync(RichEditor editor, nint windowHandle, string jobTitle = "Document", double dpi = 150)
     {
         if (editor.Document == null || windowHandle == 0) return false;
         try { if (!PrintManager.IsSupported()) return false; } catch { return false; }
 
-        var printDoc = new PrintDocument();
-        var source = printDoc.DocumentSource; // grab on the UI thread; PrintTaskRequested is not
+        // Bail out before anything is shown when the host has dynamic code disabled — Native AOT, or any
+        // build with PublishAot set, which bakes IsDynamicCodeSupported=false into runtimeconfig.json.
+        // PrintManagerInterop.ShowPrintUIForWindowAsync casts its result to IAsyncOperation<bool> through
+        // IDynamicInterfaceCastable; CsWinRT (2.2) resolves that ABI helper by reflection, which it refuses
+        // to attempt without dynamic code. The throw lands *after* the dialog is on screen, leaving a live
+        // window with no document behind it — worse than not offering the dialog at all. There is no public
+        // way to pre-register the instantiation (WinRT.TypeExtensions.RegisterHelperType and the ABI types
+        // are internal), and the CsWinRT AOT generator emits CCW vtables only, so callers on AOT need their
+        // own path (e.g. export a PDF).
+        if (!RuntimeFeature.IsDynamicCodeSupported) return false;
+
         int pageCount = Math.Max(1, editor.GetPrintPageCount());
+        var paper = editor.GetPaperPixelSize();
+
+        // Rendered up front: PrintDocument's callbacks are synchronous, and turning a Win2D render
+        // target into an ImageSource needs an await (see RenderPageAsync).
+        List<BitmapImage> pages;
+        try
+        {
+            pages = new List<BitmapImage>(pageCount);
+            for (int i = 0; i < pageCount; i++) pages.Add(await RenderPageAsync(editor, i, dpi));
+        }
+        catch { return false; }
+
+        Release();   // drop any previous job's references
+
+        var printDoc = new PrintDocument();
+        _document = printDoc;
+        _documentSource = printDoc.DocumentSource;   // grab on the UI thread; PrintTaskRequested is not
+        _pages = pages;
 
         printDoc.Paginate += (_, _) => printDoc.SetPreviewPageCount(pageCount, PreviewPageCountType.Final);
-        printDoc.GetPreviewPage += (_, e) => printDoc.SetPreviewPage(e.PageNumber, MakePageImage(editor, e.PageNumber - 1, 150));
+        printDoc.GetPreviewPage += (_, e) => printDoc.SetPreviewPage(e.PageNumber, MakePageElement(pages[e.PageNumber - 1], paper));
         printDoc.AddPages += (_, _) =>
         {
-            for (int i = 0; i < pageCount; i++) printDoc.AddPage(MakePageImage(editor, i, dpi));
+            // A UIElement has one parent, so each page gets its own Image (the bitmaps are shared).
+            for (int i = 0; i < pageCount; i++) printDoc.AddPage(MakePageElement(pages[i], paper));
             printDoc.AddPagesComplete();
         };
 
-        var pm = PrintManagerInterop.GetForWindow(windowHandle);
-        TypedEventHandler<PrintManager, PrintTaskRequestedEventArgs> onRequested = (_, args) =>
-            args.Request.CreatePrintTask(jobTitle, req => req.SetSource(source));
-        pm.PrintTaskRequested += onRequested;
-        try { return await PrintManagerInterop.ShowPrintUIForWindowAsync(windowHandle); }
-        catch { return false; }
-        finally { pm.PrintTaskRequested -= onRequested; }
+        var manager = PrintManagerInterop.GetForWindow(windowHandle);
+        _manager = manager;
+
+        // Set once the dialog asks for the document: proof it engaged, even if ShowPrintUIForWindowAsync
+        // reports false afterwards. Callers use the return value to decide on a fallback, and showing one
+        // on top of a live print dialog is worse than trusting the dialog.
+        bool taskRequested = false;
+        _onTaskRequested = (_, args) =>
+        {
+            taskRequested = true;
+            var task = args.Request.CreatePrintTask(jobTitle, req => req.SetSource(_documentSource));
+            task.Completed += (_, _) => Release();
+        };
+        manager.PrintTaskRequested += _onTaskRequested;
+
+        try
+        {
+            bool shown = await PrintManagerInterop.ShowPrintUIForWindowAsync(windowHandle);
+            if (!shown && !taskRequested) Release();
+            return shown || taskRequested;
+        }
+        catch
+        {
+            Release();
+            return false;
+        }
     }
 
-    // One rendered page as a XAML Image sized to the paper (the PrintDocument page element). The Win2D
-    // render target's BGRA8 premultiplied pixels match WriteableBitmap's layout, so a straight copy works.
-    private static Image MakePageImage(RichEditor editor, int pageIndex, double dpi)
+    // Ends the job's lifetime: unhooks the manager and drops the pages (a few MB each).
+    private static void Release()
+    {
+        if (_manager != null && _onTaskRequested != null)
+            _manager.PrintTaskRequested -= _onTaskRequested;
+
+        _onTaskRequested = null;
+        _manager = null;
+        _documentSource = null;
+        _document = null;
+        _pages = null;
+    }
+
+    // One rendered page as a BitmapImage, by way of an in-memory PNG.
+    //
+    // The obvious route — new WriteableBitmap(w, h) filled from rt.GetPixelBytes() — needs a write into
+    // WriteableBitmap.PixelBuffer, and `PixelBuffer.AsStream()` only handles buffers backed by managed
+    // arrays under CsWinRT (.NET 5+), not the native buffer XAML hands out. Encoding to PNG and decoding
+    // through BitmapImage stays on fully supported APIs, at the cost of the round trip.
+    private static async Task<BitmapImage> RenderPageAsync(RichEditor editor, int pageIndex, double dpi)
     {
         using var rt = editor.RenderPrintPage(pageIndex, dpi);
-        var px = rt.SizeInPixels;
-        var wb = new WriteableBitmap((int)px.Width, (int)px.Height);
-        byte[] pixels = rt.GetPixelBytes();
-        using (var s = wb.PixelBuffer.AsStream()) s.Write(pixels, 0, pixels.Length);
-        var paper = editor.GetPaperPixelSize();
-        return new Image
-        {
-            Source = wb,
-            Width = paper.Width,
-            Height = paper.Height,
-            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
-        };
+        using var stream = new InMemoryRandomAccessStream();
+
+        await rt.SaveAsync(stream, CanvasBitmapFileFormat.Png);
+        stream.Seek(0);
+
+        var bitmap = new BitmapImage();
+        await bitmap.SetSourceAsync(stream);
+        return bitmap;
     }
+
+    // The PrintDocument page element: the page image scaled to the paper.
+    private static Image MakePageElement(BitmapImage source, Size paperPixelSize) => new()
+    {
+        Source = source,
+        Width = paperPixelSize.Width,
+        Height = paperPixelSize.Height,
+        Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+    };
 }
