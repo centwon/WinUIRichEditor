@@ -412,6 +412,13 @@ WinUI3 키보드 포커스가 자식 콘텐츠-아일랜드 HWND라 외부 입�
   > **캡처 검증 방법(재사용)**: unpackaged 데모는 computer-use가 못 잡으므로 `FindWindow` +
   > `PrintWindow(hwnd, dc, 2 /*PW_RENDERFULLCONTENT*/)`로 창을 비트맵에 렌더 → 크롭/확대해 확인.
 
+## 보류 / 백로그 (backlog)
+실수요가 생기면 그때 꺼내 쓸 항목. **파리티 갭 아님**(원본 AvaloniaRichEditor에도 없음) — 순수 net-new.
+- **암호화 `.flow` 저장** — 지금 구현 안 함(수요 근거 없음, 엔진 핵심 아님). 만들게 되면 *제대로* 할 것:
+  현대 KDF(Argon2id 등, PBKDF2는 앵커하지 말 것), 평문 `.flow`와 공존하는 외부 봉투 방식, 비밀번호
+  분실 시 복구 불가 경고, 편집 중 평문이 UI/임시파일로 새지 않게. **어중간하게 넣어 "암호화됐다"는
+  잘못된 안심을 주는 건 금지.** (우회로: 7-Zip AES / BitLocker·VeraCrypt로 `.flow`를 감싸면 됨.)
+
 ## 메모
 - 원본 경로: `C:\Users\centw\source\repos\AvaloniaRichEditor`.
 - 포팅 사전·핵심 규칙은 `CLAUDE.md` 참조.
