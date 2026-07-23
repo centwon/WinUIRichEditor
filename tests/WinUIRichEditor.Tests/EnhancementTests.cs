@@ -348,4 +348,51 @@ public class EnhancementTests
         Assert.True(inCell.CompareTo(inTail) < 0);  // cell paragraphs precede the next top-level block
         Assert.True(inTail.CompareTo(inCell) > 0);
     }
+
+    // ---- 4th review (2026-07-23) regressions ------------------------------------------------------
+
+    // The undo history's byte budget must see content held inside an INLINE table. It used to charge a
+    // flat placeholder for the whole inline table, so a document whose text lives in one looked tiny and
+    // the 64MB cap never trimmed it — the exact case the budget was added for.
+    [Fact]
+    public void UndoEstimateCountsInlineTableContent()
+    {
+        static FlowDocument WithCellText(string text)
+        {
+            var doc = new FlowDocument();
+            var host = new Paragraph();
+            var it = new InlineTable { Table = new TableBlock(1, 1) };
+            it.Table.Cells[0][0].Para.Inlines.Clear();
+            it.Table.Cells[0][0].Para.Inlines.Add(new Run { Text = text });
+            host.Inlines.Add(it);
+            doc.Blocks.Add(host);
+            return doc;
+        }
+
+        int small = Controls.UndoManager.EstimateBytes(WithCellText("x"));
+        int large = Controls.UndoManager.EstimateBytes(WithCellText(new string('x', 5000)));
+
+        // Text inside the inline table must move the estimate, and by roughly its UTF-16 size.
+        Assert.True(large > small, "inline-table cell text was not counted");
+        Assert.True(large - small >= 9000, $"expected ~10000 bytes of growth, got {large - small}");
+    }
+
+    // font-weight was decided by scanning the WHOLE style string, so an unrelated declaration could
+    // supply the ":600"/"bold" substring and force bold.
+    [Theory]
+    [InlineData("font-weight:normal;width:600px", false)]   // ":600" came from width
+    [InlineData("font-weight:normal;line-height:700%", false)]
+    [InlineData("font-weight:bold", true)]
+    [InlineData("font-weight:700", true)]
+    [InlineData("font-weight:650", true)]                   // numeric compare, not a fixed list
+    [InlineData("font-weight:400", false)]
+    [InlineData("font-weight:normal", false)]
+    public void HtmlFontWeightReadsOnlyItsOwnDeclaration(string style, bool expectBold)
+    {
+        var doc = HtmlDocumentFormatter.ParseHtml($"<p><span style=\"{style}\">t</span></p>");
+        var run = doc.Blocks.OfType<Paragraph>()
+            .SelectMany(p => p.Inlines).OfType<Run>()
+            .First(r => r.Text == "t");
+        Assert.Equal(expectBold, run.FontWeight.Weight >= 600);
+    }
 }

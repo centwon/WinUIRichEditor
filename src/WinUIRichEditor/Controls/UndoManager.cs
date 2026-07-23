@@ -98,7 +98,7 @@ internal class UndoManager
 
     // Approximate retained text size of a snapshot (UTF-16 chars + small per-element overhead). Image
     // RawBytes are excluded because Clone reference-shares them, so they don't grow with history depth.
-    private static int EstimateBytes(FlowDocument doc)
+    internal static int EstimateBytes(FlowDocument doc) // internal: covered directly by the test suite
     {
         long total = 0;
         void Walk(IEnumerable<Block> blocks)
@@ -112,6 +112,15 @@ internal class UndoManager
                     {
                         if (inl is Run r) total += 40 + (long)(r.Text?.Length ?? 0) * 2;
                         else total += 24; // inline image/table placeholder (image bytes are shared)
+                        // An inline table's cells hold real content and are deep-cloned with the
+                        // snapshot, so they must be counted too — charging a flat 24 made a document
+                        // whose text lives in inline tables look tiny, and the byte budget below then
+                        // never trimmed it (the exact case the budget exists for). WalkParagraphs
+                        // already recurses this way.
+                        if (inl is InlineTable it)
+                            foreach (var row in it.Table.Cells)
+                                foreach (var cell in row)
+                                    Walk(cell.Blocks);
                     }
                 }
                 else if (b is TableBlock tb)

@@ -586,9 +586,16 @@ public static class HtmlDocumentFormatter
         if (string.IsNullOrEmpty(styleAttr)) return;
         string s = styleAttr.ToLowerInvariant();
 
-        if (s.Contains("font-weight"))
+        // Scope the test to the font-weight DECLARATION'S VALUE. Scanning the whole style string let an
+        // unrelated declaration decide the weight: "font-weight:normal;width:600px" contains ":600" and
+        // came out bold. A numeric compare also covers weights the old fixed list missed (e.g. 650).
+        var wm = System.Text.RegularExpressions.Regex.Match(s, @"font-weight\s*:\s*([^;]+)");
+        if (wm.Success)
         {
-            if (s.Contains("bold") || s.Contains(":600") || s.Contains(": 600") || s.Contains(":700") || s.Contains(": 700") || s.Contains(":800") || s.Contains(":900"))
+            string wv = wm.Groups[1].Value.Trim();
+            if (wv.Contains("bold") // bold / bolder
+                || (int.TryParse(wv, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out int wnum) && wnum >= 600))
                 weight = FontWeightValues.Bold;
         }
         if (s.Contains("font-style:italic") || s.Contains("font-style: italic")) style = FontStyle.Italic;
