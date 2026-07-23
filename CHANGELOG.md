@@ -5,6 +5,10 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 
 ## [Unreleased]
 
+_No unreleased changes yet._
+
+## [0.8.1] - 2026-07-22
+
 ### Fixed
 - `RichEditorPrintHelper.ShowPrintUIAsync` never printed: the dialog opened but preview stayed on
   "loading" and no output was produced. The `PrintDocument` and its `IPrintDocumentSource` were locals,
@@ -333,5 +337,6 @@ tests 43/43 (9 new).
 - The original's arrow-key "block caret" (selecting an adjacent image/table as an intermediate caret stop,
   `_caretBlock`) isn't ported — images/tables are selected by click and traversed by arrow keys instead.
 
-[Unreleased]: https://github.com/centwon/WinUIRichEditor/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/centwon/WinUIRichEditor/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/centwon/WinUIRichEditor/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/centwon/WinUIRichEditor/releases/tag/v0.8.0

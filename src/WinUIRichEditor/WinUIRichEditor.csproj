@@ -22,7 +22,7 @@
   <!-- NuGet 패키지 메타데이터. 버전은 태그(release)로 덮어쓸 수 있게 CI에서 -p:Version 전달 가능. -->
   <PropertyGroup Label="Packaging">
     <PackageId>WinUIRichEditor</PackageId>
-    <Version>0.8.0</Version>
+    <Version>0.8.1</Version>
     <Authors>centwon</Authors>
     <Company>centwon</Company>
     <Product>WinUIRichEditor</Product>
