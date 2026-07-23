@@ -33,7 +33,6 @@ public static class HtmlDocumentFormatter
     private static readonly System.Net.Http.HttpClient Http = new()
     { Timeout = TimeSpan.FromSeconds(5), MaxResponseContentBufferSize = 20 * 1024 * 1024 };
     private static readonly TimeSpan RemoteImageBudget = TimeSpan.FromSeconds(5);
-    [ThreadStatic] private static DateTime _remoteImageDeadline;
     [ThreadStatic] private static bool _blockLocalFileImages;
     [ThreadStatic] private static bool _blockRemoteImages;
     [ThreadStatic] private static Dictionary<string, byte[]?>? _prefetchedRemoteImages;
@@ -48,11 +47,13 @@ public static class HtmlDocumentFormatter
 
     /// <summary>Parses an HTML string into a <see cref="FlowDocument"/>.
     /// When <paramref name="allowLocalFileImages"/> is false, <c>file://</c> image sources are skipped.
-    /// Remote (<c>http</c>) images are downloaded synchronously on the calling thread (a per-parse 5 s
-    /// budget caps the stall); use <see cref="ParseHtmlAsync"/> to fetch them without blocking.</summary>
+    /// <para>This overload performs NO network I/O: remote (<c>http</c>) images are skipped, because
+    /// fetching them here would block the calling thread — typically the UI thread, via
+    /// <see cref="RichEditor.LoadHtml"/>/<see cref="RichEditor.InsertHtml"/>. Use
+    /// <see cref="ParseHtmlAsync"/> (or <see cref="RichEditor.LoadHtmlAsync"/>) to include them;
+    /// <c>data:</c> and <c>file:</c> images load on both paths.</para></summary>
     public static FlowDocument ParseHtml(string html, bool allowLocalFileImages = true, bool allowRemoteImages = true)
     {
-        _remoteImageDeadline = DateTime.UtcNow + RemoteImageBudget;
         _blockLocalFileImages = !allowLocalFileImages;
         _blockRemoteImages = !allowRemoteImages;
         _prefetchedRemoteImages = null;
@@ -72,7 +73,6 @@ public static class HtmlDocumentFormatter
         var prefetched = allowRemoteImages
             ? await PrefetchRemoteImagesAsync(doc).ConfigureAwait(true)
             : new Dictionary<string, byte[]?>();
-        _remoteImageDeadline = DateTime.UtcNow + RemoteImageBudget; // data:/file: images still honored
         _blockLocalFileImages = !allowLocalFileImages;
         _blockRemoteImages = !allowRemoteImages;
         _prefetchedRemoteImages = prefetched;
@@ -417,18 +417,14 @@ public static class HtmlDocumentFormatter
             else if (src.StartsWith("http"))
             {
                 if (_blockRemoteImages) return (null, 0, 0, null);
-                if (_prefetchedRemoteImages != null)
-                {
-                    _prefetchedRemoteImages.TryGetValue(src, out bytes);
-                    if (bytes == null) return (null, 0, 0, null);
-                }
-                else
-                {
-                    var remaining = _remoteImageDeadline - DateTime.UtcNow;
-                    if (remaining <= TimeSpan.Zero) return (null, 0, 0, null);
-                    using var cts = new System.Threading.CancellationTokenSource(remaining);
-                    bytes = Http.GetByteArrayAsync(src, cts.Token).GetAwaiter().GetResult();
-                }
+                // Remote images are fetched ONLY by the async entry point, which downloads them up front
+                // and hands them in here. The synchronous ParseHtml used to block on
+                // GetByteArrayAsync().GetAwaiter().GetResult() — a network round trip on whatever thread
+                // called it, i.e. a frozen UI for callers like LoadHtml/InsertHtml. Use ParseHtmlAsync /
+                // RichEditor.LoadHtmlAsync when remote images are wanted; data: and file: still load here.
+                if (_prefetchedRemoteImages == null) return (null, 0, 0, null);
+                _prefetchedRemoteImages.TryGetValue(src, out bytes);
+                if (bytes == null) return (null, 0, 0, null);
             }
             else if (src.StartsWith("file:") || src.StartsWith("ms-clipboard-file:", StringComparison.OrdinalIgnoreCase))
             {

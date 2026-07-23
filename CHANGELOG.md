@@ -5,9 +5,32 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 
 ## [Unreleased]
 
-4차 전수 리뷰(2026-07-23)에서 확인된 결함 중 3건 수정 + 찾기 바 UX 1건.
+4차 전수 리뷰(2026-07-23)에서 확인된 결함 10건 수정 + 찾기 바 UX 1건.
 
 ### Fixed
+- **표 안에서 서식·리사이즈·바꾸기가 행 높이에 반영되지 않던 문제** (여러 경로, 같은 원인):
+  행 높이 캐시 `_tableRowHeights`를 버리는 경로가 `AfterEdit`뿐이었고 `RelayoutToViewport`는
+  이를 건드리지 않는다. IME 합성·`ReplaceNext`/`ReplaceAll`(아래)에 더해, `AfterFormat`도
+  캐럿 조상 표만 무효화해 **표 위에서 아래로 드래그한 선택에 서식을 적용하면**(캐럿이 표 밖에서
+  끝남) 그 표의 행 높이가 옛 서식 기준으로 남았다 — 선택이 있을 때는 캐시를 전부 비운다.
+- **리스트 변환 시 문단 서식 소실** (`SplitByNewlines`): 여러 줄 문단을 리스트 항목으로 나눌 때
+  서식을 5개 필드만 수기 복사해 **ListMarker(◦/"a)" 글리프)·LineSpacing/LineHeight·MarginRight·
+  IsQuote·HeadingLevel**을 잃었다. Enter 분할용으로 도입된 `CloneFormat()`으로 교체.
+- **리사이즈 핸들을 클릭만 해도 문서가 "수정됨"이 되던 문제**: 표 열/행 경계와 이미지 핸들이
+  press 시점에 언두를 밀어, 드래그 없이 누르고 떼기만 해도 문서 전체가 복제되고 `IsModified`가
+  뒤집혀 호스트의 저장 경고가 떴다. 첫 실제 이동 때 스냅샷을 찍도록 지연(`PushDragUndoOnce`).
+- **언두 메모리 예산이 인라인 표 내용을 세지 않던 문제** (`UndoManager.EstimateBytes`): 문단
+  인라인의 `InlineTable`을 고정 크기로 치고 셀을 걸지 않아, 내용이 인라인 표에 몰린 문서는
+  스냅샷이 작아 보이고 64MB 예산이 발동하지 않았다(예산을 도입한 바로 그 상황).
+- **HTML `font-weight` 오탐**: 선언의 값이 아니라 style 문자열 **전체**에서 부분문자열을 찾아
+  `font-weight:normal;width:600px`가 굵게 파싱됐다. 값만 보도록 스코프하고, 고정 목록 대신
+  수치 비교(≥600)로 바꿔 650 같은 값도 처리한다.
+- **RTF 표 셀 안의 그림이 셀을 탈출하던 문제** (`FinalizePict`): 64px 이상 그림을 무조건 문서
+  본문에 넣어, Word/HWP 표에 든 사진이 셀 밖으로 순서까지 어긋나 나왔다. 행이 열려 있는 동안은
+  셀의 문단에 인라인 이미지로 유지한다.
+- **인라인 표 셀이 정규화되지 않던 문제** (`NormalizeBlockList`): 블록 표 셀만 재귀해 규칙 #5가
+  인라인 표 셀에 적용되지 않았다. 역직렬화는 셀 블록이 0개일 때만 문단을 넣으므로, 인라인 표
+  셀이 이미지 하나뿐인 `.flow`는 문단 없는 셀로 남아 **캐럿이 들어갈 수 없었다.**
 - **IME 합성이 편집 후처리를 건너뛰던 문제** (`RichEditor.Ime.cs`): `OnImeTextUpdating`이
   `RelayoutToViewport` + `RestartBlink`만 수행해, 한글 입력은 영문(`CharacterReceived` →
   `InsertText` → `AfterEdit`)과 달리 ① 조상 표의 캐시된 행 높이를 버리지 않고(→ **셀에 한글을
@@ -23,6 +46,11 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
   매 호출 누적돼 의도가 상쇄되고 있었다(같은 파일의 다른 두 생성 지점은 이미 `using`).
 
 ### Changed
+- **⚠️ 동기 `ParseHtml`/`LoadHtml`/`InsertHtml`은 더 이상 원격 이미지를 받지 않는다**: 기존에는
+  `http` 이미지를 호출 스레드에서 **동기로 다운로드**해(파스당 5초 예산) UI가 그동안 멈췄다.
+  이제 동기 경로는 네트워크 I/O를 하지 않고 `data:`/`file:` 이미지만 싣는다. 원격 이미지가
+  필요하면 `ParseHtmlAsync` / `RichEditor.LoadHtmlAsync`를 쓰면 된다(붙여넣기는 원래 이 경로라
+  영향 없음).
 - **`FindCell`이 O(문서) 스캔 → 부모 체인 조회** (`RichEditor.Tables.cs`): 문단이 속한 셀은
   `p.Parent`이므로 문서 전체 재귀 탐색(`FindCellIn`)이 불필요했다. 호출 16곳 중 최악은
   `DrawSelectionHighlight`로, 셀 사각형 선택이 활성인 동안 **그려지는 문단마다** 호출돼 프레임당

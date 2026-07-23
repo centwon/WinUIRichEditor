@@ -173,10 +173,23 @@ public partial class RichEditor
             if (blocks[i] is not Paragraph && blocks[i + 1] is not Paragraph)
                 blocks.Insert(i + 1, new Paragraph { Parent = parent, Inlines = { new Run { Text = "" } } });
         foreach (var b in blocks)
+        {
             if (b is TableBlock tb)
                 foreach (var row in tb.Cells)
                     foreach (var cell in row)
                         NormalizeBlockList(cell.Blocks, cell);
+            // An INLINE table's cells are recursive containers too (rules #4/#5), but they hang off a
+            // paragraph's inlines rather than the block list, so this walk used to skip them entirely.
+            // The deserializer only injects a paragraph when a cell has ZERO blocks, so a .flow whose
+            // inline-table cell holds just an image kept a paragraph-less cell: FirstCellPara/
+            // TableCaretParas returned nothing and the caret could never enter it.
+            else if (b is Paragraph p)
+                foreach (var inl in p.Inlines)
+                    if (inl is InlineTable it)
+                        foreach (var row in it.Table.Cells)
+                            foreach (var cell in row)
+                                NormalizeBlockList(cell.Blocks, cell);
+        }
     }
 
     private static void WireBlockParents(Block block, object parent)

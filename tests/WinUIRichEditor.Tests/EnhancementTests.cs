@@ -416,6 +416,42 @@ public class EnhancementTests
         Assert.Empty(c.Inlines);                      // format only — never the content
     }
 
+    // An RTF picture inside a table cell must stay in that cell. Pictures >= 64px took the "block image"
+    // path, which appends straight to the document body — so a Word/HWP table with a photo pasted the
+    // photo out of its cell and out of document order.
+    [Fact]
+    public void RtfPictureInsideCellStaysInTheCell()
+    {
+        // 1x1 PNG, hex-encoded the way \pngblip carries it.
+        byte[] png =
+        {
+            0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A, 0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,
+            0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01, 0x08,0x06,0x00,0x00,0x00,0x1F,0x15,0xC4,
+            0x89,0x00,0x00,0x00,0x0A,0x49,0x44,0x41, 0x54,0x78,0x9C,0x63,0x00,0x01,0x00,0x00,
+            0x05,0x00,0x01,0x0D,0x0A,0x2D,0xB4,0x00, 0x00,0x00,0x00,0x49,0x45,0x4E,0x44,0xAE,
+            0x42,0x60,0x82,
+        };
+        string hex = System.Convert.ToHexString(png).ToLowerInvariant();
+        // \picwgoal/\pichgoal in twips -> /15 px, so 1500 twips = 100px (>= the 64px block threshold).
+        string rtf = @"{\rtf1\ansi\trowd\cellx4000 cell " +
+                     @"{\pict\pngblip\picwgoal1500\pichgoal1500 " + hex + "}" +
+                     @"\cell\row}";
+
+        var doc = RtfDocumentFormatter.Parse(rtf);
+
+        // No image escaped into the document body...
+        Assert.DoesNotContain(doc.Blocks, b => b is ImageBlock);
+        // ...and the table cell holds it.
+        var table = Assert.IsType<TableBlock>(doc.Blocks.First(b => b is TableBlock));
+        bool imageInCell = table.Cells
+            .SelectMany(row => row)
+            .SelectMany(cell => cell.Blocks)
+            .OfType<Paragraph>()
+            .SelectMany(p => p.Inlines)
+            .Any(i => i is InlineImage);
+        Assert.True(imageInCell, "the picture did not land inside the table cell");
+    }
+
     // font-weight was decided by scanning the WHOLE style string, so an unrelated declaration could
     // supply the ":600"/"bold" substring and force bold.
     [Theory]

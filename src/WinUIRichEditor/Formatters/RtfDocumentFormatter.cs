@@ -635,6 +635,16 @@ internal sealed class RtfParser
             img.SetImageData(bytes, mime);
             _para.Inlines.Add(img);
         }
+        else if (_curRow != null)
+        {
+            // Inside a table row the document body is the wrong destination: _para is the CELL's
+            // paragraph (EndParagraph suppresses flushing while a row is open), so emitting a block here
+            // made the picture escape its cell and land in the body, out of document order. Keep it in
+            // the cell as an inline image at the same size.
+            var cellImg = new InlineImage { Width = w, Height = h };
+            cellImg.SetImageData(bytes, mime);
+            _para.Inlines.Add(cellImg);
+        }
         else
         {
             if (_para.Inlines.Count > 0) { _doc.Blocks.Add(_para); _para = new Paragraph(); }
