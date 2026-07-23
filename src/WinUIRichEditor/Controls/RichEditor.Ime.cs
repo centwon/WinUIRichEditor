@@ -171,8 +171,15 @@ public partial class RichEditor
             _imeBufferPara = p;
             _imeBufferText = BuildPlain(p);
 
-            RelayoutToViewport();
-            RestartBlink();
+            // Composition is an edit like any other, so finish with the SAME post-edit work every other
+            // path runs. Previously this did only RelayoutToViewport + RestartBlink, so composing Hangul
+            // (a) never dropped the ancestor tables' cached row heights — RelayoutToViewport does not
+            // touch _tableRowHeights — leaving a cell's row too short for the text just typed into it,
+            // (b) never scrolled the caret into view, and (c) never flushed TextChanged/SelectionChanged
+            // (they waited for the next unrelated input). English input, which goes through
+            // CharacterReceived -> InsertText -> AfterEdit, did all three.
+            // SyncIme inside AfterEdit no-ops here: _inTextUpdating is set for this whole handler.
+            AfterEdit();
             args.Result = CoreTextTextUpdatingResult.Succeeded;
         }
         catch

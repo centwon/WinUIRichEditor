@@ -412,6 +412,60 @@ WinUI3 키보드 포커스가 자식 콘텐츠-아일랜드 HWND라 외부 입�
   > **캡처 검증 방법(재사용)**: unpackaged 데모는 computer-use가 못 잡으므로 `FindWindow` +
   > `PrintWindow(hwnd, dc, 2 /*PW_RENDERFULLCONTENT*/)`로 창을 비트맵에 렌더 → 크롭/확대해 확인.
 
+## 4차 전수 리뷰 (2026-07-23) — 진행 중
+1~3차가 커버한 범위를 확인한 뒤 재정독. **아직 완주하지 못했고**, 약 4,000줄이 미정독으로 남아 있다.
+빌드 0/0, 테스트 57/57.
+
+**정독 완료**: `RichEditor.Input.cs`(1930 전체), `TextRange.cs`, `UndoManager.cs`, `TableCell.cs`,
+`RichEditor.cs` 핵심부, `Clipboard.cs` 복사/붙여넣기, `Rendering.cs`, `Pagination.cs`, `Tables.cs`(1–450),
+`TableBlock.cs`, `Ime.cs` 합성 경로, `Status.cs`, `FindReplace.cs`, RTF 파서, HTML 포매터 주요부.
+
+**미정독(~4,000줄)**: `RichEditorToolbar.cs`(853)+`PageFile`(277), `ContextMenu.cs`(568),
+`Formatting.cs`(463), `RichEditorLocalization.cs`(353), `AutomationPeer.cs`(309), `BlockSelection.cs`(292),
+`TableResize.cs`(247), Tables·RTF-writer·DocumentSerializer 잔여분, HTML 포매터 1–240·680–893.
+→ 로직이라 수확 가능성이 있는 것은 Formatting·BlockSelection·TableResize·ContextMenu.
+
+### 수정 완료 (3건 + UX 1건, CHANGELOG 참조)
+- [x] **IME 합성이 `AfterEdit` 우회** — 셀 안 한글 입력 시 행 높이 미갱신 + 캐럿 스크롤 없음 +
+  `TextChanged` 지연. `ReplaceNext`/`ReplaceAll`도 같은 원인의 형제 경로였다.
+  **핵심 계약**: 표 행높이 캐시 `_tableRowHeights`를 버리는 경로는 `AfterEdit()`뿐이며
+  `RelayoutToViewport()`는 이를 건드리지 않는다 — `AfterEdit`을 우회하는 새 편집 경로를 만들 때 주의.
+- [x] **`CreateLayout`의 `CanvasTextFormat` 미해제** — 최다 호출 경로의 네이티브 누수.
+- [x] **`FindCell` O(문서) → 부모 체인** + 렌더 핫패스용 `CellTableOf`(O(1)).
+- [x] **찾기 바 `▸`/`▾` 바꾸기 전환 셰브런**(사용자 요청).
+> **인터랙티브 검증 완료(2026-07-23, 사람 확인)**: 셀 안 한글 입력 행 성장, 셀 안 찾아 바꾸기 행 성장,
+> 한글 입력 중 캐럿 스크롤, 셀 드래그 선택, 중첩/인라인 표 캐럿·Tab·Home/End, 셰브런 동작 모두 정상.
+
+### 미수정 (4차에서 확인된 잔여 결함)
+- [ ] **언두 바이트 예산이 인라인 표를 미계수**(`UndoManager.EstimateBytes`): 문단 인라인의
+  `InlineTable`을 24바이트로 치고 셀을 안 걸어, 내용이 인라인 표에 몰린 문서는 64MB 상한이 발동하지
+  않는다(같은 파일 `WalkParagraphs`는 제대로 재귀). 중간
+- [ ] **`NormalizeBlockList`가 인라인 표 셀 미정규화**(`RichEditor.Input.cs`): 블록 표만 재귀해
+  규칙 #5가 인라인 표 셀에 적용되지 않는다. `DocumentSerializer`는 셀 블록이 **0개일 때만** 문단을
+  넣으므로, 인라인 표 셀이 `[ImageBlock]`인 `.flow`는 문단 없는 셀로 남아 캐럿이 못 들어간다
+  (앱 내 편집으로는 도달 어려움 — 로드 경로 한정). 중간
+- [ ] **RTF 표 셀의 큰 그림이 셀 탈출**(`RtfDocumentFormatter.FinalizePict`): `EndParagraph`는
+  행 안에서 flush를 억제하는데 `FinalizePict`는 64px↑ 이미지를 무조건 `_doc.Blocks`에 넣는다. 중간
+- [ ] **HTML `font-weight` 부분문자열 오탐**(`HtmlDocumentFormatter.ApplyInlineStyle`): `":600"`
+  등을 style 문자열 **전체**에서 찾아 `font-weight:normal;width:600px`가 굵게 파싱된다. 중간
+- [ ] **동기 `LoadHtml`의 원격 이미지가 UI 스레드 블로킹**(`HtmlDocumentFormatter.LoadImage`):
+  `.GetAwaiter().GetResult()`. 붙여넣기는 `ParseHtmlAsync` 프리페치로 회피하나 public 동기 API는 노출. 중간
+- [ ] **`DrawInlineObjects`만 `GetCharacterRegions` 가드 없음**: 다른 4개 호출부는 모두 catch하는데
+  여기만 없고, `OnRegionsInvalidated`는 E_INVALIDARG만 잡아 다른 HRESULT는 앱 치명. 낮음
+- [ ] `EvictLayouts`가 사용 중 레이아웃 dispose 가능(cap 2048, 병적 문서 한정) / `TextRange`의
+  `TopLevelBlockOf`·`RemoveParagraphFromDocument`가 중첩·인라인 표 미재귀(호출부가 현재 차단) /
+  죽은 `_pressLink.uri`. 낮음
+
+### 오탐으로 배제 (재조사 방지 — 5차에서 다시 파지 말 것)
+붙여넣기 이미지 분기의 `AfterEdit` 누락(내부 호출됨) · 이미지 붙여넣기 `CaretCanHostBlock` 조기 반환
+(부모가 FlowDocument/TableCell이라 도달 불가) · `RenderPageToTarget` 미해제(소유권 이전) ·
+`Clipboard.cs` 스트림 미해제(DataPackage가 소유) · `TableCell` 문단 불변식(3중 방어) ·
+`ComputePageBreaks` vs 블록맵 전진량(동일) · 열 리사이즈 행높이 stale(`InvalidateTableMeasure` 호출) ·
+`TableBlock.Clone()`의 `RowHeights.Clear()` 누락(생성자가 시딩하지 않으므로 정상) ·
+RTF 코드페이지(`CodePagesEncodingProvider` 등록됨) · `DrawCellBlockList` 전진량(동일) ·
+HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModified` 미발화(즉시 발화됨) ·
+`ParseList` 중첩 리스트 이중 파싱(`ul`/`ol`은 인라인 경로에서 skip).
+
 ## 보류 / 백로그 (backlog)
 실수요가 생기면 그때 꺼내 쓸 항목. **파리티 갭 아님**(원본 AvaloniaRichEditor에도 없음) — 순수 net-new.
 - **암호화 `.flow` 저장** — 지금 구현 안 함(수요 근거 없음, 엔진 핵심 아님). 만들게 되면 *제대로* 할 것:

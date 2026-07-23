@@ -113,6 +113,9 @@ public partial class RichEditor
         {
             PushUndo(null);
             ReplaceSelectionText(replacement);
+            // The replacement changes the paragraph's height; when it lives in a cell the enclosing
+            // tables' cached row heights must go too (RelayoutToViewport doesn't clear them).
+            InvalidateCaretTableMeasure();
             RelayoutToViewport();
         }
         return FindNext(query, matchCase);
@@ -136,6 +139,9 @@ public partial class RichEditor
             ReplaceSelectionText(replacement);
             count++;
         }
+        // Replacements can land in any cell of any table, so the caret-ancestor invalidation isn't
+        // enough here — drop every cached row height and let the next layout re-measure.
+        if (count > 0) _tableRowHeights.Clear();
         RelayoutToViewport();
         RaiseStatusChanged(); // flush the pending TextChanged/SelectionChanged (FindCore doesn't raise)
         return count;

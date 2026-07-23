@@ -418,7 +418,11 @@ public partial class RichEditor : ContentControl
         double headingSize = heading ? HeadingFontSize(p.HeadingLevel) : 0;
 
         string plain = BuildPlain(p);
-        var fmt = new CanvasTextFormat
+        // `using`: CanvasTextLayout copies the format's state at construction, so the format is dead
+        // weight afterwards. Without this the hottest path in the control (every measurement — see
+        // ParagraphHeight / ParagraphLines, which deliberately dispose their transient LAYOUT) leaked a
+        // native DirectWrite text format per call, defeating that bounded-memory design.
+        using var fmt = new CanvasTextFormat
         {
             FontFamily = defaultFamily,
             FontSize = (float)PtToPx(defaultSize),

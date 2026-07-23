@@ -16,6 +16,7 @@ public partial class RichEditorView
     private StackPanel? _findBar;        // lazy content
     private TextBox? _findBox, _replaceBox;
     private ToggleButton? _matchCase;
+    private ToggleButton? _expandReplace; // ▸/▾ chevron: shows the replace row without reopening via Ctrl+H
     private StackPanel? _replaceRow;
     private TextBlock? _matchLabel;      // "n/m" match counter (browser-style)
 
@@ -31,7 +32,9 @@ public partial class RichEditorView
     {
         if (!ShowBuiltInFindBar || !Editor.AllowFindReplace) return;
         BuildFindBar();
-        _replaceRow!.Visibility = withReplace && !Editor.IsReadOnly ? Visibility.Visible : Visibility.Collapsed;
+        SetReplaceVisible(withReplace && !Editor.IsReadOnly);
+        // Read-only can't replace, so the chevron would be a dead control — hide it entirely.
+        _expandReplace!.Visibility = Editor.IsReadOnly ? Visibility.Collapsed : Visibility.Visible;
         _findBarHost.Visibility = Visibility.Visible;
         if (string.IsNullOrEmpty(_findBox!.Text) && Editor.LastFindQuery is { } last) _findBox.Text = last;
         // Light up all matches of the (pre-filled) query right away; the counter follows.
@@ -54,6 +57,15 @@ public partial class RichEditorView
         _findBarHost.Visibility = Visibility.Collapsed;
         Editor.ClearFindHighlight(); // the highlight-all overlay lives only while the bar is open
         Editor.Focus(FocusState.Programmatic);
+    }
+
+    // Single place that drives the replace row + the chevron's checked/glyph state, so opening via Ctrl+H
+    // and toggling the chevron can never disagree.
+    private void SetReplaceVisible(bool show)
+    {
+        _replaceRow!.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        _expandReplace!.IsChecked = show;
+        _expandReplace.Content = show ? "▾" : "▸";
     }
 
     // Refreshes the "n/m" counter from the editor ("m" when the selection isn't on a match).
@@ -99,7 +111,19 @@ public partial class RichEditorView
             return b;
         }
 
+        // Leading chevron (VS Code / browser convention): expands the replace row in place, so a search
+        // started with Ctrl+F or the toolbar's Find button doesn't have to be reopened with Ctrl+H.
+        _expandReplace = new ToggleButton { Content = "▸", FontSize = 12, Padding = new Thickness(6, 2, 6, 2) };
+        ToolTipService.SetToolTip(_expandReplace, L("ToggleReplace") + " (Ctrl+H)");
+        _expandReplace.Click += (_, _) =>
+        {
+            bool show = _expandReplace.IsChecked == true && !Editor.IsReadOnly;
+            SetReplaceVisible(show);
+            if (show) _replaceBox?.Focus(FocusState.Programmatic);
+        };
+
         var findRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        findRow.Children.Add(_expandReplace);
         findRow.Children.Add(_findBox);
         findRow.Children.Add(_matchLabel);
         findRow.Children.Add(Btn("◀", L("FindPrevious"), () => DoFind(backwards: true)));

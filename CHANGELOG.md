@@ -5,7 +5,35 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+4차 전수 리뷰(2026-07-23)에서 확인된 결함 중 3건 수정 + 찾기 바 UX 1건.
+
+### Fixed
+- **IME 합성이 편집 후처리를 건너뛰던 문제** (`RichEditor.Ime.cs`): `OnImeTextUpdating`이
+  `RelayoutToViewport` + `RestartBlink`만 수행해, 한글 입력은 영문(`CharacterReceived` →
+  `InsertText` → `AfterEdit`)과 달리 ① 조상 표의 캐시된 행 높이를 버리지 않고(→ **셀에 한글을
+  칠 때 행이 자라지 않음**; `RelayoutToViewport`는 `_tableRowHeights`를 건드리지 않는다)
+  ② 캐럿을 화면 안으로 스크롤하지 않으며 ③ `TextChanged`/`SelectionChanged`를 다음 무관한
+  입력까지 미뤘다. 이제 `AfterEdit()`를 호출한다(내부 `SyncIme`는 `_inTextUpdating` 가드로 no-op).
+- **찾아 바꾸기 후 표 행 높이가 갱신되지 않던 문제** (`RichEditor.FindReplace.cs`): 같은
+  원인의 다른 경로. `ReplaceNext`는 `InvalidateCaretTableMeasure()`를, `ReplaceAll`은 치환이
+  여러 표에 흩어질 수 있어 `_tableRowHeights.Clear()`를 수행한다.
+- **`CanvasTextFormat` 네이티브 누수** (`RichEditor.cs` `CreateLayout`): 컨트롤에서 가장 자주
+  실행되는 경로가 `CanvasTextFormat`을 만들고 해제하지 않았다. `ParagraphHeight`/`ParagraphLines`가
+  전이 **레이아웃**을 일부러 `using`으로 즉시 해제해 메모리를 묶어두는 설계였는데, 그 안의 format이
+  매 호출 누적돼 의도가 상쇄되고 있었다(같은 파일의 다른 두 생성 지점은 이미 `using`).
+
+### Changed
+- **`FindCell`이 O(문서) 스캔 → 부모 체인 조회** (`RichEditor.Tables.cs`): 문단이 속한 셀은
+  `p.Parent`이므로 문서 전체 재귀 탐색(`FindCellIn`)이 불필요했다. 호출 16곳 중 최악은
+  `DrawSelectionHighlight`로, 셀 사각형 선택이 활성인 동안 **그려지는 문단마다** 호출돼 프레임당
+  O(가시 × 문서)였다. 표 identity만 필요한 그 지점은 새 `CellTableOf`(O(1))를 쓰고, (r,c)가 필요한
+  나머지는 해당 표 하나만 훑는다. 중첩/인라인 표도 부모 배선(`WireBlockParents`)으로 그대로 동작.
+
+### Added
+- **찾기 바의 바꾸기 전환 셰브런** (`RichEditorView.FindBar.cs`): 찾기 행 왼쪽의 `▸`/`▾` 토글로
+  Ctrl+H로 다시 열지 않고 바꾸기 행을 펼친다(VS Code/브라우저 관례). 표시 상태는
+  `SetReplaceVisible` 한 곳에서 관리해 Ctrl+H 경로와 어긋나지 않으며, 읽기 전용에서는 셰브런을
+  숨긴다. 로컬라이제이션 키 `ToggleReplace`(EN/KO) 추가.
 
 ## [0.8.1] - 2026-07-22
 

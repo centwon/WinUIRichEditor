@@ -365,29 +365,23 @@ public partial class RichEditor
         }
     }
 
-    // Finds the innermost table + cell directly holding paragraph p, recursing into nested and inline
-    // tables so navigation acts on the table the caret is actually in.
-    private (TableBlock tb, int r, int c)? FindCell(Paragraph p)
-        => Document == null ? null : FindCellIn(Document.Blocks, p);
+    // The table whose cell directly holds p, straight off the PARENT CHAIN (wired by UpdateParents after
+    // every structural edit) — O(1), no grid scan. Callers that only need the table identity (the
+    // per-drawn-paragraph selection guard) use this instead of FindCell.
+    private static TableBlock? CellTableOf(Paragraph p)
+        => p.Parent is TableCell tc && tc.Parent is TableBlock tb ? tb : null;
 
-    private static (TableBlock tb, int r, int c)? FindCellIn(IEnumerable<Block> blocks, Paragraph p)
+    // The innermost table + cell directly holding paragraph p. Resolved through the parent chain: p.Parent
+    // IS the containing cell, so nested and inline tables fall out for free (the old version scanned the
+    // WHOLE document recursively per call — with 16 call sites on the render and caret hot paths, notably
+    // one per drawn paragraph in DrawSelectionHighlight, that was O(visible × document) per frame).
+    // Only the (r,c) lookup scans, and only within that one table.
+    private static (TableBlock tb, int r, int c)? FindCell(Paragraph p)
     {
-        foreach (var b in blocks)
-        {
-            if (b is TableBlock tb)
-                for (int r = 0; r < tb.Rows; r++)
-                    for (int c = 0; c < tb.Columns; c++)
-                    {
-                        var cell = tb.Cells[r][c];
-                        var nested = FindCellIn(cell.Blocks, p);
-                        if (nested != null) return nested;
-                        if (cell.Blocks.Contains(p)) return (tb, r, c);
-                    }
-            else if (b is Paragraph para)
-                foreach (var inl in para.Inlines)
-                    if (inl is InlineTable it && FindCellIn(new[] { it.Table }, p) is { } hit)
-                        return hit;
-        }
+        if (p.Parent is not TableCell tc || tc.Parent is not TableBlock tb) return null;
+        for (int r = 0; r < tb.Rows && r < tb.Cells.Count; r++)
+            for (int c = 0; c < tb.Columns && c < tb.Cells[r].Count; c++)
+                if (ReferenceEquals(tb.Cells[r][c], tc)) return (tb, r, c);
         return null;
     }
 

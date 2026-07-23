@@ -1850,7 +1850,9 @@ public partial class RichEditor
         // not just the ones inside the rectangle — otherwise the linear _selStart.._selEnd span (which
         // runs row-major and passes through cells in other columns) would highlight adjacent-column cells
         // that aren't actually selected.
-        if (_renderCellSel is { } cb && FindCell(p) is { } loc && ReferenceEquals(loc.tb, cb.tb)) return;
+        // Table identity is all this needs, so use the O(1) parent-chain lookup — this runs once per
+        // DRAWN paragraph while a cell-block selection is active.
+        if (_renderCellSel is { } cb && ReferenceEquals(CellTableOf(p), cb.tb)) return;
         TextPointer s = _selStart, e = _selEnd;
         if (ComparePositions(s, e) > 0) (s, e) = (e, s);
 
