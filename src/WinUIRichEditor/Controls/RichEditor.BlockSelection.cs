@@ -118,7 +118,7 @@ public partial class RichEditor
             foreach (var (img, rect) in BlockImageRects())
                 if (ReferenceEquals(img, selB) && OnResizeHandle(rect, pt))
                 {
-                    PushUndo(null);
+                    _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
                     _resizingImage = selB;
                     _imageAspect = selB.Height > 0 ? selB.Width / selB.Height : 1;
                     _resizeStartX = pt.X;
@@ -131,7 +131,7 @@ public partial class RichEditor
         if (!IsReadOnly && _selectedInline is { } selI
             && _inlineImageRects.TryGetValue(selI.img, out var selRect) && OnResizeHandle(selRect.rect, pt))
         {
-            PushUndo(null);
+            _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
             _resizingInline = selI.img;
             _imageAspect = selI.img.Height > 0 ? selI.img.Width / selI.img.Height : 1;
             _resizeStartX = pt.X;
@@ -175,6 +175,7 @@ public partial class RichEditor
     {
         if (_resizingImage != null)
         {
+            PushDragUndoOnce(); // snapshot before the first actual write
             double dx = pt.X - _resizeStartX;
             double newW = Math.Clamp(_resizeStartW + dx, 24, Math.Max(24, _layoutWidth - 40));
             _resizingImage.Width = newW;
@@ -184,6 +185,7 @@ public partial class RichEditor
         }
         if (_resizingInline != null)
         {
+            PushDragUndoOnce(); // snapshot before the first actual write
             double dx = pt.X - _resizeStartX;
             double newW = Math.Clamp(_resizeStartW + dx, 16, Math.Max(16, _layoutWidth - 40));
             _resizingInline.Width = newW;
@@ -200,6 +202,7 @@ public partial class RichEditor
         if (_resizingImage == null && _resizingInline == null) return false;
         _resizingImage = null;
         _resizingInline = null;
+        _dragUndoPending = false; // released without dragging: nothing was pushed
         _canvas.ReleasePointerCapture(e.Pointer);
         RaiseStatusChanged();
         return true;

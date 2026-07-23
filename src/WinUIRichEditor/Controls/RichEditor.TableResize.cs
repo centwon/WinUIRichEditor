@@ -46,6 +46,20 @@ public partial class RichEditor
 
     private const double ColBorderGrab = 4;
 
+    // A resize drag takes its undo snapshot on the FIRST actual move, not on press. Pressing a table
+    // border or an image handle and releasing without dragging changes nothing, so it must not clone the
+    // whole document into the undo stack, consume an undo step, or flip IsModified — which drives the
+    // host's unsaved-changes prompt (the same "no empty undo step for a no-op" rule the key handlers
+    // follow). The snapshot still precedes the first mutation because each Resize* pushes before it writes.
+    private bool _dragUndoPending;
+
+    private void PushDragUndoOnce()
+    {
+        if (!_dragUndoPending) return;
+        _dragUndoPending = false;
+        PushUndo(null);
+    }
+
     // Records each column's right-edge and each row's bottom-edge grab band. Called from DrawNestedTable
     // so it covers EVERY table — top-level, nested-in-cell, and inline — not just the top level.
     private void RecordTableResizeBoundaries(TableBlock tb, double top, in TableLayout tl)
@@ -96,7 +110,7 @@ public partial class RichEditor
             if (rect.Contains(pt))
             {
                 EnsureColumnWidths(tb);
-                PushUndo(null);
+                _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
                 _resizingColumn = true;
                 _resizingColTable = tb;
                 _resizingColIndex = col;
@@ -114,6 +128,7 @@ public partial class RichEditor
     private void ResizeColumn(Point pt)
     {
         if (_resizingColTable is not { } tb) return;
+        PushDragUndoOnce(); // snapshot before the first actual write
         const double minW = 20;
         double diff = pt.X - _colResizeStartX;
         EnsureColumnWidths(tb);
@@ -143,6 +158,7 @@ public partial class RichEditor
         if (!_resizingColumn) return false;
         _resizingColumn = false;
         _resizingColTable = null;
+        _dragUndoPending = false; // released without dragging: nothing was pushed, nothing to keep armed
         _canvas.ReleasePointerCapture(e.Pointer);
         RaiseStatusChanged();
         return true;
@@ -166,7 +182,7 @@ public partial class RichEditor
             if (rect.Contains(pt))
             {
                 EnsureRowHeights(tb);
-                PushUndo(null);
+                _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
                 _resizingRow = true;
                 _resizingRowTable = tb;
                 _resizingRowIndex = row;
@@ -183,6 +199,7 @@ public partial class RichEditor
     private void ResizeRow(Point pt)
     {
         if (_resizingRowTable is not { } tb) return;
+        PushDragUndoOnce(); // snapshot before the first actual write
         EnsureRowHeights(tb);
         double diff = pt.Y - _rowResizeStartY;
         tb.RowHeights[_resizingRowIndex] = Math.Max(20, _initRowH + diff);
@@ -195,6 +212,7 @@ public partial class RichEditor
         if (!_resizingRow) return false;
         _resizingRow = false;
         _resizingRowTable = null;
+        _dragUndoPending = false;
         _canvas.ReleasePointerCapture(e.Pointer);
         RaiseStatusChanged();
         return true;
