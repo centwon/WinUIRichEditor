@@ -331,14 +331,11 @@ public partial class RichEditor
     private List<Paragraph> SplitByNewlines(Paragraph p)
     {
         var result = new List<Paragraph>();
-        Paragraph NewPara() => new Paragraph
-        {
-            ListType = p.ListType,
-            ListLevel = p.ListLevel,
-            Indent = p.Indent,
-            TextAlignment = p.TextAlignment,
-            Background = p.Background
-        };
+        // Full paragraph-format inheritance. The old hand-picked copy carried only 5 fields, so turning a
+        // multi-line paragraph into list items silently dropped ListMarker (the ◦ / "a)" glyph), custom
+        // LineSpacing/LineHeight, MarginRight/MarginTop/Bottom, IsQuote and HeadingLevel — the same loss
+        // CloneFormat was introduced to fix for the Enter-split path.
+        Paragraph NewPara() => p.CloneFormat();
         var cur = NewPara();
         foreach (var inl in p.Inlines)
         {
@@ -454,6 +451,12 @@ public partial class RichEditor
     private void AfterFormat()
     {
         _coalesceKey = null;
+        // A linear selection can span table cells while the caret ends OUTSIDE the table (drag from above
+        // a table to below it, then Ctrl+B / change the size): the cells' paragraphs are restyled — both
+        // TextRange and SelectedParagraphs walk into cells — but the caret-ancestor invalidation below
+        // would miss that table, leaving its rows measured for the old formatting. Formatting commands
+        // are discrete user actions (not per-keystroke), so clearing every cached row height is cheap.
+        if (HasSelection) _tableRowHeights.Clear();
         InvalidateCaretTableMeasure();
         RelayoutToViewport();
         SyncIme();

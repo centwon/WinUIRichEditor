@@ -377,6 +377,45 @@ public class EnhancementTests
         Assert.True(large - small >= 9000, $"expected ~10000 bytes of growth, got {large - small}");
     }
 
+    // CloneFormat is the single source for "same paragraph formatting, new paragraph". SplitByNewlines
+    // (multi-line paragraph -> list items) hand-copied 5 fields and lost the rest; assert CloneFormat
+    // really carries everything those paths rely on.
+    [Fact]
+    public void CloneFormatCarriesEveryParagraphFormatField()
+    {
+        var src = new Paragraph
+        {
+            ListType = ListKind.Bullet,
+            ListMarker = ListMarkerStyle.Circle,
+            ListLevel = 2,
+            Indent = 40,
+            TextAlignment = Microsoft.UI.Xaml.TextAlignment.Center,
+            LineSpacing = 2.0,
+            LineHeight = double.NaN,
+            MarginTop = 7,
+            MarginBottom = 9,
+            MarginRight = 11,
+            HeadingLevel = 3,
+            IsQuote = true,
+        };
+        src.Inlines.Add(new Run { Text = "body" });
+
+        var c = src.CloneFormat();
+
+        Assert.Equal(src.ListType, c.ListType);
+        Assert.Equal(src.ListMarker, c.ListMarker);   // ◦ / "a)" glyph — dropped by the old copy
+        Assert.Equal(src.ListLevel, c.ListLevel);
+        Assert.Equal(src.Indent, c.Indent);
+        Assert.Equal(src.TextAlignment, c.TextAlignment);
+        Assert.Equal(src.LineSpacing, c.LineSpacing); // custom spacing — dropped by the old copy
+        Assert.Equal(src.MarginTop, c.MarginTop);
+        Assert.Equal(src.MarginBottom, c.MarginBottom);
+        Assert.Equal(src.MarginRight, c.MarginRight);
+        Assert.Equal(src.HeadingLevel, c.HeadingLevel);
+        Assert.Equal(src.IsQuote, c.IsQuote);
+        Assert.Empty(c.Inlines);                      // format only — never the content
+    }
+
     // font-weight was decided by scanning the WHOLE style string, so an unrelated declaration could
     // supply the ":600"/"bold" substring and force bold.
     [Theory]
