@@ -420,10 +420,12 @@ WinUI3 키보드 포커스가 자식 콘텐츠-아일랜드 HWND라 외부 입�
 `RichEditor.cs` 핵심부, `Clipboard.cs` 복사/붙여넣기, `Rendering.cs`, `Pagination.cs`, `Tables.cs`(1–450),
 `TableBlock.cs`, `Ime.cs` 합성 경로, `Status.cs`, `FindReplace.cs`, RTF 파서, HTML 포매터 주요부.
 
-**미정독(~4,000줄)**: `RichEditorToolbar.cs`(853)+`PageFile`(277), `ContextMenu.cs`(568),
-`Formatting.cs`(463), `RichEditorLocalization.cs`(353), `AutomationPeer.cs`(309), `BlockSelection.cs`(292),
-`TableResize.cs`(247), Tables·RTF-writer·DocumentSerializer 잔여분, HTML 포매터 1–240·680–893.
-→ 로직이라 수확 가능성이 있는 것은 Formatting·BlockSelection·TableResize·ContextMenu.
+**정독 추가분(2차 라운드)**: `Formatting.cs`(463, 2건 발견), `BlockSelection.cs`(292, 이슈 없음),
+`TableResize.cs`(247, 1건 발견), `ContextMenu.cs`(568, 이슈 없음 — 선언적 메뉴 구성).
+
+**여전히 미정독(~3,400줄)**: `RichEditorToolbar.cs`(853)+`PageFile`(277),
+`RichEditorLocalization.cs`(353), `AutomationPeer.cs`(309), Tables·RTF-writer·DocumentSerializer 잔여분,
+HTML 포매터 1–240·680–893. → 배선/문자열 테이블 위주라 수확 기대는 낮다.
 
 ### 수정 완료 (3건 + UX 1건, CHANGELOG 참조)
 - [x] **IME 합성이 `AfterEdit` 우회** — 셀 안 한글 입력 시 행 높이 미갱신 + 캐럿 스크롤 없음 +
@@ -436,20 +438,22 @@ WinUI3 키보드 포커스가 자식 콘텐츠-아일랜드 HWND라 외부 입�
 > **인터랙티브 검증 완료(2026-07-23, 사람 확인)**: 셀 안 한글 입력 행 성장, 셀 안 찾아 바꾸기 행 성장,
 > 한글 입력 중 캐럿 스크롤, 셀 드래그 선택, 중첩/인라인 표 캐럿·Tab·Home/End, 셰브런 동작 모두 정상.
 
-### 미수정 (4차에서 확인된 잔여 결함)
-- [ ] **언두 바이트 예산이 인라인 표를 미계수**(`UndoManager.EstimateBytes`): 문단 인라인의
-  `InlineTable`을 24바이트로 치고 셀을 안 걸어, 내용이 인라인 표에 몰린 문서는 64MB 상한이 발동하지
-  않는다(같은 파일 `WalkParagraphs`는 제대로 재귀). 중간
-- [ ] **`NormalizeBlockList`가 인라인 표 셀 미정규화**(`RichEditor.Input.cs`): 블록 표만 재귀해
-  규칙 #5가 인라인 표 셀에 적용되지 않는다. `DocumentSerializer`는 셀 블록이 **0개일 때만** 문단을
-  넣으므로, 인라인 표 셀이 `[ImageBlock]`인 `.flow`는 문단 없는 셀로 남아 캐럿이 못 들어간다
-  (앱 내 편집으로는 도달 어려움 — 로드 경로 한정). 중간
-- [ ] **RTF 표 셀의 큰 그림이 셀 탈출**(`RtfDocumentFormatter.FinalizePict`): `EndParagraph`는
-  행 안에서 flush를 억제하는데 `FinalizePict`는 64px↑ 이미지를 무조건 `_doc.Blocks`에 넣는다. 중간
-- [ ] **HTML `font-weight` 부분문자열 오탐**(`HtmlDocumentFormatter.ApplyInlineStyle`): `":600"`
-  등을 style 문자열 **전체**에서 찾아 `font-weight:normal;width:600px`가 굵게 파싱된다. 중간
-- [ ] **동기 `LoadHtml`의 원격 이미지가 UI 스레드 블로킹**(`HtmlDocumentFormatter.LoadImage`):
-  `.GetAwaiter().GetResult()`. 붙여넣기는 `ParseHtmlAsync` 프리페치로 회피하나 public 동기 API는 노출. 중간
+### 수정 완료 (2차 라운드 — 정독 진행분 + 실기 리포트)
+- [x] **선택이 표를 가로지를 때 행높이 stale**: `AfterFormat`이 캐럿 조상 표만 무효화해, 표 위→아래
+  드래그 선택에 서식을 적용하면(캐럿이 표 밖) 그 표의 행 높이가 옛 서식 기준으로 남았다.
+- [x] **`SplitByNewlines` 문단 서식 소실**: 서식을 5개 필드만 수기 복사 → `CloneFormat()`으로 교체.
+- [x] **리사이즈 핸들 클릭만으로 문서가 "수정됨"**: press 시점 `PushUndo` → 첫 이동으로 지연
+  (`PushDragUndoOnce`). 드래그 없는 클릭이 문서를 복제하고 `IsModified`를 뒤집던 것.
+- [x] **언두 예산이 인라인 표 미계수** / **HTML `font-weight` 오탐** / **RTF 셀 그림 탈출** /
+  **인라인 표 셀 미정규화** / **동기 `ParseHtml`의 UI 블로킹**(⚠️ 공개 API 동작 변경).
+- [x] **↑/↓가 표를 건너뛰던 문제**(실기 리포트, 원인 4겹) + **Shift+Enter 캐럿 위치** — 상세는
+  CHANGELOG 참조. **핵심 계약**: 인접 형제 표 진입은 포인트 히트보다 **먼저** 평가해야 한다
+  (`HitTestBlockList`는 실패 시 "셀의 마지막 문단 끝"을 주는데 이것이 유효한 결과처럼 보인다).
+  중첩 표는 `_tableRects`/`_inlineTableRects` 어디에도 없으므로 기하가 필요하면 `_tableOrigins`를 쓸 것.
+> **인터랙티브 검증 완료(2026-07-23, 사람 확인)**: 최상위/중첩 표 ↑↓ 진입·탈출, 진입 시 열 보존,
+> Shift+Enter 캐럿, 셀 안 한글 입력 행 성장, 셀 드래그 선택, 찾기 바 셰브런 모두 정상.
+
+### 미수정 (4차에서 확인된 잔여 결함 — 낮음만 남음)
 - [ ] **`DrawInlineObjects`만 `GetCharacterRegions` 가드 없음**: 다른 4개 호출부는 모두 catch하는데
   여기만 없고, `OnRegionsInvalidated`는 E_INVALIDARG만 잡아 다른 HRESULT는 앱 치명. 낮음
 - [ ] `EvictLayouts`가 사용 중 레이아웃 dispose 가능(cap 2048, 병적 문서 한정) / `TextRange`의
