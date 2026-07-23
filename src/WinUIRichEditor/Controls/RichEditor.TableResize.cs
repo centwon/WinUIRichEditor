@@ -18,6 +18,11 @@ public partial class RichEditor
     private readonly Dictionary<TableBlock, List<(int col, Rect rect)>> _columnBoundaries = new();
     private readonly Dictionary<TableBlock, List<(int row, double height, Rect rect)>> _rowBoundaries = new();
     private readonly Dictionary<TableBlock, Rect> _tableRects = new();
+    // Doc-space origin of EVERY drawn table — top-level, nested-in-cell and inline. _tableRects only
+    // covers top-level tables and _inlineTableRects only inline ones, so nested tables previously had no
+    // recorded geometry at all; caret code that needs to locate one (entering it with ↑/↓, stepping out
+    // of it) had nothing to work from.
+    private readonly Dictionary<TableBlock, Point> _tableOrigins = new();
 
     // Drops every recorded doc-space rect (inline objects, table outers, resize boundaries). Called from
     // RelayoutToViewport — the funnel for anything that can move content (edit, format, resize, zoom,
@@ -29,6 +34,7 @@ public partial class RichEditor
         _columnBoundaries.Clear();
         _rowBoundaries.Clear();
         _tableRects.Clear();
+        _tableOrigins.Clear();
     }
 
     private const double TableBorderGrab = 5;
@@ -64,6 +70,7 @@ public partial class RichEditor
     // so it covers EVERY table — top-level, nested-in-cell, and inline — not just the top level.
     private void RecordTableResizeBoundaries(TableBlock tb, double top, in TableLayout tl)
     {
+        _tableOrigins[tb] = new Point(tl.ColX.Length > 0 ? tl.ColX[0] : 0, top);
         var cols = new List<(int col, Rect rect)>(tb.Columns);
         for (int c = 0; c < tb.Columns && c + 1 < tl.ColX.Length; c++)
         {

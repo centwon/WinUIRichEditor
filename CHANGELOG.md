@@ -8,6 +8,27 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 4차 전수 리뷰(2026-07-23)에서 확인된 결함 10건 수정 + 찾기 바 UX 1건.
 
 ### Fixed
+- **↑/↓가 표를 통째로 건너뛰던 문제** (실기 리포트, 여러 겹의 원인):
+  - 세로 이동의 ±14px 넛지가 **문단 `MarginBottom` + 표 `MarginTop`** 여백에 떨어지면
+    `GetPositionFromPoint`가 표를 인정하지 않고(블록 안쪽을 요구), 폴백
+    `AdjacentTopLevelParagraph`는 설계상 표를 건너뛴다 → 새 `EnterAdjacentTable`로 인접 형제
+    표에 확정 진입한다. 포인트 히트 **이전에** 평가해야 한다 — 프로브가 셀 안에 떨어지면
+    `HitTestBlockList`가 어느 블록에도 안 맞을 때 **그 셀의 마지막 문단 끝**을 폴백으로 주는데,
+    그것도 "다른 문단"이라 포인트 경로가 덥석 채택했다(셀이 중첩 표·이미지로 시작하면 상시 발생).
+  - **중첩 표**는 별개 경로였다. `VerticalInCell` 단계 (a)는 결과가 **같은 셀**일 것을 요구하는데
+    중첩 표 안 문단은 *중첩* 셀을 보고하므로 거부되고, 단계 (b)가 **바깥 표의 다음 행**으로
+    점프해 중첩 표를 건너뛰었다 → 단계 (a2) 신설. 또한 단계 (a)는 프로브가 중첩 표의 열 범위를
+    벗어났을 때(표 밖에서 물려받은 `_desiredCaretX`) 폴백인 "같은 셀의 마지막 문단 끝"을
+    **수락**해버렸다 → 다음 형제가 표면 같은 문단 안 이동만 허용하도록 가드 추가.
+  - 중첩 표는 `_tableRects`(최상위)·`_inlineTableRects`(인라인) 어디에도 기록되지 않아
+    `TableDocRect`가 항상 null이었고, 그 결과 "표 밖으로 나가기"(단계 (c))가 중첩 표에서는
+    **한 번도 동작한 적이 없었다** → 모든 표의 원점을 `_tableOrigins`에 기록해 폴백으로 쓴다.
+  - 진입 위치는 셀의 **첫 문단 첫 줄**(↓) / **마지막 문단 마지막 줄**(↑)로 확정하되 그 안에서
+    `_desiredCaretX`를 적용해, 다른 모든 세로 이동과 같은 열 보존 규칙을 따른다.
+- **Shift+Enter 직후 캐럿이 이전 줄에 그려지던 문제**: 문단 끝에서 소프트 개행을 넣으면 캐럿이
+  새 빈 줄이 아니라 **원래 줄 앞**에 보이다가, 글자를 치면 제자리를 찾았다. `CaretInLayout`이
+  `offset == len`일 때 `len-1`을 프로브하는데 그게 `\n`이면 그 글리프 region이 **이전 줄 끝**에
+  있어 X는 새 줄, Y만 이전 줄에서 왔다. 이 경우 `GetCaretPosition`의 Y와 자연 빈 줄 높이를 쓴다.
 - **표 안에서 서식·리사이즈·바꾸기가 행 높이에 반영되지 않던 문제** (여러 경로, 같은 원인):
   행 높이 캐시 `_tableRowHeights`를 버리는 경로가 `AfterEdit`뿐이었고 `RelayoutToViewport`는
   이를 건드리지 않는다. IME 합성·`ReplaceNext`/`ReplaceAll`(아래)에 더해, `AfterFormat`도

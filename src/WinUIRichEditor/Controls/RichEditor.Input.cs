@@ -1295,12 +1295,83 @@ public partial class RichEditor
     // richer cell-entry navigation; dividers keep the skip-over fallback — only images become a "block
     // caret" stop (they're otherwise unreachable without a mouse).
     private ImageBlock? AdjacentTopLevelImage(Paragraph p, bool forward)
+        => AdjacentTopLevelBlock(p, forward) as ImageBlock;
+
+    // The top-level block immediately before/after p, or null when p isn't top-level / has no neighbour.
+    private Block? AdjacentTopLevelBlock(Paragraph p, bool forward)
     {
         if (Document == null || p.Parent is not FlowDocument) return null;
         int bi = Document.Blocks.IndexOf(p);
         if (bi < 0) return null;
         int at = forward ? bi + 1 : bi - 1;
-        return at >= 0 && at < Document.Blocks.Count ? Document.Blocks[at] as ImageBlock : null;
+        return at >= 0 && at < Document.Blocks.Count ? Document.Blocks[at] : null;
+    }
+
+    // The block immediately before/after p among its SIBLINGS — Document.Blocks for a top-level
+    // paragraph, the cell's block list for a cell paragraph (the same container generalization as
+    // MergeContainerOf). Works at any nesting depth, unlike AdjacentTopLevelBlock.
+    private static Block? AdjacentSiblingBlock(Paragraph p, bool forward)
+    {
+        if (MergeContainerOf(p) is not { } container) return null;
+        int bi = container.IndexOf(p);
+        if (bi < 0) return null;
+        int at = forward ? bi + 1 : bi - 1;
+        return at >= 0 && at < container.Count ? container[at] : null;
+    }
+
+    // Enters a table from an adjacent sibling paragraph with ↑/↓, landing in the entry row's cell
+    // nearest the desired column. The point-based path normally handles this, but its vertical nudge
+    // lands in the INTER-BLOCK MARGIN when the paragraph's MarginBottom plus the table's MarginTop
+    // exceed it — GetPositionFromPoint then rejects the table (it requires the point inside the block).
+    // Both fallbacks that follow would skip the table: AdjacentTopLevelParagraph does so by design, and
+    // VerticalInCell's next step jumps to the OUTER table's adjacent row.
+    private TextPointer? EnterAdjacentTable(TableBlock tb, bool down)
+    {
+        if (Document == null || tb.Rows <= 0) return null;
+        // Origin: recorded for every drawn table (nested included); the block map covers a top-level
+        // table that hasn't been drawn yet.
+        Point origin;
+        if (_tableOrigins.TryGetValue(tb, out var org)) origin = org;
+        else if (_blockLayoutIndex != null && _blockLayoutIndex.TryGetValue(tb, out int bi))
+            origin = new Point(10 + tb.Indent, EnsureBlockLayout(_layoutWidth)[bi].top);
+        else return null;
+
+        var tl = LayoutTable(tb, origin.X, origin.Y);
+        int entryRow = down ? 0 : tb.Rows - 1;
+
+        // The anchor covering the entry row whose column band is nearest the desired X (a row-spanning
+        // anchor starting further up still owns that row).
+        Rect? bestRect = null;
+        TableCell? bestCell = null;
+        double bestDist = double.MaxValue;
+        foreach (var (r, c, rect) in tl.AnchorRects)
+        {
+            var (_, rs) = tb.SpanOf(r, c);
+            if (entryRow < r || entryRow >= r + Math.Max(1, rs)) continue;
+            double d = _desiredCaretX < rect.X ? rect.X - _desiredCaretX
+                     : _desiredCaretX > rect.Right ? _desiredCaretX - rect.Right : 0;
+            if (d < bestDist) { bestDist = d; bestRect = rect; bestCell = tb.Cells[r][c]; }
+        }
+        if (bestRect is not { } cellRect || bestCell is not { } cell) return null;
+
+        // Enter on the cell's near LINE at the remembered column: the FIRST paragraph's first line coming
+        // down, the LAST paragraph's last line coming up. Point-hitting inside the cell instead is
+        // unreliable — when the cell opens with a non-paragraph block (a nested table or an image)
+        // HitTestBlockList matches nothing and falls back to the cell's LAST paragraph, dumping the caret
+        // at the far end of the cell just entered. Resolving the paragraph ourselves and only then
+        // applying _desiredCaretX keeps entry consistent with every other vertical move, which preserves
+        // the column (that is why ApplyArrowSelection never rewrites _desiredCaretX).
+        if ((down ? FirstCellPara(cell) : LastCellPara(cell)) is { } edgePara)
+            return new TextPointer(edgePara, OffsetAtDesiredXInCell(edgePara, cellRect, firstLine: down));
+
+        // The cell has no direct paragraph on that side (it starts/ends with a nested table): fall back
+        // to a point hit, which descends into whatever is actually there.
+        double loX = cellRect.X + CellPad + 1;
+        double x = Math.Clamp(_desiredCaretX, loX, Math.Max(loX, cellRect.Right - CellPad - 1));
+        double y = down ? cellRect.Y + CellPad + 2 : cellRect.Bottom - CellPad - 2;
+        _suppressInlineTableHit = false;
+        try { return GetPositionFromPoint(new Point(x, y)); }
+        finally { _suppressInlineTableHit = false; }
     }
 
     private void SelectBlockObject(Block blk)
@@ -1350,6 +1421,21 @@ public partial class RichEditor
         // only fall through to a cross-paragraph hit when already on its top/bottom line.
         if (TryMoveCaretByLine(down)) { ApplyArrowSelection(shift); return; }
 
+        // Leaving the paragraph into an adjacent sibling TABLE: enter it deterministically. This must
+        // run BEFORE the point-based path below, not as its fallback — once the vertical probe lands
+        // inside a cell, HitTestBlockList returns that cell's LAST paragraph (at its end) whenever the
+        // point matches no block, which happens as soon as the cell opens with a nested table or an
+        // image. That result is a different paragraph than the one we started in, so the point path
+        // happily accepted it and ↓ dropped the caret at the far end of the cell it had just entered.
+        // TryMoveCaretByLine above already consumed any remaining line inside this paragraph.
+        if (_caret.Paragraph is { } fromP && AdjacentSiblingBlock(fromP, down) is TableBlock nextTable
+            && EnterAdjacentTable(nextTable, down) is { Paragraph: not null } intoTable)
+        {
+            _caret = intoTable;
+            ApplyArrowSelection(shift);
+            return;
+        }
+
         if (CaretToDocPoint(_caret) is not { } cp) return;
         var fromPara = _caret.Paragraph;
         // Cross-paragraph: nudge generously past the inter-paragraph margin so the move clears the gap
@@ -1382,6 +1468,24 @@ public partial class RichEditor
         for (int i = down ? idx + 1 : idx - 1; i >= 0 && i < blocks.Count; i += down ? 1 : -1)
             if (blocks[i] is Paragraph q) return q;
         return null;
+    }
+
+    // The offset on a CELL paragraph's first (firstLine) or last visual line nearest the desired caret
+    // column. The top-level OffsetAtDesiredX below can't serve here: it derives the wrap width and left
+    // origin from the document content box, while a cell paragraph wraps at the cell's inner width and
+    // starts at the cell's content left — using the wrong pair would land on the wrong visual line.
+    private int OffsetAtDesiredXInCell(Paragraph p, Rect cellRect, bool firstLine)
+    {
+        double contentLeft = cellRect.X + CellPad;
+        double innerW = Math.Max(10, cellRect.Width - 2 * CellPad);
+        var layout = BuildTextLayout(p, innerW);
+        Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
+        try { lines = layout.LineMetrics; } catch { return firstLine ? 0 : GetParagraphLength(p); }
+        if (lines.Length == 0) return 0;
+        int line = firstLine ? 0 : lines.Length - 1;
+        double yTop = 0;
+        for (int i = 0; i < line; i++) yTop += lines[i].Height;
+        return HitOffset(layout, p, _desiredCaretX - contentLeft, yTop + lines[line].Height / 2);
     }
 
     // The offset on p's first (firstLine) or last visual line nearest the desired caret column.
@@ -1450,8 +1554,16 @@ public partial class RichEditor
             TextPointer? inner;
             try { inner = GetPositionFromPoint(new Point(_desiredCaretX, ty)); }
             finally { _suppressInlineTableHit = false; }
+            // When the caret's very next sibling block inside this cell is a TABLE, the only legitimate
+            // in-cell step is another visual line of the SAME paragraph — every other paragraph in the
+            // cell lies on the far side of that table. Without this guard a probe that misses the table
+            // (its column band doesn't cover _desiredCaretX, e.g. an X inherited from a paragraph
+            // outside the table) falls back to the cell's LAST paragraph, which FindCell reports as this
+            // same cell — so step (a) accepted it and the caret skipped the nested table entirely.
+            bool siblingTable = cur.Paragraph is { } sp0 && AdjacentSiblingBlock(sp0, down) is TableBlock;
             if (inner?.Paragraph != null && FindCell(inner.Paragraph) is { } il
                 && ReferenceEquals(il.tb, tb) && il.r == r && il.c == c
+                && (!siblingTable || ReferenceEquals(inner.Paragraph, cur.Paragraph))
                 && !(ReferenceEquals(inner.Paragraph, cur.Paragraph) && inner.Offset == cur.Offset)
                 // Must actually move in the pressed direction. Without this, pressing ↑ from the cell's
                 // top line snaps (via the block-list nearest fallback) to the cell's LAST line, trapping
@@ -1460,6 +1572,16 @@ public partial class RichEditor
             {
                 _caret = inner; ApplyArrowSelection(shift); return true;
             }
+        }
+
+        // (a2) A sibling block inside the SAME cell is a NESTED table. Step (a) can't reach it: it
+        // requires the hit to stay in cell (r,c), but a paragraph inside the nested table reports the
+        // NESTED table's cell, so the guard rejects it — and step (b) below then jumps to the outer
+        // table's adjacent row, skipping the nested table entirely (both directions).
+        if (cur.Paragraph is { } curPara && AdjacentSiblingBlock(curPara, down) is TableBlock nestedTable
+            && EnterAdjacentTable(nestedTable, down) is { Paragraph: not null } intoNested)
+        {
+            _caret = intoNested; ApplyArrowSelection(shift); return true;
         }
 
         var trect = TableDocRect(tb);
@@ -1522,6 +1644,14 @@ public partial class RichEditor
     {
         if (_tableRects.TryGetValue(tb, out var outer)) return outer;
         foreach (var (it, v) in _inlineTableRects) if (ReferenceEquals(it.Table, tb)) return v.rect;
+        // NESTED tables are neither block- nor inline-recorded, so this used to return null for them and
+        // VerticalInCell's "step out past the whole box" could never fire from inside a nested table.
+        // Every drawn table records its origin, so derive the rect from that.
+        if (_tableOrigins.TryGetValue(tb, out var org))
+        {
+            var tl = LayoutTable(tb, org.X, org.Y);
+            return new Rect(org.X, org.Y, tl.TableWidth, tl.TotalHeight);
+        }
         return null;
     }
 
@@ -1914,7 +2044,14 @@ public partial class RichEditor
         try { pos = layout.GetCaretPosition(trailing ? offset - 1 : offset, trailing); }
         catch { pos = new Vector2(0, 0); }
         yTop = pos.Y;
-        if (len > 0)
+        // Caret parked at the very end of a paragraph that ends in a soft break ("…\n"): it belongs on
+        // the NEW empty visual line, and GetCaretPosition already puts it there. The region probe below
+        // would look at len-1 — the '\n' itself — whose glyph region sits at the END OF THE PREVIOUS
+        // line, so taking Y from it drew the caret a line up (after Shift+Enter the caret appeared back
+        // on the old line until the next keystroke moved it). Keep GetCaretPosition's Y and the natural
+        // empty-line height.
+        bool onFreshBreakLine = !trailing && offset == len && EndsWithHardBreak(p);
+        if (len > 0 && !onFreshBreakLine)
         {
             try
             {
@@ -1933,6 +2070,22 @@ public partial class RichEditor
             catch { }
         }
         return (pos.X, yTop, h);
+    }
+
+    // Whether the paragraph's last character is a soft line break, so the caret at its end sits on a
+    // fresh (empty) visual line. Walks back over the inlines instead of building the whole plain string.
+    private static bool EndsWithHardBreak(Paragraph p)
+    {
+        for (int i = p.Inlines.Count - 1; i >= 0; i--)
+        {
+            if (p.Inlines[i] is Run r)
+            {
+                if (r.Text is { Length: > 0 } t) return t[^1] == '\n';
+                continue; // empty run: keep looking further back
+            }
+            return false; // an object inline (image/table) is the last thing in the paragraph
+        }
+        return false;
     }
 
     // The effective font size (pt) of the run at a logical offset (heading override applied).
