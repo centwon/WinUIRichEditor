@@ -536,12 +536,17 @@ public partial class RichEditor
             {
                 case Paragraph para:
                 {
-                    double h = ParagraphHeight(para, innerW); // cheap; layout built only on a hit
+                    // Same list/indent gutter the draw walk applies (CellParaLeft), or hit-testing
+                    // lands on the wrong character for every bulleted paragraph in a cell.
+                    double pl = CellParaLeft(para);
+                    double px = ox + pl;
+                    double pw = Math.Max(10, innerW - pl);
+                    double h = ParagraphHeight(para, pw); // cheap; layout built only on a hit
                     if (point.Y >= blkY && point.Y <= blkY + h)
                     {
-                        var layout = BuildTextLayout(para, innerW);
-                        if (HitInlineTable(para, layout, ox, blkY, point) is { } itp) return itp;
-                        int off = HitOffset(layout, para, point.X - ox, point.Y - blkY, out bool ate);
+                        var layout = BuildTextLayout(para, pw);
+                        if (HitInlineTable(para, layout, px, blkY, point) is { } itp) return itp;
+                        int off = HitOffset(layout, para, point.X - px, point.Y - blkY, out bool ate);
                         return new TextPointer(para, off) { AtLineEnd = ate };
                     }
                     last = para; by += h;
@@ -1066,12 +1071,56 @@ public partial class RichEditor
         return p.Inlines.Count;
     }
 
+    // Ctrl+A. In a table cell it selects in STAGES like HWP/Excel: the cell's content first, then the
+    // whole (enclosing) table, climbing through any nesting, and finally the whole document; each press
+    // advances one stage and the last stays put. Outside a table it selects the whole document at once.
     private void SelectAll()
     {
-        var paras = AllParagraphs();
-        if (paras.Count == 0) return;
-        _selStart = new TextPointer(paras[0], 0);
-        _selEnd = new TextPointer(paras[^1], GetParagraphLength(paras[^1]));
+        if (_caret.Paragraph is { } cp && FindCell(cp) is { } loc)
+        {
+            var stages = new List<(Paragraph s, int so, Paragraph e, int eo)>();
+            void AddRange(IEnumerable<Paragraph> paras)
+            {
+                Paragraph? first = null, last = null;
+                foreach (var q in paras) { first ??= q; last = q; }
+                if (first != null && last != null)
+                    stages.Add((first, 0, last, GetParagraphLength(last)));
+            }
+
+            var (ar, ac) = loc.tb.AnchorOf(loc.r, loc.c);
+            AddRange(ParagraphsInBlocks(loc.tb.Cells[ar][ac].Blocks)); // 1: the cell's content
+            for (TableBlock? t = loc.tb; t != null; )                  // 2..: each enclosing table
+            {
+                AddRange(ParagraphsInBlocks(new[] { (Block)t }));
+                t = t.Parent is TableCell tc && tc.Parent is TableBlock outer ? outer : null;
+            }
+            AddRange(AllParagraphs());                                 // last: the whole document
+
+            bool Eq((Paragraph s, int so, Paragraph e, int eo) st)
+            {
+                TextPointer a = _selStart, b = _selEnd;
+                if (ComparePositions(a, b) > 0) (a, b) = (b, a);
+                return ReferenceEquals(a.Paragraph, st.s) && a.Offset == st.so
+                    && ReferenceEquals(b.Paragraph, st.e) && b.Offset == st.eo;
+            }
+
+            // Advance from whichever stage currently matches (the outermost, if several coincide) to the
+            // next; clamp at the last so repeated Ctrl+A settles on the document.
+            int cur = -1;
+            for (int i = 0; i < stages.Count; i++) if (Eq(stages[i])) cur = i;
+            var pick = stages[Math.Min(cur + 1, stages.Count - 1)];
+            _selStart = new TextPointer(pick.s, pick.so);
+            _selEnd = new TextPointer(pick.e, pick.eo);
+            _caret = Clone(_selEnd);
+            InvalidateCanvas();
+            RaiseStatusChanged();
+            return;
+        }
+
+        var docParas = AllParagraphs();
+        if (docParas.Count == 0) return;
+        _selStart = new TextPointer(docParas[0], 0);
+        _selEnd = new TextPointer(docParas[^1], GetParagraphLength(docParas[^1]));
         _caret = Clone(_selEnd);
         InvalidateCanvas();
         RaiseStatusChanged(); // flush SelectionChanged now, not with the next unrelated input
@@ -1476,8 +1525,9 @@ public partial class RichEditor
     // starts at the cell's content left — using the wrong pair would land on the wrong visual line.
     private int OffsetAtDesiredXInCell(Paragraph p, Rect cellRect, bool firstLine)
     {
-        double contentLeft = cellRect.X + CellPad;
-        double innerW = Math.Max(10, cellRect.Width - 2 * CellPad);
+        double pl = CellParaLeft(p); // list/indent gutter, as every other cell walk applies
+        double contentLeft = cellRect.X + CellPad + pl;
+        double innerW = Math.Max(10, cellRect.Width - 2 * CellPad - pl);
         var layout = BuildTextLayout(p, innerW);
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
         try { lines = layout.LineMetrics; } catch { return firstLine ? 0 : GetParagraphLength(p); }
@@ -1916,18 +1966,21 @@ public partial class RichEditor
             {
                 case Paragraph para:
                 {
+                    double pl = CellParaLeft(para); // must match the draw/hit-test walks
+                    double px = ox + pl;
+                    double pw = Math.Max(10, innerW - pl);
                     if (ReferenceEquals(para, tp.Paragraph))
                     {
-                        var layout = BuildTextLayout(para, innerW);
+                        var layout = BuildTextLayout(para, pw);
                         var (cx, cy, ch) = CaretInLayout(layout, para, tp.Offset, tp.AtLineEnd);
-                        return (ox + cx, blkY + cy, ch);
+                        return (px + cx, blkY + cy, ch);
                     }
                     if (HasInlineTable(para))
                     {
-                        var layout = BuildTextLayout(para, innerW);
-                        if (CaretInInlineTable(para, layout, ox, blkY, tp) is { } itres) return itres;
+                        var layout = BuildTextLayout(para, pw);
+                        if (CaretInInlineTable(para, layout, px, blkY, tp) is { } itres) return itres;
                     }
-                    by += ParagraphHeight(para, innerW);
+                    by += ParagraphHeight(para, pw);
                     break;
                 }
                 case ImageBlock cimg: by += CellImageSize(cimg, innerW).h; break;

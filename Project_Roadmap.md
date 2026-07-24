@@ -453,6 +453,20 @@ HTML 포매터 1–240·680–893. → 배선/문자열 테이블 위주라 수�
 > **인터랙티브 검증 완료(2026-07-23, 사람 확인)**: 최상위/중첩 표 ↑↓ 진입·탈출, 진입 시 열 보존,
 > Shift+Enter 캐럿, 셀 안 한글 입력 행 성장, 셀 드래그 선택, 찾기 바 셰브런 모두 정상.
 
+### 표 셀 목록·붙여넣기·Ctrl+A (2026-07-24, 실기 리포트 후속)
+- [x] **셀 안 목록 마커가 렌더링되지 않던 문제**: `DrawListMarkers` 호출부가 최상위 경로뿐이었다.
+  `DrawCellBlockList`에 마커 그리기 + 셀 단위 번호를 추가하고, 마커 거터를 렌더·히트테스트·캐럿·측정
+  네 walk에 동일 적용하는 `CellParaLeft`를 도입. **핵심 계약**: 셀 문단의 좌측 인셋을 바꾸면 네 walk를
+  전부 맞춰야 한다(규칙 #1).
+- [x] **셀 안 툴바 목록 토글 무산**: `SetListType`이 캐럿-단독-셀에서 `SplitByNewlines`(doc.Blocks 전용)를
+  타 no-op였다 → 셀 문단 제자리 토글.
+- [x] **여러 문단 셀 붙여넣기가 평문으로 납작해짐**: `InsertDocumentAtCaret`이 셀 캐럿에서 `PlainTextOf`
+  폴백. 컨테이너를 규칙 #3대로 일반화(`MergeContainerOf`). 빈 문단 승계는 `Paragraph.CopyFormatFrom`으로
+  (CloneFormat/Clone과 필드 목록 통일).
+- [x] **Ctrl+A 단계 선택**(HWP/Excel): 셀 → (중첩 타고 오르는) 표 → 문서.
+> **인터랙티브 검증 완료(2026-07-24, 사람 확인)**: 셀 안 목록 마커 + 클릭/캐럿 정합, 툴바 목록 토글,
+> 빈 문단 서식 승계, 표 밖/셀/중첩 표 Ctrl+A 단계 선택 모두 정상.
+
 ### 미수정 (4차에서 확인된 잔여 결함 — 낮음만 남음)
 - [ ] **`DrawInlineObjects`만 `GetCharacterRegions` 가드 없음**: 다른 4개 호출부는 모두 catch하는데
   여기만 없고, `OnRegionsInvalidated`는 E_INVALIDARG만 잡아 다른 HRESULT는 앱 치명. 낮음

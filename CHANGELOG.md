@@ -8,6 +8,20 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 4차 전수 리뷰(2026-07-23)에서 확인된 결함 10건 수정 + 찾기 바 UX 1건.
 
 ### Fixed
+- **표 셀 안에서 목록(글머리표·번호)이 사라지던 문제** (실기 리포트, 두 겹):
+  - **렌더러가 셀 안 목록 마커를 아예 그리지 않았다**: `DrawListMarkers` 호출부가 최상위 렌더
+    경로 한 곳뿐이라, 셀 문단은 `ListType`을 모델에 유지해도 평문으로 그려졌다(붙여넣기든 토글이든
+    셀에선 목록이 안 보임). `DrawCellBlockList`가 마커를 그리도록 하고, 마커 거터를 렌더·히트테스트·
+    캐럿·측정 **네 walk에 동일하게** 적용하는 `CellParaLeft`를 도입(규칙 #1 — 안 맞추면 글자와
+    캐럿/클릭이 어긋난다). 번호 매기기는 셀 단위로 센다.
+  - **셀 안에서 툴바 목록 토글이 무산**: 캐럿만 셀에 있고 선택이 없으면 `SetListType`이
+    `SplitByNewlines`를 타는데, 그건 `Document.Blocks` 문단만 처리해 셀 문단에선 no-op였다.
+    셀 문단은 제자리에서 `ListType`만 토글한다.
+- **여러 문단을 표 셀에 붙여넣으면 서식이 평문으로 납작해지던 문제** (`InsertDocumentAtCaret`):
+  셀 안 캐럿에 대해 `PlainTextOf` 폴백을 타, 목록·제목·정렬·글자 서식이 전부 사라졌다. 컨테이너를
+  규칙 #3대로 일반화(`Document.Blocks` 또는 `TableCell.Blocks`)해 최상위와 같은 블록 스플라이스를
+  쓴다. 빈 문단(빈 셀/빈 줄)에 붙여넣을 때는 첫 붙여넣기 문단의 서식을 승계하고, 내용이 있으면
+  대상 문단 서식을 유지한다(`Paragraph.CopyFormatFrom` — `CloneFormat`/`Clone`과 필드 목록 통일).
 - **↑/↓가 표를 통째로 건너뛰던 문제** (실기 리포트, 여러 겹의 원인):
   - 세로 이동의 ±14px 넛지가 **문단 `MarginBottom` + 표 `MarginTop`** 여백에 떨어지면
     `GetPositionFromPoint`가 표를 인정하지 않고(블록 안쪽을 요구), 폴백
@@ -79,6 +93,9 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
   나머지는 해당 표 하나만 훑는다. 중첩/인라인 표도 부모 배선(`WireBlockParents`)으로 그대로 동작.
 
 ### Added
+- **표 셀 안 Ctrl+A 단계 선택** (`SelectAll`, HWP/Excel 방식): 셀 안에서 누르면 셀 내용 → (중첩을
+  타고 오르는) 표 전체 → 문서 순으로 한 단계씩 확장하고 문서에서 멈춘다. 표 밖에서는 종전대로
+  한 번에 문서 전체.
 - **찾기 바의 바꾸기 전환 셰브런** (`RichEditorView.FindBar.cs`): 찾기 행 왼쪽의 `▸`/`▾` 토글로
   Ctrl+H로 다시 열지 않고 바꾸기 행을 펼친다(VS Code/브라우저 관례). 표시 상태는
   `SetReplaceVisible` 한 곳에서 관리해 Ctrl+H 경로와 어긋나지 않으며, 읽기 전용에서는 셰브런을

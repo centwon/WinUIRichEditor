@@ -414,6 +414,19 @@ public class EnhancementTests
         Assert.Equal(src.HeadingLevel, c.HeadingLevel);
         Assert.Equal(src.IsQuote, c.IsQuote);
         Assert.Empty(c.Inlines);                      // format only — never the content
+
+        // CopyFormatFrom (paste-into-empty-paragraph) shares CloneFormat's field list: onto a
+        // fully-formatted paragraph it must reproduce the same field set.
+        var onto = new Paragraph { HeadingLevel = 5, ListType = ListKind.Ordered, Indent = 99, IsQuote = true };
+        onto.Inlines.Add(new Run { Text = "keep" });
+        onto.CopyFormatFrom(src);
+        Assert.Equal(src.ListType, onto.ListType);
+        Assert.Equal(src.ListMarker, onto.ListMarker);
+        Assert.Equal(src.HeadingLevel, onto.HeadingLevel);
+        Assert.Equal(src.LineSpacing, onto.LineSpacing);
+        Assert.Equal(src.Indent, onto.Indent);
+        Assert.Equal(src.IsQuote, onto.IsQuote);
+        Assert.Single(onto.Inlines);                  // inlines untouched
     }
 
     // An RTF picture inside a table cell must stay in that cell. Pictures >= 64px took the "block image"

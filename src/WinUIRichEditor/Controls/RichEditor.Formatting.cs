@@ -260,6 +260,18 @@ public partial class RichEditor
             return;
         }
 
+        // Caret in a cell with no cross-cell selection: toggle the list flag on the caret paragraph in
+        // place. The newline-splitting/reindexing path below only handles Document.Blocks paragraphs —
+        // a cell paragraph isn't in doc.Blocks, so SplitByNewlines' RemoveAt/Insert would no-op and the
+        // list toggle silently did nothing (soft breaks in a cell stay one list item anyway).
+        if (FindCell(_caret.Paragraph) is not null)
+        {
+            _caret.Paragraph.ListType = turningOff ? ListKind.None : kind;
+            ApplyMarker(_caret.Paragraph);
+            AfterFormat();
+            return;
+        }
+
         var targets = SelectedTopLevelParagraphs();
         if (targets.Count == 0)
         {

@@ -80,26 +80,36 @@ public class Paragraph : Block
     /// <summary><see langword="true"/> if this paragraph is a bullet or numbered list item.</summary>
     public bool IsListItem => ListType != ListKind.None;
 
+    /// <summary>Copies every paragraph-level formatting field from <paramref name="src"/> onto this
+    /// paragraph (inlines untouched). Single source of the format-field list shared by
+    /// <see cref="CloneFormat"/>, <see cref="Clone"/>, and the paste-into-empty-paragraph path.</summary>
+    public void CopyFormatFrom(Paragraph src)
+    {
+        MarginTop = src.MarginTop;
+        MarginBottom = src.MarginBottom;
+        MarginRight = src.MarginRight;
+        TextAlignment = src.TextAlignment;
+        LineHeight = src.LineHeight;
+        LineSpacing = src.LineSpacing;
+        ListType = src.ListType;
+        ListMarker = src.ListMarker;
+        HeadingLevel = src.HeadingLevel;
+        Background = src.Background;
+        Indent = src.Indent;
+        IsQuote = src.IsQuote;
+        ListLevel = src.ListLevel;
+    }
+
     /// <summary>Creates an EMPTY paragraph carrying all of this paragraph's paragraph-level formatting
     /// (no inlines) — the Enter-split and block-insert paths use it so the continuation keeps list
     /// marker style, line spacing, margins, quote state etc. (hand-picked copies kept dropping fields:
     /// splitting a ◦-bulleted item reset the new item's glyph, Enter lost custom line spacing).</summary>
-    public Paragraph CloneFormat() => new()
+    public Paragraph CloneFormat()
     {
-        MarginTop = MarginTop,
-        MarginBottom = MarginBottom,
-        MarginRight = MarginRight,
-        TextAlignment = TextAlignment,
-        LineHeight = LineHeight,
-        LineSpacing = LineSpacing,
-        ListType = ListType,
-        ListMarker = ListMarker,
-        HeadingLevel = HeadingLevel,
-        Background = Background,
-        Indent = Indent,
-        IsQuote = IsQuote,
-        ListLevel = ListLevel,
-    };
+        var p = new Paragraph();
+        p.CopyFormatFrom(this);
+        return p;
+    }
 
     /// <inheritdoc/>
     public override TextElement Clone()

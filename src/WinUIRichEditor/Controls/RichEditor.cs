@@ -39,6 +39,12 @@ public partial class RichEditor : ContentControl
     private static double ParaLeft(Paragraph p)
         => 10 + p.Indent + p.ListLevel * 20 + (p.ListType != ListKind.None ? ListMarkerWidth : 0);
 
+    // The same per-paragraph left inset INSIDE a table cell: indent + list nesting + the marker gutter,
+    // but without the document content-left origin (a cell's origin is its own content box). Every cell
+    // walk — draw, hit-test, caret geometry, height measurement — must apply this identically, or the
+    // rendered text and the caret/hit-test geometry drift apart (rule #1: one layout, one source).
+    private static double CellParaLeft(Paragraph p) => ParaLeft(p) - DocContentLeft;
+
     /// <summary>The list-item marker text (forwarded to the shared helper, kept for API parity).</summary>
     internal static string ListMarkerText(ListKind kind, ListMarkerStyle style, int num)
         => ListMarkers.Text(kind, style, num);

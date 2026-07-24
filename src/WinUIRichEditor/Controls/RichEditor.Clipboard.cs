@@ -680,16 +680,21 @@ public partial class RichEditor
             return;
         }
 
-        if (p.Parent is not FlowDocument doc)
+        // Container generalization (rule #3): Document.Blocks for a top-level caret, the cell's block
+        // list for a caret in a table cell. A cell used to fall back to PLAIN TEXT here, which flattened
+        // every pasted paragraph — bullets/numbering, headings, alignment and character formatting were
+        // all dropped when pasting multi-paragraph content into a cell. Cells are recursive containers
+        // (rule #4) and hold exactly these blocks, so the same splice works unchanged.
+        // The plain-text path stays for a caret whose parent chain isn't wired to either container.
+        // NOT InsertText there: every caller already pushed the undo snapshot (and deleted the
+        // selection), so InsertText's own PushUndo(null) would split one paste into two undo steps.
+        if (MergeContainerOf(p) is not { } container || p.Parent is not { } owner)
         {
-            // Caret inside a table cell etc. — fall back to plain text. NOT InsertText: every caller
-            // already pushed the undo snapshot (and deleted the selection), so InsertText's own
-            // PushUndo(null) would leave a second, split undo step for one paste.
             InsertPlainNoUndo(PlainTextOf(pd));
             return;
         }
 
-        int idx = doc.Blocks.IndexOf(p);
+        int idx = container.IndexOf(p);
         if (idx < 0) { InsertPlainNoUndo(PlainTextOf(pd)); return; }
 
         // Split the caret paragraph: head stays (p), tail becomes a new paragraph inserted right after.
@@ -705,8 +710,8 @@ public partial class RichEditor
         }
         if (tail.Inlines.Count == 0) tail.Inlines.Add(new Run { Text = "" });
         if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
-        tail.Parent = doc;
-        doc.Blocks.Insert(idx + 1, tail);
+        tail.Parent = owner;
+        container.Insert(idx + 1, tail);
 
         // Splice pasted blocks between head (p) and tail: the first pasted paragraph merges into head,
         // the rest are inserted as blocks before tail. Caret lands at the start of the tail.
@@ -716,13 +721,23 @@ public partial class RichEditor
             var b = pasted[i];
             if (i == 0 && b is Paragraph fp)
             {
+                // The first pasted paragraph merges into the caret paragraph (p). If p was EMPTY (a
+                // blank line / fresh cell), adopt the pasted paragraph's own format — list, heading,
+                // alignment, indent, spacing — so pasting a bullet into an empty cell stays a bullet.
+                // When p already has content, keep p's format (the paste flows into existing text).
+                if (GetParagraphLength(p) == 0)
+                {
+                    p.CopyFormatFrom(fp);
+                    p.Inlines.Clear();
+                }
                 foreach (var inl in fp.Inlines.ToList()) { inl.Parent = p; p.Inlines.Add(inl); }
+                if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
                 TextRange.CoalesceRuns(p);
             }
             else
             {
-                b.Parent = doc;
-                doc.Blocks.Insert(insertAt++, b);
+                b.Parent = owner;
+                container.Insert(insertAt++, b);
             }
         }
         _caret = new TextPointer(tail, 0);

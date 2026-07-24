@@ -54,7 +54,7 @@ public partial class RichEditor
         {
             switch (b)
             {
-                case Paragraph p: h += ParagraphHeight(p, w); break;
+                case Paragraph p: h += ParagraphHeight(p, Math.Max(10, w - CellParaLeft(p))); break;
                 case ImageBlock im: h += CellImageSize(im, w).h; break;
                 case DividerBlock: h += DividerHeight; break;
                 case TableBlock nt: h += LayoutTable(nt, 0, 0).TotalHeight; break;
@@ -77,7 +77,7 @@ public partial class RichEditor
             double w = 0;
             for (int c = ac; c < ac + cs; c++)
                 w += c < loc.tb.ColumnWidths.Count ? loc.tb.ColumnWidths[c] : 100;
-            return Math.Max(10, w - 2 * CellPad);
+            return Math.Max(10, w - 2 * CellPad - CellParaLeft(p)); // list/indent gutter, as the walks do
         }
         return Math.Max(10, _layoutWidth - 20 - ParaLeft(p) - p.MarginRight);
     }
@@ -211,6 +211,10 @@ public partial class RichEditor
     private void DrawCellBlockList(CanvasDrawingSession ds, IList<Block> blocks, double ox, double oy, double innerW)
     {
         double by = 0;
+        // Ordered-list numbering is per cell (the top-level counters live in the block layout map, which
+        // only covers Document.Blocks). Same level semantics as EnsureBlockLayout: a deeper sublist
+        // starts at 1, returning to a shallower level continues its own count, any non-list block resets.
+        var ordCounters = new List<int>();
         foreach (var b in blocks)
         {
             double blkY = oy + by;
@@ -218,15 +222,42 @@ public partial class RichEditor
             {
                 case Paragraph para:
                 {
-                    var layout = BuildTextLayout(para, innerW);
-                    DrawRunBackgrounds(ds, para, layout, ox, blkY);
-                    DrawFindHighlights(ds, para, layout, ox, blkY);
-                    DrawSelectionHighlight(ds, para, layout, ox, blkY);
-                    ds.DrawTextLayout(layout, (float)ox, (float)blkY, EffectiveTextColor);
-                    DrawInlineObjects(ds, para, layout, ox, blkY);
-                    DrawCompositionUnderline(ds, para, layout, ox, blkY);
-                    DrawCaret(ds, para, layout, ox, blkY);
-                    DrawDropPreview(ds, para, layout, ox, blkY);
+                    // List paragraphs are inset to leave a gutter for the marker, exactly like top-level
+                    // ones (CellParaLeft); the hit-test/caret/measure walks apply the same inset.
+                    double pl = CellParaLeft(para);
+                    double px = ox + pl;
+                    double pw = Math.Max(10, innerW - pl);
+                    var layout = BuildTextLayout(para, pw);
+
+                    int orderedStart = 0;
+                    if (para.IsListItem)
+                    {
+                        int lvl = Math.Clamp(para.ListLevel, 0, 16);
+                        if (ordCounters.Count > lvl + 1) ordCounters.RemoveRange(lvl + 1, ordCounters.Count - lvl - 1);
+                        if (para.ListType == ListKind.Ordered)
+                        {
+                            while (ordCounters.Count <= lvl) ordCounters.Add(0);
+                            orderedStart = ordCounters[lvl];
+                            ordCounters[lvl] += HardLineCount(para);
+                        }
+                    }
+                    else ordCounters.Clear();
+
+                    DrawRunBackgrounds(ds, para, layout, px, blkY);
+                    DrawFindHighlights(ds, para, layout, px, blkY);
+                    DrawSelectionHighlight(ds, para, layout, px, blkY);
+                    // Markers were never drawn inside cells: a bulleted/numbered paragraph kept its
+                    // ListType in the model but rendered as plain text, so the list looked lost.
+                    if (para.ListType != ListKind.None)
+                    {
+                        int orderedIndex = orderedStart;
+                        DrawListMarkers(ds, para, layout, BuildPlain(para), px, blkY, ref orderedIndex);
+                    }
+                    ds.DrawTextLayout(layout, (float)px, (float)blkY, EffectiveTextColor);
+                    DrawInlineObjects(ds, para, layout, px, blkY);
+                    DrawCompositionUnderline(ds, para, layout, px, blkY);
+                    DrawCaret(ds, para, layout, px, blkY);
+                    DrawDropPreview(ds, para, layout, px, blkY);
                     by += Math.Max(EmptyLineHeight(para), layout.LayoutBounds.Height);
                     break;
                 }
