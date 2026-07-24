@@ -468,11 +468,25 @@ HTML 포매터 1–240·680–893. → 배선/문자열 테이블 위주라 수�
 > 빈 문단 서식 승계, 표 밖/셀/중첩 표 Ctrl+A 단계 선택 모두 정상.
 
 ### 미수정 (4차에서 확인된 잔여 결함 — 낮음만 남음)
-- [ ] **`DrawInlineObjects`만 `GetCharacterRegions` 가드 없음**: 다른 4개 호출부는 모두 catch하는데
-  여기만 없고, `OnRegionsInvalidated`는 E_INVALIDARG만 잡아 다른 HRESULT는 앱 치명. 낮음
-- [ ] `EvictLayouts`가 사용 중 레이아웃 dispose 가능(cap 2048, 병적 문서 한정) / `TextRange`의
-  `TopLevelBlockOf`·`RemoveParagraphFromDocument`가 중첩·인라인 표 미재귀(호출부가 현재 차단) /
-  죽은 `_pressLink.uri`. 낮음
+- [x] **`DrawInlineObjects`만 `GetCharacterRegions` 가드 없음** — `e1b00db`에서 try/catch로 감쌈.
+- [x] `EvictLayouts`가 사용 중 레이아웃 dispose 가능 — `e1b00db`에서 `_layoutPinDepth` 핀 카운터로
+  walk 중 eviction 유예(`HitInlineTable`/`CaretInInlineTable`/`DrawInlineObjects`에 `LayoutPin`).
+- [x] 죽은 `_pressLink.uri` — `e1b00db`에서 `OpenUriAsync(pl.uri)` 오버로드로 press 시점 캡처 URI 사용.
+- [ ] `TextRange`의 `TopLevelBlockOf`·`RemoveParagraphFromDocument`가 중첩·인라인 표 미재귀 — **잔존**.
+  호출부(`Delete`)가 셀 엔드포인트를 감지해 병합 대신 중간 문단만 비우므로 현재 무해. 낮음.
+
+## 5차 전수 리뷰 (2026-07-24) — 완료
+4차의 미정독 잔여분(~3,400줄)을 전량 정독하고 전체를 재스윕. 빌드 그린, 테스트 **67/67**.
+
+**정독 완료**: `RichEditorToolbar.cs`(853)+`PageFile`(277), `RichEditorAutomationPeer.cs`(309),
+`HtmlDocumentFormatter.cs`(896 전체), `RtfDocumentFormatter.cs`(976 전체), `DocumentSerializer.cs`(551 전체),
+`RichEditor.Tables.cs`(450–681 잔여), `RichEditorLocalization.cs` 스윕.
+
+**결과: 새 결함 0건.** 위젯 배선·이벤트 짝맞춤·Clamp/TryParse 폴백·UIA 범위 재산정(offset 재fetch로 stale
+graceful)·RTF 병합셀/코드페이지/필드 파싱·HTML bare-inline/pre/원격이미지 게이트·직렬화 라운드트립 모두 정상.
+- 확인된 **무해한 코드 스멜 1건**(수정 불요): `RichEditorToolbar.TryParseHex`의 `v >> (s.Length == 8 ? 16 : 16)`
+  삼항이 양쪽 동일(6자리 `RRGGBB`·8자리 `AARRGGBB` 모두 r=비트16이라 결과는 정답).
+- 4차 "미수정" 3건은 이미 마지막 커밋 `e1b00db`에서 처리됨을 확인(위 체크박스 반영). 로드맵만 stale였음.
 
 ### 오탐으로 배제 (재조사 방지 — 5차에서 다시 파지 말 것)
 붙여넣기 이미지 분기의 `AfterEdit` 누락(내부 호출됨) · 이미지 붙여넣기 `CaretCanHostBlock` 조기 반환
