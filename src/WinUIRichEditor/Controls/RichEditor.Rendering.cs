@@ -319,34 +319,42 @@ public partial class RichEditor
     // a stale drawing session.
     private void DrawInlineObjects(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, double px, double oy)
     {
+        using var pin = new LayoutPin(this); // `layout` (host) is used across DrawNestedTable's cell builds
         int off = 0;
         foreach (var inl in p.Inlines)
         {
-            if (inl is InlineImage ii)
+            // GetCharacterRegions can throw (a transient device/layout race, an out-of-range slot during
+            // a resize storm); every OTHER caller wraps it in a try/catch, but this one didn't — and
+            // OnRegionsInvalidated only rescues E_INVALIDARG, so any other HResult here killed the app.
+            try
             {
-                var regions = layout.GetCharacterRegions(off, 1);
-                if (regions.Length > 0)
+                if (inl is InlineImage ii)
                 {
-                    var lb = regions[0].LayoutBounds;
-                    double w = Math.Max(8, ii.Width > 0 ? ii.Width : 16);
-                    double h = Math.Max(8, ii.Height > 0 ? ii.Height : 16);
-                    var rect = new Rect(px + lb.X, oy + lb.Bottom - h, w, h);
-                    var bmp = _images.Get(_canvas, ii, ii.RawBytes, ii.Image);
-                    if (bmp != null) ds.DrawImage(bmp, rect);
-                    else DrawPlaceholder(ds, rect, "");
-                    TrackInlineImage(ds, p, ii, rect);
+                    var regions = layout.GetCharacterRegions(off, 1);
+                    if (regions.Length > 0)
+                    {
+                        var lb = regions[0].LayoutBounds;
+                        double w = Math.Max(8, ii.Width > 0 ? ii.Width : 16);
+                        double h = Math.Max(8, ii.Height > 0 ? ii.Height : 16);
+                        var rect = new Rect(px + lb.X, oy + lb.Bottom - h, w, h);
+                        var bmp = _images.Get(_canvas, ii, ii.RawBytes, ii.Image);
+                        if (bmp != null) ds.DrawImage(bmp, rect);
+                        else DrawPlaceholder(ds, rect, "");
+                        TrackInlineImage(ds, p, ii, rect);
+                    }
+                }
+                else if (inl is InlineTable it)
+                {
+                    var regions = layout.GetCharacterRegions(off, 1);
+                    if (regions.Length > 0)
+                    {
+                        var lb = regions[0].LayoutBounds;
+                        DrawNestedTable(ds, it.Table, px + lb.X, oy + lb.Y);
+                        TrackInlineTable(ds, p, it, new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height));
+                    }
                 }
             }
-            else if (inl is InlineTable it)
-            {
-                var regions = layout.GetCharacterRegions(off, 1);
-                if (regions.Length > 0)
-                {
-                    var lb = regions[0].LayoutBounds;
-                    DrawNestedTable(ds, it.Table, px + lb.X, oy + lb.Y);
-                    TrackInlineTable(ds, p, it, new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height));
-                }
-            }
+            catch { }
             off += InlineLen(inl);
         }
     }

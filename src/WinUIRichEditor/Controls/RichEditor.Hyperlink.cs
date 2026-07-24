@@ -84,9 +84,13 @@ public partial class RichEditor
     }
 
     /// <summary>Launches the hyperlink at the caret in the system browser, if any.</summary>
-    public async Task OpenLinkAtCaretAsync()
+    public Task OpenLinkAtCaretAsync() => OpenUriAsync(CurrentLinkUri());
+
+    // Launches a specific absolute URI. Callers that captured the link at press time (the read-only
+    // plain-click path) pass it in rather than re-reading the caret, which may have moved since.
+    internal async Task OpenUriAsync(string? url)
     {
-        if (CurrentLinkUri() is not { } url) return;
+        if (url is not { Length: > 0 }) return;
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
             try { await Windows.System.Launcher.LaunchUriAsync(uri); } catch { }

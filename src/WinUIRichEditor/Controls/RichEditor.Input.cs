@@ -439,7 +439,7 @@ public partial class RichEditor
             _pressLink = null;
             var rp = ViewToDoc(e.GetCurrentPoint(_canvas).Position);
             if (!HasSelection && Math.Abs(rp.X - pl.pos.X) + Math.Abs(rp.Y - pl.pos.Y) < MultiClickSlop)
-                _ = OpenLinkAtCaretAsync();
+                _ = OpenUriAsync(pl.uri); // the URI captured at press, not a re-read of the caret
         }
         RaiseStatusChanged();
     }
@@ -584,6 +584,7 @@ public partial class RichEditor
     private TextPointer? HitInlineTable(Paragraph p, CanvasTextLayout layout, double px, double oy, Point point)
     {
         if (_suppressInlineTableHit) return null;
+        using var pin = new LayoutPin(this); // `layout` (host) is used across the cell-layout builds below
         int off = 0;
         foreach (var inl in p.Inlines)
         {
@@ -2008,6 +2009,7 @@ public partial class RichEditor
     // an inline-table cell, which CaretToDocPoint's top-level walk would otherwise miss.
     private (double X, double Y, double Height)? CaretInInlineTable(Paragraph p, CanvasTextLayout layout, double px, double oy, TextPointer tp)
     {
+        using var pin = new LayoutPin(this); // `layout` (host) is used across the cell-layout builds below
         int off = 0;
         foreach (var inl in p.Inlines)
         {

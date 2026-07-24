@@ -406,9 +406,23 @@ public partial class RichEditor : ContentControl
 
         var layout = CreateLayout(p, maxWidth);
         if (_layoutCache.TryGetValue(p, out var prev)) { prev.layout.Dispose(); _layoutCache.Remove(p); }
-        if (_layoutCache.Count >= LayoutCacheCap) EvictLayouts();
+        // Don't evict while a walk holds a cached layout (see _layoutPinDepth): an inline-table walk keeps
+        // the HOST paragraph's layout live across building every cell layout, so a clear-all here would
+        // dispose the layout still in use and the next GetCharacterRegions on it would throw. Deferring
+        // lets the cache overshoot the cap briefly; the next unpinned build evicts it.
+        if (_layoutPinDepth == 0 && _layoutCache.Count >= LayoutCacheCap) EvictLayouts();
         _layoutCache[p] = (sig, maxWidth, layout);
         return layout;
+    }
+
+    // >0 while a layout walk holds a cached layout across further BuildTextLayout calls (inline-table
+    // descent, DrawInlineObjects). EvictLayouts is suppressed for that span so the held layout survives.
+    private int _layoutPinDepth;
+    private readonly struct LayoutPin : IDisposable
+    {
+        private readonly RichEditor _r;
+        public LayoutPin(RichEditor r) { _r = r; r._layoutPinDepth++; }
+        public void Dispose() => _r._layoutPinDepth--;
     }
 
     // Constructs a fresh CanvasTextLayout (NOT cached). Measurement callers wrap it in `using` so the
