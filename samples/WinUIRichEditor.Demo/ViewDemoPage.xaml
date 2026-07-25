@@ -8,8 +8,16 @@
     mc:Ignorable="d">
 
     <!-- The RichEditorView is the whole page: its toolbar already carries the paper combo
-         (continuous/A4 switch) and Export incl. PDF, so the old demo chrome row is gone. -->
+         (continuous/A4 switch) and Export incl. PDF, so the old demo chrome row is gone.
+         The strip on top exists only to exercise the parity track-1 compat surface (the original
+         AvaloniaRichEditor's API names), which nothing else in the demo calls. -->
     <Grid Background="White">
-        <Border x:Name="Host" />
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Border x:Name="CompatBar" Grid.Row="0" Padding="8,6"
+                Background="#FFF7F7F7" BorderBrush="#28000000" BorderThickness="0,0,0,1" />
+        <Border x:Name="Host" Grid.Row="1" />
     </Grid>
 </Page>

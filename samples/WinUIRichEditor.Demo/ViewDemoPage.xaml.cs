@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using WinUIRichEditor.Controls;
@@ -61,6 +62,83 @@ public sealed partial class ViewDemoPage : Page
         view.Document = HtmlDocumentFormatter.ParseHtml(html);
 
         Host.Child = view;
+        CompatBar.Child = BuildCompatStrip(view, PickImageBytesAsync);
+    }
+
+    // Parity track 1 — the compat surface that mirrors the original AvaloniaRichEditor's API names.
+    // Nothing else in the demo calls these, so they shipped build-verified but never actually invoked;
+    // this strip is the manual harness. Each button is one call, labelled with the exact member.
+    private static UIElement BuildCompatStrip(RichEditorView view, System.Func<System.Threading.Tasks.Task<byte[]?>> pickImage)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var readout = new TextBlock { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+        void Report(string s) => readout.Text = s;
+
+        Button Btn(string label, string tip, RoutedEventHandler onClick)
+        {
+            var b = new Button { Content = label, FontSize = 12, Padding = new Thickness(8, 3, 8, 3) };
+            ToolTipService.SetToolTip(b, tip);
+            b.Click += onClick;
+            return b;
+        }
+
+        var ed = view.Editor;
+
+        // --- aliases of the port's own names (hidden from IntelliSense, still callable) ---
+        row.Children.Add(Btn("SetFontFamily", "RichEditor.SetFontFamily → SetRunFontFamily. 선택(없으면 캐럿 단어)을 Consolas로.",
+            (_, _) => { ed.SetFontFamily("Consolas"); Report("SetFontFamily(\"Consolas\") 호출"); }));
+
+        row.Children.Add(Btn("InsertImageBytes", "RichEditor.InsertImageBytes → InsertImageBlock. 파일을 골라 바이트로 삽입.",
+            async (_, _) =>
+            {
+                var bytes = await pickImage();
+                if (bytes is { Length: > 0 }) { ed.InsertImageBytes(bytes); Report($"InsertImageBytes({bytes.Length}B) 호출"); }
+                else Report("InsertImageBytes 취소");
+            }));
+
+        row.Children.Add(Btn("PasteFromClipboard", "RichEditor.PasteFromClipboardAsync → PasteAsync.",
+            async (_, _) => { await ed.PasteFromClipboardAsync(); Report("PasteFromClipboardAsync 호출"); }));
+
+        // --- public wrappers the original had and the port lacked ---
+        row.Children.Add(Btn("FocusDocumentEnd", "RichEditor.FocusDocumentEnd — 포커스 + 캐럿을 문서 끝으로.",
+            (_, _) => { ed.FocusDocumentEnd(); Report("FocusDocumentEnd 호출 — 캐럿이 문서 끝"); }));
+
+        row.Children.Add(Btn("InsertInlineTable 2×2", "RichEditor.InsertInlineTable(2,2) — 캐럿에 '글자처럼 취급' 표 삽입.",
+            (_, _) => { ed.InsertInlineTable(2, 2); Report("InsertInlineTable(2,2) 호출"); }));
+
+        row.Children.Add(Btn("InsertImageFromFile", "RichEditor.InsertImageFromFileAsync(hwnd) — 라이브러리 내장 피커.",
+            async (_, _) => { await ed.InsertImageFromFileAsync(view.WindowHandle); Report("InsertImageFromFileAsync(hwnd) 호출"); }));
+
+        // --- RichEditorView-level surface ---
+        var statusToggle = new ToggleButton { Content = "ShowStatusBar", FontSize = 12, IsChecked = view.ShowStatusBar, Padding = new Thickness(8, 3, 8, 3) };
+        ToolTipService.SetToolTip(statusToggle, "RichEditorView.ShowStatusBar — 하단 상태바 표시 토글.");
+        statusToggle.Click += (_, _) =>
+        {
+            view.ShowStatusBar = statusToggle.IsChecked == true;
+            Report($"ShowStatusBar = {view.ShowStatusBar}");
+        };
+        row.Children.Add(statusToggle);
+
+        row.Children.Add(Btn("ZoomFactor 1.5", "RichEditorView.ZoomFactor — Editor.Zoom/SetZoom 프록시. 설정 후 되읽어 확인.",
+            (_, _) =>
+            {
+                view.ZoomFactor = 1.5;
+                // Read back through the View AND the editor: the getter must proxy Editor.Zoom.
+                Report($"ZoomFactor set 1.5 → get {view.ZoomFactor:0.##} (Editor.Zoom {view.Editor.Zoom:0.##})");
+            }));
+
+        row.Children.Add(Btn("ZoomFactor 1.0", "RichEditorView.ZoomFactor — 원래 배율로 복귀.",
+            (_, _) => { view.ZoomFactor = 1.0; Report($"ZoomFactor set 1.0 → get {view.ZoomFactor:0.##}"); }));
+
+        row.Children.Add(readout);
+
+        return new ScrollViewer
+        {
+            Content = row,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollMode = ScrollMode.Auto,
+        };
     }
 
     // Print fallback when the system print dialog is unavailable: save to PDF instead. (The toolbar's

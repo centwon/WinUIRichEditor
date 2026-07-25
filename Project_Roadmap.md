@@ -628,8 +628,16 @@ HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModif
 >   ③ 드래그하면 텍스트 선택 하이라이트가 정상 — 이 셋으로 확인한다.
 > - ~~**읽기 전용 캐럿**(신규)~~ — **검증 완료(2026-07-25, 사람 확인)**: 데모 "읽기 전용" 페이지에서
 >   캐럿 표시·비깜빡임 정상.
-> - **파리티 트랙1 API**(`InsertInlineTable`/`FocusDocumentEnd`/`ShowStatusBar`/`ZoomFactor` 등): 빌드·테스트만
->   통과, 실제 호출 미검증.
+> - **파리티 트랙1 API**: 데모 View 페이지 상단에 **compat 검증 스트립**을 추가했다(2026-07-25) —
+>   `SetFontFamily`·`InsertImageBytes`·`PasteFromClipboardAsync`·`FocusDocumentEnd`·`InsertInlineTable`·
+>   `InsertImageFromFileAsync`·`ShowStatusBar`·`ZoomFactor`가 각각 버튼 하나이고, 오른쪽 readout이 호출
+>   결과를 보여준다(`ZoomFactor`는 set 후 되읽어 `Editor.Zoom` 프록시임을 확인). 스트립 렌더는 캡처로
+>   확인했고, **버튼 클릭 검증은 사람 몫**(unpackaged exe라 자동 클릭 불가).
+
+> **데모 GUI 검증 워크플로(재사용)**: `--page=control|readonly|toolbar|view` 인자로 시작 페이지를 지정한 뒤
+> `PrintWindow`로 캡처한다. 캡처는 열려 있는 페이지만 보여주므로 이 인자가 없으면 첫 페이지밖에 못 본다.
+> ⚠ 산출물 경로 함정: 데모 exe는 **`bin\x64\Debug\...`**에 나온다. `bin\Debug\...`에도 옛 exe가 남아 있어
+> `Get-ChildItem -Recurse | Select -First 1`로 잡으면 어제 빌드를 띄운다(테스트 DLL 함정과 같은 부류).
 
 > **오진 기록(재발 방지)**: 데모의 h2 "표"가 표 왼쪽 아래에 겹쳐 보인 것은 **버그가 아니라** 사용자가
 > 그 표를 "글자처럼 취급"으로 바꾼 상태였기 때문이다(인라인 오브젝트가 든 줄은 줄 높이가 오브젝트
