@@ -40,7 +40,10 @@ dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj   # exe �
 
 - ⚠️ 실행 중 exe가 잠긴다. 재빌드 전 종료: `Get-Process -Name "WinUIRichEditor.Demo" -ErrorAction SilentlyContinue | Stop-Process -Force`
 - GUI 검증은 직접 못 하므로 실행 후 사용자에게 확인 요청.
-- 커밋 메시지 끝: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+- 커밋 메시지 끝: `Co-Authored-By: Claude <모델명> <noreply@anthropic.com>` — **작업한 모델 이름을 그대로**
+  쓴다(예: `Claude Opus 5`). 버전을 고정해 두면 모델이 바뀔 때마다 stale해지고, 그러면 히스토리의
+  공동저자 표기가 실제 작성자와 어긋난다. 과거 커밋이 `Opus 4.8`인 것은 그때 맞았던 표기이므로
+  고치지 않는다.
 
 ## 포팅 단계 (Phase)
 0. ✅ 스캐폴드(라이브러리+unpackaged 데모, Win2D, CanvasControl 스모크 렌더).
