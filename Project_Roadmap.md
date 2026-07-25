@@ -504,12 +504,21 @@ graceful)·RTF 병합셀/코드페이지/필드 파싱·HTML bare-inline/pre/원
   (→`Editor.Zoom`/`SetZoom` 프록시 — 줌은 에디터 레벨 유지, 원본 표면만 복원).
 - **제외**(원본 타입 종속으로 소스 별칭 불가): `InsertImage(Avalonia.Bitmap)` — 플랫폼 타입 상이라 별칭 무의미.
 
-### 트랙 2 — 포트 → 원본 (플랫폼-무관 개선 역이식) — 미착수
-원본이 실제로 없음을 원본 소스에서 검증한 항목만: `IsModified`/`MarkSaved`/`IsModifiedChanged`,
-`AutoLinkOnType`, 찾기 하이라이트+n/m(`SetFindHighlight`/`GetFindMatchPosition`/`ClearFindHighlight`),
-`RemoveList`, `AllowRemoteImagesOnPaste`. **제외**(원본에 이미 존재): `InsertInlineImage`·`SetHyperlink`.
-**역이식 금지**: 줌 아키텍처(원본은 View 줌으로 충분)·이미지 콜백(WinUI HWND 제약 산물)·Win2D 전용
-(`CanvasBackground`/`Dispose`). 코드 미공유라 각 기능을 Avalonia 스택에 수작업 재구현 필요.
+### 트랙 2 — 포트 → 원본 (플랫폼-무관 개선 역이식) — ✅ 완료 (2026-07-25, 원본 저장소에서 수행)
+대상 5건 전부 원본 `AvaloniaRichEditor`에 착륙한 것을 소스로 확인:
+`IsModified`/`MarkSaved`/`IsModifiedChanged`(`RichEditor.cs`), `AutoLinkOnType`(`RichEditor.cs`),
+찾기 하이라이트+n/m(`SetFindHighlight`/`ClearFindHighlight`/`GetFindMatchPosition` — `RichEditor.FindReplace.cs`),
+`RemoveList`(`RichEditor.Formatting.cs`), `AllowRemoteImagesOnPaste`(`RichEditor.Modes.cs`, StyledProperty).
+원본은 0.9.0 이후 `f5e647e`(PR #6 winui-parity-backport) → `924d366` → `86427cf` → `bcc12e4`로 진행했고,
+5건 외에 **동기 `ParseHtml`의 네트워크 I/O 제거**(포트 4차 변경)·**셀 목록 마커**·**Ctrl+A 단계 선택**까지
+함께 가져갔다. **제외**(원본에 이미 존재): `InsertInlineImage`·`SetHyperlink`.
+**역이식 금지(유지)**: 줌 아키텍처(원본은 View 줌으로 충분)·이미지 콜백(WinUI HWND 제약 산물)·
+Win2D 전용(`CanvasBackground`/`Dispose`).
+
+> **후속 후보**: 원본의 백포트 커밋 메시지가 "full source audit로 찾은 결함 5건"(`924d366`)과
+> "backport 결함 7건"(`86427cf`)을 언급한다. 같은 코드를 이식한 만큼 **그 결함들이 포트 쪽에도
+> 남아 있을 수 있다** — 원본 커밋 diff를 포트 대응 코드와 대조하는 역방향 스윕이 다음 작업으로 가치 있다.
+> (이번 세션에서는 미실시.)
 
 ### 오탐으로 배제 (재조사 방지 — 5차에서 다시 파지 말 것)
 붙여넣기 이미지 분기의 `AfterEdit` 누락(내부 호출됨) · 이미지 붙여넣기 `CaretCanHostBlock` 조기 반환
