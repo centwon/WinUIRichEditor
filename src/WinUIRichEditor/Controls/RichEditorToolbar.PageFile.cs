@@ -111,7 +111,12 @@ public partial class RichEditorToolbar
         Target.ShowPageBoundaries = size != RichEditorPageSize.Continuous;
         // Fit-width has no meaning in Continuous; drop back to 100% when leaving a fitted paged view.
         if (size == RichEditorPageSize.Continuous && Target.IsFitWidth) Target.SetZoom(1.0);
-        SyncPage();
+        // Suppressed: SyncPage writes SelectedItem/SelectedIndex on the zoom and orientation combos, and
+        // this runs from a SelectionChanged handler (so _suppress is NOT already set). Without the guard
+        // those writes re-enter their own handlers and push values back into the editor — harmless today
+        // only because they happen to be the values just set. Sync() wraps SyncPage the same way.
+        _suppress = true;
+        try { SyncPage(); } finally { _suppress = false; }
     }
 
     // Reflect the editor's page/zoom state onto the built-in controls (called from Sync()).

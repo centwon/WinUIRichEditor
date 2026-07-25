@@ -366,41 +366,54 @@ public class TextRange
 
     private void RemoveParagraphFromDocument(FlowDocument doc, Paragraph p)
     {
-        if (doc.Blocks.Contains(p))
-        {
-            doc.Blocks.Remove(p);
-            return;
-        }
+        if (doc.Blocks.Remove(p)) return;
 
-        foreach (var block in doc.Blocks)
+        // Inside a cell the paragraph must STAY: a cell's block list is never empty (it always holds at
+        // least one paragraph), so removing it would strand the caret. Emptying it to a placeholder run
+        // is the in-cell equivalent of the removal above.
+        if (TopLevelBlockOf(doc, p) != null)
         {
-            if (block is TableBlock tb)
-            {
-                for (int r = 0; r < tb.Rows; r++)
-                    for (int c = 0; c < tb.Columns; c++)
-                        if (tb.Cells[r][c].Blocks.Contains(p))
-                        {
-                            p.Inlines.Clear();
-                            p.Inlines.Add(new Run { Text = "", Parent = p });
-                            return;
-                        }
-            }
+            p.Inlines.Clear();
+            p.Inlines.Add(new Run { Text = "", Parent = p });
         }
     }
 
-    // The top-level Block in the document that contains the given paragraph: the paragraph
-    // itself if it's a top-level block, otherwise the TableBlock whose cell it is.
+    // The top-level Block in the document that contains the given paragraph: the paragraph itself if it
+    // is a top-level block, otherwise the block it lives under at ANY depth.
     private Block? TopLevelBlockOf(FlowDocument doc, Paragraph p)
     {
         foreach (var block in doc.Blocks)
-        {
-            if (block == p) return block;
-            if (block is TableBlock tb)
-                for (int r = 0; r < tb.Rows; r++)
-                    for (int c = 0; c < tb.Columns; c++)
-                        if (tb.Cells[r][c].Blocks.Contains(p)) return tb;
-        }
+            if (BlockHolds(block, p)) return block;
         return null;
+    }
+
+    // Whether `b` contains paragraph `p` anywhere beneath it: b itself, a table cell's blocks at any
+    // nesting depth, or an inline table hanging off a paragraph's inlines. Both callers used to look
+    // exactly one level deep (a TOP-LEVEL table's cells), so a paragraph in a nested or inline table
+    // read as "not in this document": TopLevelBlockOf returned null, which made Delete() skip removing
+    // the top-level blocks a selection spanned, and RemoveParagraphFromDocument silently did nothing.
+    // Recurses through logical (anchor) cells, mirroring CollectParagraphs so the two agree on order
+    // and membership.
+    private static bool BlockHolds(Block b, Paragraph p)
+    {
+        if (ReferenceEquals(b, p)) return true;
+        switch (b)
+        {
+            case TableBlock tb:
+                foreach (var (_, _, cell) in tb.LogicalCells())
+                    foreach (var cb in cell.Blocks)
+                        if (BlockHolds(cb, p)) return true;
+                return false;
+            case Paragraph para:
+                foreach (var inl in para.Inlines)
+                    if (inl is InlineTable it)
+                        foreach (var (_, _, cell) in it.Table.LogicalCells())
+                            foreach (var cb in cell.Blocks)
+                                if (BlockHolds(cb, p)) return true;
+                return false;
+            default:
+                return false;
+        }
     }
 
     private FlowDocument? GetFlowDocument(TextElement element)

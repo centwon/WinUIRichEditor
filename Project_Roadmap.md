@@ -608,13 +608,22 @@ HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModif
   `OnReadOnlyChanged`의 `StopBlink()`가 `_caretOn`을 영구히 꺼 캐럿이 다시 켜질 수 없던 것도 함께 수정.
   데모 "읽기 전용" 페이지에서 켜 둠.
 
-### 확인만 하고 수정하지 않음 (무해)
-- `ImageCache.Clear()` 호출처 0개(문서 교체가 `Prune` 경로로 바뀐 뒤 남은 사문화 코드).
-- `RichEditorToolbar`가 `Target.StatusChanged`를 `Unloaded`에서 해제하지 않음 — 툴바만 버려지고
-  에디터가 사는 구성에서만 유효, 실사용 수명은 동일.
-- `OnPaperChanged`가 `_suppress` 없이 `SyncPage()` 호출 — 재진입이 같은 값 재적용이라 무해(취약하긴 함).
-- 5차의 `TryParseHex` 삼항 스멜 재확인 — 6·8자리 모두 정답. 4차 잔여 `TextRange.TopLevelBlockOf`/
-  `RemoveParagraphFromDocument` 미재귀도 호출부가 막고 있어 여전히 무해.
+### 무해 4건 정리 (2026-07-25, 사용자 요청) — 완료
+6차에서 "확인만 하고 수정하지 않음"으로 남겼던 것들. 하나는 무해가 아니었다.
+
+- [x] **`TextRange.TopLevelBlockOf`/`RemoveParagraphFromDocument` 미재귀** — *무해가 아니었다.*
+  둘 다 정확히 한 단계(최상위 표의 셀)만 봐서, **중첩/인라인 표 안의 문단은 "이 문서에 없음"으로 읽혔다.**
+  그 결과 `Delete()`가 선택이 가로지른 최상위 블록들을 지우지 않고 남겼다(중첩 셀에서 시작해 뒤쪽
+  문단까지 끄는 선택에서 중간 문단이 살아남음). 공용 재귀 판정 `BlockHolds`를 도입해 임의 깊이 셀 +
+  인라인 표까지 훑는다(`CollectParagraphs`와 같은 논리 셀 순회). **회귀 테스트 추가** — 수정 전 FAIL을
+  확인했다. 4차·6차 두 번 "호출부가 막고 있어 무해"로 판정했던 건이라, 그 판정 근거(`Delete`의 셀
+  엔드포인트 가드)가 **다른 분기**를 막을 뿐 이 경로는 막지 않았음을 놓쳤다.
+- [x] `ImageCache.Clear()` 삭제(사문화). 문서 교체는 의도적으로 `Prune(liveKeys)`를 쓴다 — undo 스냅샷이
+  공유하는 비트맵을 살려두기 위해서다. 필요하면 빈 집합 `Prune`이 곧 `Clear`라고 주석에 남겼다.
+- [x] `RichEditorToolbar`가 `Target.StatusChanged`를 `Unloaded`에서 해제하도록(+`Loaded`에서 재구독,
+  `-=` 후 `+=`로 멱등). 에디터가 핸들러를 쥐고 있어 툴바만 분리하면 툴바 전체가 도달 가능하게 남았다.
+- [x] `OnPaperChanged`의 `SyncPage()`를 `_suppress`로 감쌈(SelectionChanged 핸들러에서 호출되므로
+  suppress가 걸려 있지 않은 상태였다). `Sync()`가 하는 것과 동일하게 맞췄다.
 
 > **실기 검증 완료(2026-07-25, 사람 확인)**: 블록 표·인라인 표 모두 HWP에 격자로 붙고 정렬 정상.
 >

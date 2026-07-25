@@ -108,11 +108,7 @@ internal sealed class ImageCache
         _inflight.RemoveWhere(k => !liveKeys.Contains(k)); // their decodes self-dispose on completion
     }
 
-    /// <summary>Disposes every decoded bitmap and empties the cache (used on a wholesale document swap).</summary>
-    public void Clear()
-    {
-        foreach (var bmp in _decoded.Values) bmp?.Dispose();
-        _decoded.Clear();
-        _inflight.Clear();
-    }
+    // No Clear(): the document-swap path deliberately uses Prune(liveKeys) instead, so undo/redo
+    // snapshots that share RawBytes keep their bitmaps warm (a Clear there caused a placeholder flash
+    // and a full re-decode on every Ctrl+Z). Prune with an empty set is a Clear if one is ever needed.
 }

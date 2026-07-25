@@ -595,6 +595,44 @@ public class EnhancementTests
         Assert.Equal("B2", string.Concat(back.Cells[1][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
     }
 
+    // TextRange's TopLevelBlockOf looked exactly ONE level deep (a top-level table's own cells), so a
+    // paragraph inside a NESTED (or inline) table read as "not in this document" and Delete() skipped
+    // removing the top-level blocks the selection spanned — here the "MID" paragraph survived a
+    // selection that ran straight through it.
+    [Fact]
+    public void TextRangeDeleteSpansOutOfNestedTable()
+    {
+        var doc = new FlowDocument();
+        var a = new Paragraph { Inlines = { new Run { Text = "A" } } };
+        var outer = new TableBlock(1, 1);
+        var nested = new TableBlock(1, 1);
+        var n = nested.Cells[0][0].Para;
+        ((Run)n.Inlines[0]).Text = "N";
+        outer.Cells[0][0].Blocks.Clear();
+        outer.Cells[0][0].Blocks.Add(nested);
+        var mid = new Paragraph { Inlines = { new Run { Text = "MID" } } };
+        var z = new Paragraph { Inlines = { new Run { Text = "Z" } } };
+        doc.Blocks.Add(a); doc.Blocks.Add(outer); doc.Blocks.Add(mid); doc.Blocks.Add(z);
+
+        // Parent chain as UpdateParents wires it — TextRange reaches the document through it.
+        a.Parent = doc; outer.Parent = doc; mid.Parent = doc; z.Parent = doc;
+        outer.Cells[0][0].Parent = outer;
+        nested.Parent = outer.Cells[0][0];
+        nested.Cells[0][0].Parent = nested;
+        n.Parent = nested.Cells[0][0];
+        foreach (var inl in n.Inlines) inl.Parent = n;
+        foreach (var inl in z.Inlines) inl.Parent = z;
+
+        // Select from the end of the nested cell's text out to the start of the last top-level paragraph.
+        new TextRange(new TextPointer(n, 1), new TextPointer(z, 0)).Delete();
+
+        Assert.DoesNotContain(mid, doc.Blocks);   // the block the selection ran through is gone
+        Assert.Contains(outer, doc.Blocks);       // endpoints' own blocks survive
+        Assert.Contains(z, doc.Blocks);
+        Assert.Equal("N", string.Concat(n.Inlines.OfType<Run>().Select(r => r.Text)));
+        Assert.Equal("Z", string.Concat(z.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
     // \pard resets alignment to left per the spec, but HWP carries a previously seen \qr forward — one
     // right-aligned paragraph turned every following one right-aligned on paste. The writer now states
     // the alignment on every paragraph, \ql included.

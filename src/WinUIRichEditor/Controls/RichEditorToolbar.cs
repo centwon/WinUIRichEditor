@@ -28,9 +28,9 @@ public partial class RichEditorToolbar : UserControl
         set
         {
             if (ReferenceEquals(_target, value)) return;
-            if (_target != null) _target.StatusChanged -= OnTargetStatusChanged;
+            UnhookTarget();
             _target = value;
-            if (_target != null) _target.StatusChanged += OnTargetStatusChanged;
+            HookTarget();
             Content = Build(); // rebuild so the strip reflects the new target's read-only state
             Sync();
         }
@@ -144,8 +144,26 @@ public partial class RichEditorToolbar : UserControl
         LeadingItems.CollectionChanged += Rebuild;
         TrailingItems.CollectionChanged += Rebuild;
         Content = Build();
-        Loaded += (_, _) => { RichEditorLocalization.LanguageChanged += OnLanguageChanged; Sync(); };
-        Unloaded += (_, _) => RichEditorLocalization.LanguageChanged -= OnLanguageChanged;
+        // Both subscriptions are dropped on Unloaded and restored on Loaded. The target's StatusChanged
+        // matters as much as the static LanguageChanged: the EDITOR holds that handler, so a host that
+        // detaches the toolbar while keeping the editor alive would otherwise keep the whole toolbar
+        // (and its visual subtree) reachable forever.
+        Loaded += (_, _) => { RichEditorLocalization.LanguageChanged += OnLanguageChanged; HookTarget(); Sync(); };
+        Unloaded += (_, _) => { RichEditorLocalization.LanguageChanged -= OnLanguageChanged; UnhookTarget(); };
+    }
+
+    // Idempotent: the `-=` before the `+=` means a Loaded that arrives while already hooked (reparenting,
+    // or Loaded firing after the Target setter already hooked) can't double-subscribe.
+    private void HookTarget()
+    {
+        if (_target == null) return;
+        _target.StatusChanged -= OnTargetStatusChanged;
+        _target.StatusChanged += OnTargetStatusChanged;
+    }
+
+    private void UnhookTarget()
+    {
+        if (_target != null) _target.StatusChanged -= OnTargetStatusChanged;
     }
 
     private void OnLanguageChanged(object? sender, EventArgs e) { Content = Build(); Sync(); }
