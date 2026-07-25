@@ -494,7 +494,8 @@ graceful)·RTF 병합셀/코드페이지/필드 파싱·HTML bare-inline/pre/원
 방향 결정: **원본은 살아있는 상류** → 양방향·선별 수렴.
 
 ### 트랙 1 — 원본 → 포트 (드롭인 소스 호환) — ✅ 완료
-`RichEditor.Compat.cs` 신설 + `RichEditorView` 2건. 빌드 라이브러리/데모/테스트 **0/0, 67/67**. 실기 미검증(GUI 구동 불가).
+`RichEditor.Compat.cs` 신설 + `RichEditorView` 2건. 빌드 라이브러리/데모/테스트 **0/0**.
+**실기 검증 완료(2026-07-25, 사람 확인)** — 데모 View 페이지 상단 compat 스트립에서 8개 멤버 전부 호출 확인.
 - 원본 이름 별칭(`[EditorBrowsable(Never)]`로 IntelliSense 비오염): `SetFontFamily`→`SetRunFontFamily`,
   `InsertImageBytes`→`InsertImageBlock`, `PasteFromClipboardAsync`→`PasteAsync`.
 - 공개 래퍼: `FocusDocumentEnd()`(캔버스 포커스+`GoToDocEdge(end)`), `InsertInlineTable(r,c)`(인라인 삽입 패턴
@@ -628,11 +629,10 @@ HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModif
 >   ③ 드래그하면 텍스트 선택 하이라이트가 정상 — 이 셋으로 확인한다.
 > - ~~**읽기 전용 캐럿**(신규)~~ — **검증 완료(2026-07-25, 사람 확인)**: 데모 "읽기 전용" 페이지에서
 >   캐럿 표시·비깜빡임 정상.
-> - **파리티 트랙1 API**: 데모 View 페이지 상단에 **compat 검증 스트립**을 추가했다(2026-07-25) —
->   `SetFontFamily`·`InsertImageBytes`·`PasteFromClipboardAsync`·`FocusDocumentEnd`·`InsertInlineTable`·
->   `InsertImageFromFileAsync`·`ShowStatusBar`·`ZoomFactor`가 각각 버튼 하나이고, 오른쪽 readout이 호출
->   결과를 보여준다(`ZoomFactor`는 set 후 되읽어 `Editor.Zoom` 프록시임을 확인). 스트립 렌더는 캡처로
->   확인했고, **버튼 클릭 검증은 사람 몫**(unpackaged exe라 자동 클릭 불가).
+> - ~~**파리티 트랙1 API**~~ — **검증 완료(2026-07-25, 사람 확인)**. 데모 View 페이지 상단의 compat
+>   스트립(`SetFontFamily`·`InsertImageBytes`·`PasteFromClipboardAsync`·`FocusDocumentEnd`·
+>   `InsertInlineTable`·`InsertImageFromFileAsync`·`ShowStatusBar`·`ZoomFactor`)에서 8개 멤버 전부 통과.
+>   스트립은 상시 유지 — 앞으로 compat 표면이 늘면 여기에 버튼을 더한다.
 
 > **데모 GUI 검증 워크플로(재사용)**: `--page=control|readonly|toolbar|view` 인자로 시작 페이지를 지정한 뒤
 > `PrintWindow`로 캡처한다. 캡처는 열려 있는 페이지만 보여주므로 이 인자가 없으면 첫 페이지밖에 못 본다.
