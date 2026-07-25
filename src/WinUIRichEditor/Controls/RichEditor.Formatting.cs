@@ -222,13 +222,21 @@ public partial class RichEditor
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
         PushUndo(null);
-        foreach (var p in SelectedParagraphs())
-        {
-            p.ListType = ListKind.None;
-            p.ListMarker = ListMarkerStyle.Default;
-            p.ListLevel = 0;
-        }
+        foreach (var p in SelectedParagraphs()) ClearList(p);
         AfterFormat();
+    }
+
+    // Turning a list OFF clears the WHOLE list state, not just the kind. ListLevel keeps indenting the
+    // paragraph either way — ParaLeft adds `ListLevel * 20` regardless of ListType — so clearing only
+    // ListType left a formerly nested item with a phantom indent and no marker to explain it. ListMarker
+    // would likewise resurface if the paragraph became a list again later. Shared by RemoveList and every
+    // toggle-off path in SetListType, so "off" means the same thing everywhere (this is what let the
+    // toolbar's redundant "없음" picker entry go away).
+    private static void ClearList(Paragraph p)
+    {
+        p.ListType = ListKind.None;
+        p.ListMarker = ListMarkerStyle.Default;
+        p.ListLevel = 0;
     }
 
     // The list kind a marker style belongs to (number formats -> Ordered, everything else -> Bullet).
@@ -261,7 +269,11 @@ public partial class RichEditor
             var cellParas = SelectedParagraphs().ToList();
             if (cellParas.Count == 0) cellParas.Add(_caret.Paragraph);
             bool off = marker == null && cellParas.All(p => p.ListType == kind);
-            foreach (var p in cellParas) { p.ListType = off ? ListKind.None : kind; ApplyMarker(p); }
+            foreach (var p in cellParas)
+            {
+                if (off) ClearList(p);
+                else { p.ListType = kind; ApplyMarker(p); }
+            }
             UpdateParents(Document);
             AfterFormat();
             return;
@@ -270,14 +282,14 @@ public partial class RichEditor
         var targets = SelectedTopLevelParagraphs();
         if (targets.Count == 0)
         {
-            _caret.Paragraph.ListType = turningOff ? ListKind.None : kind;
-            ApplyMarker(_caret.Paragraph);
+            if (turningOff) ClearList(_caret.Paragraph);
+            else { _caret.Paragraph.ListType = kind; ApplyMarker(_caret.Paragraph); }
             AfterFormat();
             return;
         }
         if (turningOff)
         {
-            foreach (var tp in targets) tp.ListType = ListKind.None;
+            foreach (var tp in targets) ClearList(tp);
             UpdateParents(Document);
             AfterFormat();
             return;

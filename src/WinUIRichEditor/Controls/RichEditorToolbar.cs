@@ -391,13 +391,12 @@ public partial class RichEditorToolbar : UserControl
             TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
         };
 
+        // Styles only — no "없음" entry. Removal is the icon button immediately to the left of this
+        // dropdown (its toggle now clears the whole list state, nesting level included), so a "none"
+        // item here was a second door to the same command and mixed a non-style into a style picker.
+        // Word/HWP pickers do carry one; Google Docs doesn't, and with a complete toggle the simpler
+        // shape wins. The explicit, labelled "목록 제거" survives in the right-click menu.
         var menu = new MenuFlyout();
-        // "없음" FIRST (HWP/Word style-picker convention): removes the list attribute entirely —
-        // bullet/numbering, marker style, and nesting level (RemoveList).
-        var none = new MenuFlyoutItem { Text = Loc("ListNone") };
-        none.Click += (_, _) => Target?.RemoveList();
-        menu.Items.Add(none);
-        menu.Items.Add(new MenuFlyoutSeparator());
         foreach (var (style, g) in options)
         {
             var s = style;

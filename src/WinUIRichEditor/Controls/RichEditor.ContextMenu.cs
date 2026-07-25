@@ -152,13 +152,14 @@ public partial class RichEditor
             // ── 목록 (list) — promoted to top level ──
             Item(Sub(Loc("List"), RichEditorIcon.BulletList,
                 BulletToggle(Loc("BulletList"), fmt.List == ListKind.Bullet, ToggleBullet, RichEditorShortcuts.Display(ShortcutId.BulletList)),
+                // Style submenus list STYLES only. Removal has exactly two doors — the toggle above
+                // (which now clears the whole list state) and the labelled "목록 제거" below — instead
+                // of the three it used to have (a "없음" first item in each of these two submenus).
                 Sub(Loc("BulletStyle"), null,
-                    Mi(Loc("ListNone"), RemoveList), Sep(),
                     Mi("•", () => SetListStyle(ListMarkerStyle.Disc)), Mi("◦", () => SetListStyle(ListMarkerStyle.Circle)),
                     Mi("▪", () => SetListStyle(ListMarkerStyle.Square)), Mi("–", () => SetListStyle(ListMarkerStyle.Dash))),
                 BulletToggle(Loc("NumberedList"), fmt.List == ListKind.Ordered, ToggleNumbering, RichEditorShortcuts.Display(ShortcutId.NumberedList)),
                 Sub(Loc("NumberStyle"), null,
-                    Mi(Loc("ListNone"), RemoveList), Sep(),
                     Mi("1.", () => SetListStyle(ListMarkerStyle.Decimal)), Mi("1)", () => SetListStyle(ListMarkerStyle.DecimalParen)),
                     Mi("a)", () => SetListStyle(ListMarkerStyle.LowerAlpha)), Mi("A)", () => SetListStyle(ListMarkerStyle.UpperAlpha)),
                     Mi("i)", () => SetListStyle(ListMarkerStyle.LowerRoman))),
