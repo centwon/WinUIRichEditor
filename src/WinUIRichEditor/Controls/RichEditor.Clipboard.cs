@@ -502,9 +502,13 @@ public partial class RichEditor
         return InBlocks(d.Blocks);
     }
 
-    /// <summary>Whether pasting HTML may download remote (http/https) images. Default true; set false
-    /// for privacy-sensitive hosts — pasted markup can reference tracking pixels, and any paste would
-    /// otherwise issue network requests. Downloads are capped at 20MB per image and ~5s per paste.</summary>
+    /// <summary>Whether parsing HTML may download remote (http/https) images. Default true; set false
+    /// for privacy-sensitive hosts — markup can reference tracking pixels, and loading it would
+    /// otherwise issue network requests. Downloads are capped at 20MB per image and ~5s per parse.
+    /// <para>Despite the name this governs every HTML entry point, not only paste:
+    /// <see cref="LoadHtmlAsync"/> (the one other path that actually reaches the network) plus
+    /// <see cref="LoadHtml"/>/<see cref="InsertHtml"/>, which are threaded for consistency even though
+    /// the synchronous parser never performs network I/O.</para></summary>
     public bool AllowRemoteImagesOnPaste { get; set; } = true;
 
     // A trimmed FlowDocument for the current selection that preserves each paragraph's

@@ -515,10 +515,30 @@ graceful)·RTF 병합셀/코드페이지/필드 파싱·HTML bare-inline/pre/원
 **역이식 금지(유지)**: 줌 아키텍처(원본은 View 줌으로 충분)·이미지 콜백(WinUI HWND 제약 산물)·
 Win2D 전용(`CanvasBackground`/`Dispose`).
 
-> **후속 후보**: 원본의 백포트 커밋 메시지가 "full source audit로 찾은 결함 5건"(`924d366`)과
-> "backport 결함 7건"(`86427cf`)을 언급한다. 같은 코드를 이식한 만큼 **그 결함들이 포트 쪽에도
-> 남아 있을 수 있다** — 원본 커밋 diff를 포트 대응 코드와 대조하는 역방향 스윕이 다음 작업으로 가치 있다.
-> (이번 세션에서는 미실시.)
+### 역방향 스윕 (2026-07-25) — 원본 감사 결과를 포트에 대조, 완료
+원본의 `924d366`(full source audit 결함 5건)·`86427cf`(backport 결함 7건)·`bcc12e4`를 포트 대응 코드와
+1:1 대조. **포트에 남아 있던 결함 4건 수정**, 8건은 포트가 이미 가지고 있음을 확인.
+
+- [x] **찾기 하이라이트가 현재 매치를 흐림**(`DrawFindHighlights`): 앰버 틴트를 **모든** 매치에 칠하고
+  그 위에 반투명 선택 파랑이 얹혀, 캐럿이 어느 매치에 있는지 구분이 안 됐다. 선택이 곧 매치인 경우
+  그 오프셋만 틴트에서 제외한다(브라우저/VS Code 방식, `GetFindMatchPosition`과 동일한 판정).
+- [x] **한 셀 안에서 여러 문단을 선택하고 목록 토글 시 캐럿 문단만 적용**(`SetListType`): 같은 셀 안의
+  선택은 `CellBlockSelection`이 아니라(양 끝이 같은 셀) 캐럿 문단만 건드리는 분기로 빠졌다. 셀 분기를
+  `SelectedParagraphs()` 기반으로 통합 — 사각 셀 선택·셀 내 다중 문단·무선택을 한 경로로 처리.
+- [x] **`LoadHtmlAsync`가 `AllowRemoteImagesOnPaste`를 무시**(`RichEditor.DocumentApi.cs`): 3번째 인자를
+  안 넘겨 기본값 `true`가 먹었다. 프라이버시 목적으로 끈 호스트도 `LoadHtmlAsync`에서는 원격 이미지를
+  **실제로 다운로드**했다(추적 픽셀). `LoadHtml`/`InsertHtml`도 일관성을 위해 함께 연결 — 동기 파서는
+  애초에 네트워크를 안 타므로 그 둘은 실질 영향 없음. 속성 문서도 "paste 전용 아님"으로 정정.
+- [x] **블록 오브젝트 선택 중 Ctrl+Shift+X가 잘라내기로 먹힘**: 블록 선택 분기의 Ctrl+C/Ctrl+X가 shift를
+  배제하지 않아 취소선 단축키를 삼켰다. `!shift` 추가(원본이 평문 잘라내기 분기에서 맞은 것과 동종).
+
+**포트가 이미 가지고 있어 해당 없음(8건)**: `MergeCells` 다중 블록 일반화(원본만 `.Para` 시절이었음) ·
+`TextPointer.CompareTo` 재귀 · Enter/붙여넣기/목록 변환의 문단 서식 승계(`CloneFormat`/`CopyFormatFrom`) ·
+셀 목록 마커 · 리사이즈 핸들 no-op 언두 · HTML `font-weight` 오탐 · RTF 셀 그림 탈출 ·
+인라인 표 셀 정규화. 중첩/인라인 표의 셀 블록 선택 틴트도 `DrawNestedTable`이 `_renderCellSel`을 보므로 정상.
+
+> **자동 검증 없음**: 4건 모두 렌더 패스 또는 컨트롤 레벨(DP 정적 생성자가 WinUI 런타임을 요구)이라
+> 헤드리스 테스트가 불가능하다. 실기 확인 필요 — 아래 참조.
 
 ### 오탐으로 배제 (재조사 방지 — 5차에서 다시 파지 말 것)
 붙여넣기 이미지 분기의 `AfterEdit` 누락(내부 호출됨) · 이미지 붙여넣기 `CaretCanHostBlock` 조기 반환

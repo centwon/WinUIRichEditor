@@ -394,20 +394,37 @@ public partial class RichEditor
         if (_printMode || FindHighlightQuery is not { } q) return;
         var cmp = FindHighlightMatchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
         string text = BuildPlain(p);
+
+        // The CURRENT match is already marked by the selection, so it must not be tinted as well: amber
+        // over the translucent selection blue blends into a muddy low-contrast fill and the user loses
+        // track of which match the caret is on. Highlight-all marks the OTHER matches (browser / VS Code
+        // behaviour). Same "the selection IS a match" test as GetFindMatchPosition.
+        int selStart = -1;
+        if (_selStart.Paragraph != null && ReferenceEquals(_selStart.Paragraph, p)
+            && ReferenceEquals(_selEnd.Paragraph, p))
+        {
+            int a = Math.Min(_selStart.Offset, _selEnd.Offset);
+            int b = Math.Max(_selStart.Offset, _selEnd.Offset);
+            if (b - a == q.Length) selStart = a;
+        }
+
         int from = 0;
         while (from <= text.Length)
         {
             int idx = text.IndexOf(q, from, cmp);
             if (idx < 0) break;
-            try
+            if (idx != selStart)
             {
-                foreach (var r in layout.GetCharacterRegions(idx, q.Length))
+                try
                 {
-                    var lb = r.LayoutBounds;
-                    ds.FillRectangle(new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height), FindMatchFill);
+                    foreach (var r in layout.GetCharacterRegions(idx, q.Length))
+                    {
+                        var lb = r.LayoutBounds;
+                        ds.FillRectangle(new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height), FindMatchFill);
+                    }
                 }
+                catch { }
             }
-            catch { }
             from = idx + 1;
         }
     }

@@ -21,14 +21,16 @@ public partial class RichEditor
 
     /// <summary>Replaces the document with one parsed from HTML (empty document if null/empty).</summary>
     public void LoadHtml(string? html)
-        => LoadDocument(string.IsNullOrEmpty(html) ? new FlowDocument() : HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages));
+        => LoadDocument(string.IsNullOrEmpty(html)
+            ? new FlowDocument()
+            : HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages, AllowRemoteImagesOnPaste));
 
     /// <summary>Replaces the document with one parsed from HTML, downloading remote (<c>http</c>)
     /// images off the UI thread first so a slow network can't freeze the UI. Await from the UI thread.</summary>
     public async Task LoadHtmlAsync(string? html)
         => LoadDocument(string.IsNullOrEmpty(html)
             ? new FlowDocument()
-            : await HtmlDocumentFormatter.ParseHtmlAsync(html, AllowLocalFileImages));
+            : await HtmlDocumentFormatter.ParseHtmlAsync(html, AllowLocalFileImages, AllowRemoteImagesOnPaste));
 
     /// <summary>Serializes the document to RTF (Rich Text Format) — readable by Word, WordPad, LibreOffice,
     /// and HWP.</summary>
@@ -109,7 +111,7 @@ public partial class RichEditor
     public void InsertHtml(string html)
     {
         if (Document == null || IsReadOnly || string.IsNullOrEmpty(html)) return;
-        var parsed = HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages);
+        var parsed = HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages, AllowRemoteImagesOnPaste);
         if (parsed.Blocks.Count == 0) return;
         PushUndo(null);
         InsertDocumentAtCaret(parsed);

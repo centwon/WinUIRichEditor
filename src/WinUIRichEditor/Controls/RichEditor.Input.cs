@@ -716,9 +716,11 @@ public partial class RichEditor
                 return;
             }
             // Copy/Cut act on the object itself — must run before the "clear on any other key" below, which
-            // would otherwise deselect the object before the clipboard sees it.
-            if (ctrl && e.Key == VirtualKey.C) { _ = CopyAsync(); e.Handled = true; return; }
-            if (ctrl && e.Key == VirtualKey.X) { if (!IsReadOnly) _ = CutAsync(); e.Handled = true; return; }
+            // would otherwise deselect the object before the clipboard sees it. `!shift` matters: these
+            // match on the bare key, so without it Ctrl+SHIFT+X (strikethrough) was swallowed here and cut
+            // the object instead — the same defect the original hit on its plain-text cut branch.
+            if (ctrl && !shift && e.Key == VirtualKey.C) { _ = CopyAsync(); e.Handled = true; return; }
+            if (ctrl && !shift && e.Key == VirtualKey.X) { if (!IsReadOnly) _ = CutAsync(); e.Handled = true; return; }
             // Block caret: an arrow steps out of the selected top-level object to the adjacent paragraph.
             if (_selectedBlock is { } selBlk
                 && e.Key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down)

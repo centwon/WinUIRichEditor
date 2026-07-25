@@ -246,28 +246,23 @@ public partial class RichEditor
         bool turningOff = marker == null && _caret.Paragraph.ListType == kind;
         void ApplyMarker(Paragraph par) { if (marker.HasValue) par.ListMarker = marker.Value; }
 
-        // Table-cell block selection: set the list flag directly on every selected cell paragraph. The
-        // top-level newline-splitting/reindexing below only applies to Document.Blocks paragraphs; a cell
-        // paragraph's soft line breaks stay one list item. Toggle is group-based (turn all off only when
-        // every selected paragraph already has this list kind).
-        if (CellBlockSelection() != null)
+        // Caret inside a table cell — with a rectangular cell-block selection, with a plain selection
+        // spanning several paragraphs of ONE cell, or with no selection at all. All three set the list
+        // flag in place on EVERY selected paragraph: the top-level newline-splitting/reindexing path
+        // below only handles Document.Blocks paragraphs (a cell paragraph isn't there, so
+        // SplitByNewlines' RemoveAt/Insert would no-op and the toggle would silently do nothing), and a
+        // cell paragraph's soft line breaks stay one list item anyway.
+        // Collecting via SelectedParagraphs is what makes the multi-paragraph-in-one-cell case work —
+        // that isn't a CellBlockSelection (both endpoints are in the same cell), so it used to fall
+        // through to a branch that only ever touched the CARET paragraph and left the rest unbulleted.
+        // Toggle is group-based: turn all off only when every selected paragraph already has this kind.
+        if (CellBlockSelection() != null || (_caret.Paragraph is { } cp0 && FindCell(cp0) is not null))
         {
             var cellParas = SelectedParagraphs().ToList();
-            bool off = marker == null && cellParas.Count > 0 && cellParas.All(p => p.ListType == kind);
+            if (cellParas.Count == 0) cellParas.Add(_caret.Paragraph);
+            bool off = marker == null && cellParas.All(p => p.ListType == kind);
             foreach (var p in cellParas) { p.ListType = off ? ListKind.None : kind; ApplyMarker(p); }
             UpdateParents(Document);
-            AfterFormat();
-            return;
-        }
-
-        // Caret in a cell with no cross-cell selection: toggle the list flag on the caret paragraph in
-        // place. The newline-splitting/reindexing path below only handles Document.Blocks paragraphs —
-        // a cell paragraph isn't in doc.Blocks, so SplitByNewlines' RemoveAt/Insert would no-op and the
-        // list toggle silently did nothing (soft breaks in a cell stay one list item anyway).
-        if (FindCell(_caret.Paragraph) is not null)
-        {
-            _caret.Paragraph.ListType = turningOff ? ListKind.None : kind;
-            ApplyMarker(_caret.Paragraph);
             AfterFormat();
             return;
         }
