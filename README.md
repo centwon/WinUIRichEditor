@@ -6,19 +6,25 @@ A from-scratch rich text editor control for **WinUI 3**, rendered with **Win2D**
 formatters, and "single `TextLayout` is the source of truth" engine design, rebuilt on the
 DirectWrite-backed `CanvasTextLayout` instead of Avalonia's `TextLayout`.
 
-> **Status: feature parity with AvaloniaRichEditor `0.8.0` is complete.**
-> Tables, images, formatting, clipboard, page view, print/PDF, the drop-in host controls, localization
-> and accessibility are all working, including the edge cases (nested/inline-table row·column resize,
-> full keyboard caret traversal through inline-table cells). **Native AOT** publish works end-to-end
-> (self-contained — builds, runs, and renders). The document format is byte-compatible with
-> AvaloniaRichEditor (verified by loading a `.flow` saved by the original). See
-> [`Project_Roadmap.md`](Project_Roadmap.md) and [`CHANGELOG.md`](CHANGELOG.md). The control API may
-> still change.
+> **Status: converged with AvaloniaRichEditor — feature parity in both directions.**
+> Beyond matching the original's feature set, the two projects have since exchanged improvements both
+> ways (a source-compatible alias layer here, platform-agnostic features back-ported there), and the
+> original's own full-source audit has been swept against this codebase. Tables, images, formatting,
+> clipboard, page view, print/PDF, the drop-in host controls, localization and accessibility all work,
+> including the edge cases (nested/inline-table row·column resize, full keyboard caret traversal through
+> inline-table cells). **Native AOT** publish works end-to-end (self-contained — builds, runs, renders;
+> re-verified each release). The document format is byte-compatible with AvaloniaRichEditor (verified by
+> loading a `.flow` saved by the original). See [`Project_Roadmap.md`](Project_Roadmap.md) and
+> [`CHANGELOG.md`](CHANGELOG.md). The control API may still change.
+
+> **Requires Windows App SDK 2.3.2 or later.** (Raised from 2.2.1 in 0.9.0 — see the CHANGELOG for the
+> other behavioural changes in that release.)
 
 ## Tech stack
 
 - **.NET 10** (`net10.0-windows10.0.26100.0`), C# `nullable enable`. Target: **unpackaged** (no MSIX).
-- **WinUI 3 / Windows App SDK 2.2.0** — controls are **code-only** (no XAML, avoids AOT compiled-binding pitfalls).
+- **WinUI 3 / Windows App SDK 2.3.x** — the library references the split `Microsoft.WindowsAppSDK.WinUI`
+  package (2.3.2); controls are **code-only** (no XAML, avoids AOT compiled-binding pitfalls).
 - **Win2D 1.4.0** (`Microsoft.Graphics.Win2D`) — immediate-mode rendering; one `CanvasTextLayout` per
   paragraph drives render, caret, hit-testing, and selection.
 - **HtmlAgilityPack 1.12.4** for external HTML paste parsing.

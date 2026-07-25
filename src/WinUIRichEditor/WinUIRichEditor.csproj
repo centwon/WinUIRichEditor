@@ -22,7 +22,7 @@
   <!-- NuGet 패키지 메타데이터. 버전은 태그(release)로 덮어쓸 수 있게 CI에서 -p:Version 전달 가능. -->
   <PropertyGroup Label="Packaging">
     <PackageId>WinUIRichEditor</PackageId>
-    <Version>0.8.1</Version>
+    <Version>0.9.0</Version>
     <Authors>centwon</Authors>
     <Company>centwon</Company>
     <Product>WinUIRichEditor</Product>
@@ -36,7 +36,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>winui;winui3;win2d;richtextbox;richtext;rich-text-editor;editor;wysiwyg;flowdocument;rtf;directwrite</PackageTags>
-    <PackageReleaseNotes>See CHANGELOG.md. Feature parity with AvaloniaRichEditor 0.8.0. The control API may still change.</PackageReleaseNotes>
+    <PackageReleaseNotes>See CHANGELOG.md. Requires Windows App SDK 2.3.2+ (raised from 2.2.1). Breaking/behavioural: the synchronous ParseHtml/LoadHtml/InsertHtml no longer download remote images (use the Async variants); AllowRemoteImagesOnPaste now also governs LoadHtml*/InsertHtml; turning a list off now clears its nesting level; RTF output reshaped for HWP/Word table and alignment fidelity. The control API may still change.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>

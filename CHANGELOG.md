@@ -5,6 +5,33 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-25
+
+원본 `AvaloniaRichEditor`와의 **양방향 수렴**(파리티 갭 분석 → 원본→포트 소스 호환 → 포트→원본 역이식 →
+원본 감사 결과의 역방향 스윕)과 **HWP/Word 상호운용 교정**이 이 릴리스의 축이다. 6·7차 전수 리뷰까지
+포함해 결함 **20건**을 고쳤고, 테스트는 67 → **74**로 늘었다.
+
+### ⚠️ 업그레이드 전 확인 (breaking / 동작 변경)
+- **최소 요구 `Microsoft.WindowsAppSDK.WinUI` 2.2.1 → 2.3.2.** 2.2.x에 머무는 앱은 설치할 수 없다.
+- **동기 `ParseHtml`/`LoadHtml`/`InsertHtml`이 원격(`http`) 이미지를 더 이상 받지 않는다.** UI를 최대 5초
+  멈추던 동기 다운로드를 제거했다. 원격 이미지가 필요하면 `ParseHtmlAsync`/`LoadHtmlAsync`를 쓸 것.
+- **`AllowRemoteImagesOnPaste`가 붙여넣기 전용이 아니다** — `LoadHtml`/`LoadHtmlAsync`/`InsertHtml`까지
+  관장한다. 끈 호스트가 `LoadHtmlAsync`에서 실제로 원격 요청을 보내던 버그의 수정이다.
+- **목록 토글 해제가 `ListLevel`/`ListMarker`까지 지운다.** 중첩 목록을 끄면 들여쓰기도 함께 사라진다
+  (종전에는 마커만 사라지고 레벨×20px 들여쓰기가 유령처럼 남았다).
+- **RTF 출력 형태가 크게 바뀌었다** — 행 정의 2회 방출, 모든 문단에 명시 정렬(`\ql` 포함), 인라인 표를
+  실제 `\trowd` 행으로 승격. HWP/Word가 표와 정렬을 제대로 읽도록 하기 위한 변경이다.
+- **로컬라이제이션 키 `ListNone` 제거**, 툴바 ▾ 드롭다운과 우클릭 메뉴의 "없음" 항목 제거.
+  이 키에 오버라이드를 등록한 호스트는 등록을 지워도 된다.
+
+### 주요 추가
+- 읽기 전용 뷰어 캐럿 옵트인 `ShowCaretWhenReadOnly`(기본 off, 깜빡이지 않음).
+- 원본 API 소스 호환 계층: `SetFontFamily`/`InsertImageBytes`/`PasteFromClipboardAsync` 별칭,
+  `FocusDocumentEnd()`, `InsertInlineTable(r,c)`, `InsertImageFromFileAsync(nint)`,
+  `RichEditorView.ShowStatusBar`/`ZoomFactor`.
+
+*아래는 이 릴리스에 들어간 작업의 시간순 상세다.*
+
 ### ⚠️ 최소 요구 사항 상향 (2026-07-25)
 - **`Microsoft.WindowsAppSDK.WinUI` 최소 버전 2.2.1 → 2.3.2** (데모/호스트 쪽 메타패키지는
   `Microsoft.WindowsAppSDK` 2.3.1). 라이브러리의 `PackageReference` 버전이 곧 **NuGet 소비자의 최소
