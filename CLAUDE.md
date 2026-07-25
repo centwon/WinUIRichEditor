@@ -8,11 +8,18 @@
 ## 기술 기반 (Tech Stack)
 
 - **런타임**: .NET 10 (`net10.0-windows10.0.26100.0`), C# `Nullable enable`. 목표: **Unpackaged**(MSIX 아님) + **Native AOT**.
-- **UI**: WinUI 3 / Windows App SDK **2.2.0**. 컨트롤은 XAML 없는 **코드 전용**(AOT의 컴파일 바인딩 함정 회피).
-- **렌더 백엔드**: **Win2D** `Microsoft.Graphics.Win2D` **1.4.0** (CsWinRT 2.2.0 기반 → WinUI와 같은 AOT 프로젝션 레일).
+- **UI**: WinUI 3 / Windows App SDK **2.3.x**. 컨트롤은 XAML 없는 **코드 전용**(AOT의 컴파일 바인딩 함정 회피).
+  라이브러리는 분할 패키지 **`Microsoft.WindowsAppSDK.WinUI` 2.3.2**만 참조하고(메타패키지는 WebView2/AI/ML/
+  Widgets를 끌고 온다), 데모는 메타패키지 **`Microsoft.WindowsAppSDK` 2.3.1**을 쓴다. 라이브러리 쪽 버전이
+  **NuGet 소비자의 최소 요구치**가 되므로 올릴 때는 breaking으로 취급한다.
+- **렌더 백엔드**: **Win2D** `Microsoft.Graphics.Win2D` **1.4.0** (WinUI와 같은 AOT 프로젝션 레일).
+  ⚠ Win2D 1.4.0의 nuspec은 `Microsoft.WindowsAppSDK.WinUI` **1.8.260204000 하한선**을 선언한다. 위 명시
+  참조가 그걸 들어올리는 역할이므로 **빼면 안 된다** — 빼면 1.8이 해석되어 PRI277 self-contained 병합
+  충돌이 되살아난다(예전엔 그 충돌을 데모의 PRI 스트립 타깃으로 우회했고, 지금은 그 타깃이 불필요해 삭제됨).
   - `CanvasControl.Draw` + `CanvasDrawingSession` = 즉시모드 렌더(Avalonia `Control.Render(DrawingContext)` 대응).
   - `CanvasTextLayout`(+`CanvasTextFormat`) = **단일 진실의 원천**. DirectWrite 기반이라 Avalonia 윈도우 `TextLayout`과 글리프 메트릭 일치. `HitTest`/`GetCaretPosition`/`GetCharacterRegions`/`SetUnderline`/인라인 객체 보유.
-- **NuGet**: Microsoft.WindowsAppSDK 2.2.0, Microsoft.Graphics.Win2D 1.4.0, HtmlAgilityPack 1.12.4(외부 HTML 붙여넣기 파싱).
+- **NuGet**: 라이브러리 = Microsoft.WindowsAppSDK.WinUI 2.3.2 + Microsoft.Graphics.Win2D 1.4.0 +
+  HtmlAgilityPack 1.12.4(외부 HTML 붙여넣기 파싱). 데모 = Microsoft.WindowsAppSDK 2.3.1 + Win2D 1.4.0.
 
 ### Avalonia → WinUI/Win2D 매핑 (포팅 사전)
 | Avalonia | WinUI 3 / Win2D |

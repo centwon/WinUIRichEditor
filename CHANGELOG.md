@@ -5,6 +5,19 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 
 ## [Unreleased]
 
+### ⚠️ 최소 요구 사항 상향 (2026-07-25)
+- **`Microsoft.WindowsAppSDK.WinUI` 최소 버전 2.2.1 → 2.3.2** (데모/호스트 쪽 메타패키지는
+  `Microsoft.WindowsAppSDK` 2.3.1). 라이브러리의 `PackageReference` 버전이 곧 **NuGet 소비자의 최소
+  요구치**이므로, 아직 WindowsAppSDK 2.2.x에 머무는 앱은 이 버전을 설치할 수 없다 — 소비자 관점에서
+  breaking이다.
+- **PRI 워크어라운드 제거**(`_StripStaleWinAppSdkRuntimePri`, 데모 csproj): WinUI 1.8.x 런타임 PRI를
+  self-contained 병합 전에 걷어내 PRI277(`TextCommandDescriptionCopy`)을 피하던 빌드 타깃이다.
+  Win2D 1.4.0은 **여전히** `Microsoft.WindowsAppSDK.WinUI 1.8.260204000` 하한선을 선언하지만(nuspec),
+  이제 양쪽 프로젝트가 2.3.x를 명시 참조하므로 NuGet이 그 위로 해석해 1.8 PRI가 병합에 도달하지 않는다.
+  타깃을 끈 채 AOT self-contained 게시가 성공하는 것을 **실측 확인**한 뒤 삭제했다.
+  ⚠ 라이브러리의 명시 `Microsoft.WindowsAppSDK.WinUI` 참조는 그 하한선을 들어올리는 load-bearing
+  참조다 — 빼면 1.8이 해석되어 충돌이 되살아난다.
+
 4차 전수 리뷰(2026-07-23)에서 확인된 결함 10건 수정 + 찾기 바 UX 1건, 그리고 6차 전수 리뷰(2026-07-25)
 결함 4건 (맨 아래 절).
 

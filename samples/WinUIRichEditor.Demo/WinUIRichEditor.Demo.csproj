@@ -25,8 +25,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.1839" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
   </ItemGroup>
 
@@ -40,16 +40,12 @@
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
   </PropertyGroup>
 
-  <!-- AOT/self-contained workaround: Win2D 1.4.0 transitively pulls WinUI 1.8.x's runtime PRI, which
-       conflicts with WinAppSDK 2.2's WinUI PRI during the self-contained merge (PRI277
-       'TextCommandDescriptionCopy'). Drop the stale 1.8.x WinAppSDK runtime PRIs before the merge so
-       only the 2.2 line is bundled. Remove once Win2D ships a WinAppSDK-2.2-aligned release. -->
-  <Target Name="_StripStaleWinAppSdkRuntimePri" BeforeTargets="_GenerateProjectPriConfigurationFiles">
-    <ItemGroup>
-      <_PriFile Remove="@(_PriFile)" Condition="$([System.String]::Copy('%(Identity)').Contains('windowsappsdk.winui\1.8'))" />
-      <_PriFilesFromPayloadRaw Remove="@(_PriFilesFromPayloadRaw)" Condition="$([System.String]::Copy('%(Identity)').Contains('windowsappsdk.winui\1.8'))" />
-    </ItemGroup>
-  </Target>
+  <!-- REMOVED (2026-07-25): _StripStaleWinAppSdkRuntimePri. It dropped WinUI 1.8.x runtime PRIs before
+       the self-contained merge to avoid PRI277 'TextCommandDescriptionCopy'. Win2D 1.4.0 still declares a
+       WinUI 1.8.x FLOOR (see its nuspec), but both projects now reference WindowsAppSDK 2.3.x explicitly,
+       so NuGet resolves well above 1.8 and no 1.8 PRI ever reaches the merge. Verified empirically: the
+       AOT self-contained publish succeeds with the target disabled. If the explicit WindowsAppSDK
+       reference is ever dropped, Win2D's floor pulls 1.8 back in and this conflict can return. -->
 
   <!-- Deployment diet (publish only): drop the Windows-ML stack (onnxruntime.dll ~21MB +
        DirectML.dll ~18MB) that the WinAppSDK self-contained runtime bundles for AI APIs this

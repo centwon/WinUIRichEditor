@@ -27,8 +27,13 @@
 > 기본 `ShowFormattingMenu`), 단축키 중앙 테이블(`RichEditorShortcuts`, Word 표준)을 추가했다. 상세는 CHANGELOG의
 > "2026-07-06" 항목. 아래 EditorMode 관련 서술은 그 이전 기준이다.
 >
-> **남은 외부 의존(차단 아님):** Win2D 1.4.0이 WinUI 1.8.x 런타임에 의존해 WinAppSDK 2.2와 PRI가 충돌 →
-> 데모 빌드에 PRI 스트립 워크어라운드 유지 중. WinAppSDK-2.x 정렬 Win2D 릴리스가 나오면 제거 가능.
+> ~~**남은 외부 의존(차단 아님):** Win2D의 WinUI 1.8 의존 → PRI 충돌 → 스트립 워크어라운드~~ —
+> **해소(2026-07-25).** Win2D 1.4.0은 여전히 `Microsoft.WindowsAppSDK.WinUI` **1.8.260204000 하한선**을
+> 선언하지만(nuspec 확인), 라이브러리·데모가 WindowsAppSDK **2.3.x를 명시 참조**하므로 NuGet이 그 위로
+> 해석해 1.8 PRI가 병합에 도달하지 않는다. **PRI 스트립 타깃은 삭제**했다 — 타깃을 끄고 AOT
+> self-contained 게시를 돌려 성공하는 것으로 확인했다(추정이 아니라 실측).
+> ⚠ 명시 참조를 빼면 Win2D의 하한선이 1.8을 다시 끌어와 충돌이 되살아난다. `WinUIRichEditor.csproj`의
+> 해당 `PackageReference`는 load-bearing이다.
 
 ### 0.8.0 격차 (parity gap — 남은 것 / [x]=완료)
 - **표**: [x] Tab 셀 이동, [x] 행/열 추가·삭제·셀 병합 UI(우클릭), [x] **draw-to-size 삽입**(툴바 그리드 피커), [x] **열 너비·행 높이 리사이즈**(경계 드래그), [x] **표 블록 선택**(좌/상단 경계 클릭→Delete), [x] **인라인 표 편집**(마우스 셀 클릭 `HitInlineTable`)·**블록↔인라인 토글**(우클릭). 표 parity 완료.
@@ -682,6 +687,34 @@ HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModif
   따라가 확인했다. "아마 괜찮다"로 넘기지 않는다 — 6차의 `TextRange` 오판이 그렇게 나왔다).
 - 손상 JSON의 `Cells: null` → `Rows=0` 표. 레이아웃/네비/정규화 전부 빈 그리드에서 무해하게 통과하고
   높이 0으로 렌더된다. 정상 writer는 항상 Cells를 쓴다.
+
+## 0.9.0 릴리스 준비 (2026-07-25) — 진행 중
+게시 파이프라인은 이미 있다: `.github/workflows/publish.yml`이 `v*` 태그 푸시에 pack → nuget.org
+(Trusted Publishing/OIDC, 장기 키 없음, user `kanu`). 따라서 준비 작업은 전부 **태그 밀기 전에 맞출 것**이다.
+
+### 완료
+- [x] **의존성 상향 + PRI 워크어라운드 제거** — WindowsAppSDK 2.2 → **2.3.x**
+  (라이브러리 `Microsoft.WindowsAppSDK.WinUI` **2.3.2**, 데모 메타패키지 **2.3.1**, SDK.BuildTools/Test.Sdk 동반).
+  `_StripStaleWinAppSdkRuntimePri` 삭제. csproj/CLAUDE.md/로드맵의 stale 문구 정정.
+- [x] **AOT 게시 재검증(실측)** — 워크어라운드 없이 self-contained `win-x64.pubxml` 게시 성공:
+  총 **85.2MB**, 네이티브 exe **14.2MB**, `coreclr.dll`·관리형 `WinUIRichEditor.dll` 부재(= 진짜 AOT),
+  Windows-ML 다이어트 타깃 동작, **실행 + Win2D 렌더 확인**(PrintWindow 캡처). 빌드 0/0, 테스트 74/74.
+  *(이전 기록 80.3MB는 WinAppSDK 2.2 기준. 2.3에서 ~5MB 증가.)*
+
+### 남은 것
+- [ ] **버전 결정 및 반영** — 0.9.0 권장(추가 공개 API + 동작 변경 다수 + 최소 요구 SDK 상향).
+  csproj `<Version>`, `PackageReleaseNotes`(현재 "parity with 0.8.0" 하드코딩) 갱신.
+- [ ] **CHANGELOG 재구성** — `[Unreleased]`가 240줄 넘게 리뷰 회차별 시간순으로 쌓여 있다. 소비자용
+  Added/Changed/Fixed를 앞에 세우고 리뷰 상세는 뒤로. **동작 변경 6건**(동기 ParseHtml 원격이미지 차단,
+  AllowRemoteImagesOnPaste 범위 확대, 목록 토글 ListLevel 초기화, RTF 출력 형태, `ListNone` 키 제거,
+  툴바/메뉴 "없음" 제거)과 **최소 SDK 상향**을 눈에 띄게 올릴 것.
+- [ ] **README 9행** `Status: feature parity with AvaloniaRichEditor 0.8.0` — stale(원본은 0.9.0, 양방향 수렴 완료).
+- [ ] **NuGet 소비자 스모크** — 로컬 pack → 별도 앱에 설치 → 빌드 **및 실행**.
+- [ ] **태그** `v0.9.0` 푸시 → 워크플로 자동 게시 → GitHub Release 작성.
+
+### 후속 후보 (릴리스 차단 아님)
+- `PublicAPI.Shipped.txt` 도입. 원본에는 있고 포트에는 없다 — 파리티 갭 분석 때 원본의 이 파일이 기준
+  역할을 했으므로, 도입하면 앞으로 공개 API 변경이 diff에 드러난다. 베이스라인 생성이 한 덩어리라 0.9.0 이후.
 
 ## 보류 / 백로그 (backlog)
 실수요가 생기면 그때 꺼내 쓸 항목. **파리티 갭 아님**(원본 AvaloniaRichEditor에도 없음) — 순수 net-new.
