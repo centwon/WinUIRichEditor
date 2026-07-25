@@ -34,6 +34,34 @@ public partial class RichEditor
         set => SetValue(CaretBrushProperty, value);
     }
 
+    /// <summary>Whether a read-only editor still draws the caret. Default <see langword="false"/>.
+    /// <para>A viewer has no caret by default because a caret is a "you can type here" affordance —
+    /// browsers and PDF readers show none, and this control already follows browser convention for
+    /// read-only links (a plain click opens them). Turn this on for a document reader whose users
+    /// navigate by keyboard: arrows, Shift+arrows, Home/End, PageUp/Down and Ctrl+F all work read-only,
+    /// and without a caret there is no way to see where they land.</para>
+    /// <para>The read-only caret does NOT blink (see <c>RestartBlink</c>): a static line reads as a
+    /// position marker, a blinking one reads as an editable field.</para></summary>
+    public static readonly DependencyProperty ShowCaretWhenReadOnlyProperty = DependencyProperty.Register(
+        nameof(ShowCaretWhenReadOnly), typeof(bool), typeof(RichEditor),
+        new PropertyMetadata(false, OnShowCaretWhenReadOnlyChanged));
+
+    /// <summary>Whether a read-only editor still draws the (non-blinking) caret. Default false.</summary>
+    public bool ShowCaretWhenReadOnly
+    {
+        get => (bool)GetValue(ShowCaretWhenReadOnlyProperty);
+        set => SetValue(ShowCaretWhenReadOnlyProperty, value);
+    }
+
+    private static void OnShowCaretWhenReadOnlyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var ed = (RichEditor)d;
+        // Re-arm the caret's on-phase: losing focus (or an earlier read-only switch) may have cleared it,
+        // and in read-only nothing restarts it because the blink timer never runs.
+        ed.RestartBlink();
+        ed.InvalidateCanvas();
+    }
+
     /// <summary>Default text color for runs without an explicit foreground (and list markers). Defaults
     /// to black; a dark-theme host assigns a light brush. Runs with their own Foreground are unaffected.</summary>
     public static readonly DependencyProperty TextForegroundProperty = DependencyProperty.Register(

@@ -73,15 +73,11 @@ public partial class RichEditor
     // arrives via the DP setter or the initial value.
     private void OnReadOnlyChanged(bool readOnly)
     {
-        if (readOnly)
-        {
-            StopBlink();
-            _undo.Clear();
-        }
-        else if (_hasFocus)
-        {
-            RestartBlink();
-        }
+        if (readOnly) _undo.Clear();
+        // RestartBlink handles both directions: it starts the timer only when editable, and in read-only
+        // it just leaves the caret in its "on" phase (static) for ShowCaretWhenReadOnly. The old
+        // StopBlink() here cleared _caretOn for good, so a read-only caret could never light up again.
+        RestartBlink();
         _automationPeer?.NotifyReadOnlyChanged(!readOnly, readOnly); // let assistive tech know
         InvalidateCanvas();
     }

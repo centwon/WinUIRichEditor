@@ -77,7 +77,11 @@ public partial class RichEditor
         SetupContextMenu();
     }
 
-    private void RestartBlink() { _caretOn = true; _blink?.Stop(); if (_hasFocus) _blink?.Start(); }
+    // Puts the caret in its "on" phase and restarts blinking. A READ-ONLY editor never runs the timer:
+    // when ShowCaretWhenReadOnly is set the viewer's caret is deliberately static (a blinking caret reads
+    // as "type here"), and when it isn't set DrawCaret suppresses the caret anyway, so a timer ticking
+    // twice a second would only invalidate the canvas for nothing.
+    private void RestartBlink() { _caretOn = true; _blink?.Stop(); if (_hasFocus && !IsReadOnly) _blink?.Start(); }
     private void StopBlink() { _blink?.Stop(); _caretOn = false; }
     private void InvalidateCanvas() => _canvas.Invalidate();
 
@@ -2079,7 +2083,8 @@ public partial class RichEditor
 
     private void DrawCaret(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, double px, double oy)
     {
-        if (_printMode || !_hasFocus || !_caretOn || IsReadOnly) return;
+        if (_printMode || !_hasFocus || !_caretOn) return;
+        if (IsReadOnly && !ShowCaretWhenReadOnly) return; // viewer: no caret unless the host asks for one
         if (!IsCaretInParagraph(p)) return;
         var (cx, cy, ch) = CaretInLayout(layout, p, _caret.Offset, _caret.AtLineEnd);
         float x = (float)(px + cx);

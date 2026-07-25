@@ -65,6 +65,15 @@ public partial class RichEditorView : UserControl
         set => Editor.IsReadOnly = value;
     }
 
+    /// <summary>Whether the read-only viewer still shows a (non-blinking) caret, so keyboard navigation
+    /// — arrows, Shift+arrows, Home/End, PageUp/Down, Ctrl+F — has a visible position. Default false.
+    /// Forwards to <see cref="RichEditor.ShowCaretWhenReadOnly"/>.</summary>
+    public bool ShowCaretWhenReadOnly
+    {
+        get => Editor.ShowCaretWhenReadOnly;
+        set => Editor.ShowCaretWhenReadOnly = value;
+    }
+
     public RichEditorView()
     {
         Editor = new RichEditor();
