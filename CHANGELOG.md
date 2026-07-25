@@ -5,7 +5,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 
 ## [Unreleased]
 
-4차 전수 리뷰(2026-07-23)에서 확인된 결함 10건 수정 + 찾기 바 UX 1건.
+4차 전수 리뷰(2026-07-23)에서 확인된 결함 10건 수정 + 찾기 바 UX 1건, 그리고 6차 전수 리뷰(2026-07-25)
+결함 4건 (맨 아래 절).
 
 ### Fixed
 - **표 셀 안에서 목록(글머리표·번호)이 사라지던 문제** (실기 리포트, 두 겹):
@@ -100,6 +101,52 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
   Ctrl+H로 다시 열지 않고 바꾸기 행을 펼친다(VS Code/브라우저 관례). 표시 상태는
   `SetReplaceVisible` 한 곳에서 관리해 Ctrl+H 경로와 어긋나지 않으며, 읽기 전용에서는 셰브런을
   숨긴다. 로컬라이제이션 키 `ToggleReplace`(EN/KO) 추가.
+
+### 6차 전수 리뷰 — Fixed (2026-07-25)
+전 소스 재정독(미커밋 `RichEditor.Compat.cs` 포함) + HWP 붙여넣기 실기 리포트 후속.
+빌드 0/0, 테스트 **71/71**(신규 4).
+
+- **HWP 붙여넣기에서 표가 평문으로 풀리던 문제** (`WriteTable`, 사용자 리포트): RTF엔
+  `\trowd`·`\cellx`·`\cell`·`\row`가 모두 정상적으로 나가고 있었는데도 HWP는 행 구조를 인식하지 못하고
+  셀을 그냥 줄바꿈된 텍스트로 붙였다. 원인은 **행 정의가 한 번만 나간 것** — 스펙상으론 허용되지만
+  Word는 `\trowd`+`\cellx` 묶음을 **셀 앞과 `\row` 직전에 두 번** 쓰며, HWP를 비롯한 엄격한 리더는
+  `\row` 시점에 행 정의가 살아 있어야 한다. 정의를 `BuildRowDefinition`으로 뽑아 두 번 방출하고,
+  Word가 항상 쓰는 `\trgaph108\trleft0`와 셀 문단의 `\itap1`을 추가했다. 표 뒤에는 `\pard\plain`으로
+  문자 서식까지 리셋. (파서 쪽은 두 번째 `\trowd`가 셀을 다 읽은 뒤에 오므로 `_curCellx`를 비웠다가
+  동일 값으로 다시 채울 뿐이라 라운드트립은 그대로 — `StartRow` 주석에 명시.)
+- **오른쪽 정렬이 뒤 문단으로 새던 문제** (`WriteParagraph`, 사용자 리포트): 스펙상 `\pard`가 정렬을
+  왼쪽으로 리셋하지만 HWP는 `\pard`를 "현재 기본값으로 복귀"로 보고 앞서 본 `\qr`을 계속 물고 갔다 →
+  오른쪽 정렬 문단 하나가 그 뒤 인용/제목/목록을 전부 오른쪽으로 만들었다. 이제 왼쪽도 `\ql`로
+  **모든 문단이 정렬을 명시**한다(문단당 3바이트, 리더 의존성 제거). 헤더에 `\uc1`도 명시.
+
+- **RTF 내보내기가 인라인 표("글자처럼 취급")를 통째로 버리던 문제** (`RtfDocumentFormatter`,
+  사용자 리포트로 확정): `WriteParagraph`와 셀 안 문단 루프가 `Run`/`InlineImage`만 처리하고
+  `InlineTable` 분기가 없어 조용히 사라졌다. **실제 데이터 손실**인 이유:
+  `SetClipboardFromSelection`이 *모든* 복사에 RTF를 실으며 Word/HWP는 RTF를 CF_HTML보다 우선하므로,
+  인라인 표가 든 문단을 그 앱들에 붙여넣으면 표가 없어졌다(`.rtf` 익스포트도 동일).
+  HTML(`EmitInline`)·JSON은 원래 처리하고 있었다.
+  - **최상위 문단**: RTF엔 인라인 그리드가 없으므로 **호스트 문단을 표 앞뒤로 쪼개고 진짜
+    `\trowd` 행을 방출**한다(텍스트 사이에 표가 있을 때 Word가 하는 것과 동일). 표 뒤에는 빈 문단이
+    남을 수 있는데 이는 의도적이다 — RTF는 표 뒤에 문단을 요구한다. 인라인성 자체는 포맷이
+    표현하지 못하므로 다시 읽으면 **블록 표**가 된다. *(1차 시도였던 탭 구분 텍스트 평탄화는 단어만
+    남고 격자가 사라져 사용자에겐 "표가 사라진" 것과 같았다 — 되돌렸다.)*
+  - **셀 안 문단**: 진짜 중첩(`\itap2`+`\nestcell`/`\nestrow`)은 이 writer의 subset 밖이라 종전대로
+    텍스트 평탄화. 겸사겸사 `WriteNestedTableAsText` 자신도 셀 안의 그림·더 깊은 중첩/인라인 표를
+    버리던 것을 재귀 처리하도록 보강.
+  - RTF 파서는 `InlineTable`을 만들지 않으므로 라운드트립 테스트로는 잡히지 않던 유형이다.
+- **IME `_imeRangeDelta` 재매핑 누락** (`RichEditor.Ime.cs`): 문단 걸친 선택 위에서 조합을 시작하면
+  `OnImeTextUpdating`이 선택을 지우고 이후 IME 범위를 `+_imeRangeDelta`로 재매핑하는데, **같은
+  좌표계로 들어오는** `OnImeFormatUpdating`(조합 밑줄)과 `OnImeSelectionUpdating`은 delta를 적용하지
+  않았다 → 조합 밑줄이 delta만큼 어긋난 자리에 그려졌다(텍스트 자체는 정상, `CompositionCompleted`가
+  리셋할 때까지).
+- **`RunNormalizer.Compact`가 인라인 표를 건너뛰던 문제**: `CompactBlock(Paragraph)`이 자기 `Inlines`의
+  `Run`만 훑고 `InlineTable`의 셀로 내려가지 않아, 내용이 인라인 표에 든 문서는 로드 시 run 병합·폰트
+  인터닝을 전혀 못 받았다(클래스 주석은 셀 재귀를 표방). `UndoManager.EstimateBytes`가 4차에서 고친
+  것과 정확히 같은 사각지대.
+- **읽기 전용에서 표 블록 선택이 열려 있던 문제** (`TrySelectTableBlock` + `UpdateHoverCursor`):
+  `TrySelectInlineTable`·`OverColumnBoundary`·`OverRowBoundary`는 모두 `IsReadOnly`로 자기 검사를 하는데
+  최상위 표 좌/상단 테두리 경로만 빠져 있었다. 뷰어에서 파란 선택 크롬과 이동 커서가 뜨지만
+  Delete는 막혀 있어 죽은 상태였고, 캐럿을 놓아야 할 클릭도 삼켰다.
 
 ## [0.8.1] - 2026-07-22
 

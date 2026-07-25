@@ -194,8 +194,10 @@ public partial class RichEditor
         var p = _caret.Paragraph;
         if (p == null) { args.Result = CoreTextSelectionUpdatingResult.Failed; return; }
         int len = GetParagraphLength(p);
-        int a = Math.Clamp(args.Selection.StartCaretPosition, 0, len);
-        int b = Math.Clamp(args.Selection.EndCaretPosition, 0, len);
+        // Same remapping as OnImeTextUpdating: while _imeRangeDelta is armed the IME is still speaking
+        // the PRE-deletion offsets it was told about, so its ranges need the shift too.
+        int a = Math.Clamp(args.Selection.StartCaretPosition + _imeRangeDelta, 0, len);
+        int b = Math.Clamp(args.Selection.EndCaretPosition + _imeRangeDelta, 0, len);
         _selStart = new TextPointer(p, a);
         _selEnd = new TextPointer(p, b);
         _caret = new TextPointer(p, b);
@@ -206,7 +208,11 @@ public partial class RichEditor
     private void OnImeFormatUpdating(CoreTextEditContext sender, CoreTextFormatUpdatingEventArgs args)
     {
         var r = args.Range;
-        _composRange = (r.StartCaretPosition, Math.Max(0, r.EndCaretPosition - r.StartCaretPosition));
+        // The underline range arrives in the IME's coordinate space, which OnImeTextUpdating shifts by
+        // _imeRangeDelta after deleting a cross-paragraph selection at composition start. Without the
+        // same shift the composition underline was drawn `delta` characters away from the text it marks.
+        _composRange = (r.StartCaretPosition + _imeRangeDelta,
+                        Math.Max(0, r.EndCaretPosition - r.StartCaretPosition));
         InvalidateCanvas();
     }
 

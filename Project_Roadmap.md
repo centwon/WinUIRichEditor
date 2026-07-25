@@ -488,6 +488,29 @@ graceful)·RTF 병합셀/코드페이지/필드 파싱·HTML bare-inline/pre/원
   삼항이 양쪽 동일(6자리 `RRGGBB`·8자리 `AARRGGBB` 모두 r=비트16이라 결과는 정답).
 - 4차 "미수정" 3건은 이미 마지막 커밋 `e1b00db`에서 처리됨을 확인(위 체크박스 반영). 로드맵만 stale였음.
 
+## 파리티 갭 분석 + 수렴 (2026-07-24)
+원본 `PublicAPI.Shipped.txt`(499줄) + README 기능 셋을 포트 전체 공개 표면과 대조. **기능 레벨 갭 0건**
+(README 전 항목 존재), 포트가 순 신규 API에서 오히려 앞섬. 남은 차이는 공개 API 이름/토글 수준.
+방향 결정: **원본은 살아있는 상류** → 양방향·선별 수렴.
+
+### 트랙 1 — 원본 → 포트 (드롭인 소스 호환) — ✅ 완료
+`RichEditor.Compat.cs` 신설 + `RichEditorView` 2건. 빌드 라이브러리/데모/테스트 **0/0, 67/67**. 실기 미검증(GUI 구동 불가).
+- 원본 이름 별칭(`[EditorBrowsable(Never)]`로 IntelliSense 비오염): `SetFontFamily`→`SetRunFontFamily`,
+  `InsertImageBytes`→`InsertImageBlock`, `PasteFromClipboardAsync`→`PasteAsync`.
+- 공개 래퍼: `FocusDocumentEnd()`(캔버스 포커스+`GoToDocEdge(end)`), `InsertInlineTable(r,c)`(인라인 삽입 패턴
+  네이티브 구현 — `SplitInlinesAt`+`InlineTable`, 변환 우회 아님), `InsertImageFromFileAsync(nint hwnd)`
+  (unpackaged 피커 HWND interop 편의 오버로드).
+- `RichEditorView.ShowStatusBar`(상태바 토글, 원본 유일 실 갭 해소), `RichEditorView.ZoomFactor`
+  (→`Editor.Zoom`/`SetZoom` 프록시 — 줌은 에디터 레벨 유지, 원본 표면만 복원).
+- **제외**(원본 타입 종속으로 소스 별칭 불가): `InsertImage(Avalonia.Bitmap)` — 플랫폼 타입 상이라 별칭 무의미.
+
+### 트랙 2 — 포트 → 원본 (플랫폼-무관 개선 역이식) — 미착수
+원본이 실제로 없음을 원본 소스에서 검증한 항목만: `IsModified`/`MarkSaved`/`IsModifiedChanged`,
+`AutoLinkOnType`, 찾기 하이라이트+n/m(`SetFindHighlight`/`GetFindMatchPosition`/`ClearFindHighlight`),
+`RemoveList`, `AllowRemoteImagesOnPaste`. **제외**(원본에 이미 존재): `InsertInlineImage`·`SetHyperlink`.
+**역이식 금지**: 줌 아키텍처(원본은 View 줌으로 충분)·이미지 콜백(WinUI HWND 제약 산물)·Win2D 전용
+(`CanvasBackground`/`Dispose`). 코드 미공유라 각 기능을 Avalonia 스택에 수작업 재구현 필요.
+
 ### 오탐으로 배제 (재조사 방지 — 5차에서 다시 파지 말 것)
 붙여넣기 이미지 분기의 `AfterEdit` 누락(내부 호출됨) · 이미지 붙여넣기 `CaretCanHostBlock` 조기 반환
 (부모가 FlowDocument/TableCell이라 도달 불가) · `RenderPageToTarget` 미해제(소유권 이전) ·
@@ -497,6 +520,50 @@ graceful)·RTF 병합셀/코드페이지/필드 파싱·HTML bare-inline/pre/원
 RTF 코드페이지(`CodePagesEncodingProvider` 등록됨) · `DrawCellBlockList` 전진량(동일) ·
 HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModified` 미발화(즉시 발화됨) ·
 `ParseList` 중첩 리스트 이중 파싱(`ul`/`ol`은 인라인 경로에서 skip).
+
+## 6차 전수 리뷰 (2026-07-25) — 완료
+전 소스 재정독 + 미커밋 신규 코드(`RichEditor.Compat.cs`, `RichEditorView` 트랙1 변경분) 검토.
+빌드 0/0, 테스트 **71/71**(신규 4). 새 결함 **6건**(정독 4 + HWP 실기 리포트 2) — 상세는 CHANGELOG
+"6차 전수 리뷰" 절.
+
+### HWP 붙여넣기 실기 리포트 후속 2건 (RTF writer 상호운용)
+- [x] **표가 평문으로 풀림**: `\trowd`/`\cellx`/`\cell`/`\row`는 다 있었지만 **행 정의를 한 번만**
+  방출했다. HWP처럼 엄격한 리더는 `\row` 시점에 행 정의가 살아 있어야 한다(Word는 셀 앞·`\row` 앞
+  두 번 쓴다) → `BuildRowDefinition`으로 두 번 방출 + `\trgaph108\trleft0`·`\itap1`·표 뒤 `\pard\plain`.
+- [x] **오른쪽 정렬이 뒤 문단으로 샘**: HWP가 `\pard`를 정렬 리셋으로 취급하지 않는다 →
+  왼쪽도 `\ql`로 **모든 문단이 정렬을 명시**.
+> **핵심 계약**: RTF writer의 대상은 스펙이 아니라 **실제 리더(HWP/Word)** 다. 스펙상 생략 가능한
+> 것도 Word가 항상 쓰는 형태면 그대로 따라갈 것 — 리더 기본값에 기대지 말 것.
+> 진단 방법(재사용): 헤드리스 테스트에서 `HtmlDocumentFormatter.ParseHtml(DemoContent.SampleHtml)` →
+> 블록 구조 덤프 + `RtfDocumentFormatter.Write` 출력을 파일로 뽑아 실제 RTF를 눈으로 볼 것.
+> 스크린샷만 보고 모델을 추측하면 틀린다(이번에도 인라인 표로 오진했다 — 실제로는 최상위 `TableBlock`).
+
+- [x] **RTF 내보내기가 인라인 표("글자처럼 취급")를 통째로 버림** (유일한 실제 데이터 손실,
+  사용자 실기 확정). HTML·JSON은 처리하는데 RTF writer만 `InlineTable` 분기가 없었다. 모든 복사가
+  RTF를 싣고 Word/HWP가 RTF를 우선하므로 붙여넣기에서 표가 사라졌다. **최상위 문단**은 호스트
+  문단을 표 앞뒤로 쪼개고 **진짜 `\trowd` 행**을 방출(다시 읽으면 블록 표), **셀 안**은 subset 밖이라
+  텍스트 평탄화 유지.
+  **핵심 계약**: 인라인 오브젝트(`InlineImage`/`InlineTable`)를 소비하는 곳은 **네 포매터 모두**
+  (HTML/RTF/JSON + 클립보드) 분기를 갖춰야 한다. RTF 파서는 `InlineTable`을 만들지 않으므로
+  라운드트립 테스트로는 절대 안 걸린다 — 단방향 writer는 별도 테스트가 필요하다.
+  **교훈**: "내용은 살리고 구조는 버린다"(평탄화)는 사용자에겐 **손실과 구분되지 않는다**.
+  표는 표로 나가야 한다 — 포맷이 그대로 표현 못 하면 주변을 쪼개서라도.
+- [x] **IME `_imeRangeDelta`를 `FormatUpdating`/`SelectionUpdating`이 미적용** → 문단 걸친 선택 위 조합
+  시작 시 조합 밑줄이 어긋남. **핵심 계약**: `_imeRangeDelta`가 살아 있는 동안 IME에서 들어오는
+  **모든** 범위는 같은 시프트를 받아야 한다(현재 `TextUpdating`/`FormatUpdating`/`SelectionUpdating` 3곳).
+- [x] **`RunNormalizer.Compact`가 인라인 표 셀 미재귀** — 4차의 `UndoManager.EstimateBytes`와 같은 사각지대.
+- [x] **읽기 전용에서 표 블록 선택·이동 커서가 열려 있음** — 다른 표 상호작용 3곳과 가드 일치화.
+
+### 확인만 하고 수정하지 않음 (무해)
+- `ImageCache.Clear()` 호출처 0개(문서 교체가 `Prune` 경로로 바뀐 뒤 남은 사문화 코드).
+- `RichEditorToolbar`가 `Target.StatusChanged`를 `Unloaded`에서 해제하지 않음 — 툴바만 버려지고
+  에디터가 사는 구성에서만 유효, 실사용 수명은 동일.
+- `OnPaperChanged`가 `_suppress` 없이 `SyncPage()` 호출 — 재진입이 같은 값 재적용이라 무해(취약하긴 함).
+- 5차의 `TryParseHex` 삼항 스멜 재확인 — 6·8자리 모두 정답. 4차 잔여 `TextRange.TopLevelBlockOf`/
+  `RemoveParagraphFromDocument` 미재귀도 호출부가 막고 있어 여전히 무해.
+
+> **실기 미검증(사람 확인 필요)**: 인라인 표 포함 문단을 HWP/Word로 복사(표 내용 유지),
+> 문단 걸친 선택 위 한글 조합의 밑줄 위치, 뷰어에서 표 테두리 클릭(캐럿이 놓이는지).
 
 ## 보류 / 백로그 (backlog)
 실수요가 생기면 그때 꺼내 쓸 항목. **파리티 갭 아님**(원본 AvaloniaRichEditor에도 없음) — 순수 net-new.

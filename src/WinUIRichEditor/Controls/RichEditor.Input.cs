@@ -388,7 +388,9 @@ public partial class RichEditor
         if ((Ctrl || IsReadOnly) && LinkAtPoint(pt)) { SetCursorShape(InputSystemCursorShape.Hand); return; }
         if (OverColumnBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeWestEast); return; }
         if (OverRowBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeNorthSouth); return; }
-        if (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt)) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
+        // Table block-select cursor: edit only, matching TrySelectTableBlock / TrySelectInlineTable
+        // (OverColumnBoundary / OverRowBoundary already self-gate on IsReadOnly).
+        if (!IsReadOnly && (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt))) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
         bool onHandle = false;
         if (_selectedBlock is ImageBlock selB)
             foreach (var (img, rect) in BlockImageRects())

@@ -491,6 +491,10 @@ internal sealed class RtfParser
 
     // ---- tables ----
 
+    // Note for the repeated row definition our writer emits (see BuildRowDefinition): the second \trowd
+    // arrives after every \cell, so it only clears _curCellx/_curCellDefs, which the repeated \cellx words
+    // then refill with the identical values before \row consumes them. _curRow (the cells themselves) is
+    // preserved by the ??= below, so the repeat is a no-op on the way back in.
     private void StartRow()
     {
         _tableRows ??= new List<List<Paragraph>>();
@@ -725,7 +729,10 @@ internal sealed class RtfWriter
         }
 
         var sb = new StringBuilder();
-        sb.Append(@"{\rtf1\ansi\ansicpg1252\deff0");
+        // \uc1: each \uN Unicode escape is followed by exactly one fallback character (the '?' WriteEscaped
+        // emits). It is the default, but readers that saw a different \ucN earlier in their session have
+        // been known to carry it over — stating it removes the ambiguity for a two-byte cost.
+        sb.Append(@"{\rtf1\ansi\ansicpg1252\uc1\deff0");
         sb.Append(@"{\fonttbl");
         for (int i = 0; i < _fonts.Count; i++)
             sb.Append($@"{{\f{i}\fnil ").Append(EscapeText(_fonts[i].Length == 0 ? "Default" : _fonts[i])).Append(";}");
@@ -755,14 +762,21 @@ internal sealed class RtfWriter
         }
     }
 
-    private void WriteParagraph(Paragraph p, int ordered)
+    // "\pard" + this paragraph's own properties. Factored out because a paragraph that hosts an inline
+    // table is emitted as several RTF paragraphs (see WriteParagraph) and each one must restate them.
+    private void WriteParagraphProps(Paragraph p)
     {
         _body.Append(@"\pard");
+        // ALWAYS emit the alignment, including \ql for left. In the spec \pard resets alignment to left,
+        // but HWP treats \pard as "back to the current defaults" and keeps a previously seen \qr — so a
+        // single right-aligned paragraph turned every following one right-aligned on paste. Being explicit
+        // costs 3 bytes per paragraph and removes the reader-dependent behaviour entirely.
         switch (p.TextAlignment)
         {
             case TextAlignment.Center: _body.Append(@"\qc"); break;
             case TextAlignment.Right: _body.Append(@"\qr"); break;
             case TextAlignment.Justify: _body.Append(@"\qj"); break;
+            default: _body.Append(@"\ql"); break;
         }
         if (p.Indent > 0) _body.Append($@"\li{(int)(p.Indent * 15)}");
         // Line spacing (see the parser's \sl/\slmult cases): proportional = N/240 lines with \slmult1,
@@ -772,6 +786,11 @@ internal sealed class RtfWriter
         else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
             _body.Append($@"\sl-{(int)Math.Round(p.LineHeight * 15)}\slmult0");
         _body.Append(' ');
+    }
+
+    private void WriteParagraph(Paragraph p, int ordered)
+    {
+        WriteParagraphProps(p);
 
         if (p.ListType != ListKind.None)
         {
@@ -785,6 +804,20 @@ internal sealed class RtfWriter
         {
             if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r, heading, headingSize);
             else if (inline is InlineImage img && img.RawBytes != null) WritePict(img.RawBytes, img.MimeType, img.Width, img.Height);
+            else if (inline is InlineTable itbl)
+            {
+                // An INLINE table ("treat as character") lives in the paragraph's text flow, but RTF has
+                // no inline grid: the only way to keep it a TABLE is to close this paragraph, emit real
+                // rows, and reopen the paragraph for whatever follows — which is exactly what Word does
+                // for a table between two runs of text. Flattening it to tab-separated text (the first
+                // attempt) kept the words but lost the grid, which reads as "the table disappeared".
+                // Inline-ness itself cannot survive the format, so it round-trips back as a BLOCK table.
+                // A trailing empty paragraph is deliberate: RTF requires a paragraph after a table.
+                _body.Append(@"\par").Append('\n');
+                WriteTable(itbl.Table);   // ends with \pard\plain
+                WriteParagraphProps(p);
+                continue;
+            }
         }
         _body.Append(@"\par").Append('\n');
     }
@@ -820,32 +853,18 @@ internal sealed class RtfWriter
     {
         for (int row = 0; row < tb.Rows; row++)
         {
-            _body.Append(@"\trowd");
-            int x = 0;
+            // The row definition (\trowd + every \cellx) is emitted TWICE: once before the cell text and
+            // once again immediately before \row. The spec allows the single form, but Word writes the
+            // repeated form and strict readers — HWP among them — need the definition still in scope at
+            // \row. Without the repeat HWP dropped the row structure entirely and pasted the cells as
+            // plain lines (the "표가 사라져" report), even though \trowd/\cellx/\cell/\row were all there.
+            string rowDef = BuildRowDefinition(tb, row);
+
+            _body.Append(@"\pard").Append(rowDef);
             for (int col = 0; col < tb.Columns; col++)
             {
-                int wpx = col < tb.ColumnWidths.Count ? (int)tb.ColumnWidths[col] : 100;
-                x += wpx * 15;
-                // Merge flags must precede this cell's \cellx: \clmgf/\clmrg for the horizontal run,
-                // \clvmgf/\clvmrg for the vertical one (Word emits both on doubly-merged slots).
-                // Without them, a merged table pastes into Word/HWP with the merge dissolved.
-                var (ar, ac) = tb.AnchorOf(row, col);
-                var (cs, rs) = tb.SpanOf(ar, ac);
-                if (cs > 1) _body.Append(col == ac ? @"\clmgf" : @"\clmrg");
-                if (rs > 1) _body.Append(row == ar ? @"\clvmgf" : @"\clvmrg");
-                switch (tb.Cells[ar][ac].VerticalAlignment)
-                {
-                    case CellVerticalAlignment.Center: _body.Append(@"\clvertalc"); break;
-                    case CellVerticalAlignment.Bottom: _body.Append(@"\clvertalb"); break;
-                }
-                // Per-cell borders (single line, ~0.5pt) on all four sides — must precede this cell's
-                // \cellx. Without them HWP/Word render the table with no visible lines (transparent grid).
-                _body.Append(@"\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10");
-                _body.Append($@"\cellx{x}");
-            }
-            for (int col = 0; col < tb.Columns; col++)
-            {
-                _body.Append(@"\pard\intbl ");
+                // \itap1 = nesting depth 1; modern readers use it to tell table paragraphs from body text.
+                _body.Append(@"\pard\intbl\itap1\ql ");
                 // Only the merge anchor carries content; covered slots emit an empty \cell.
                 var (ar, ac) = tb.AnchorOf(row, col);
                 if (ar == row && ac == col)
@@ -864,6 +883,10 @@ internal sealed class RtfWriter
                                     if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r, false, 0);
                                     else if (inline is InlineImage cii && cii.RawBytes != null)
                                         WritePict(cii.RawBytes, cii.MimeType, cii.Width, cii.Height);
+                                    // Inside a CELL an inline table can't be promoted to real rows the way
+                                    // the top-level path does (that needs \itap2 + \nestcell/\nestrow,
+                                    // outside this writer's subset), so it flattens like a nested table.
+                                    else if (inline is InlineTable citbl) WriteNestedTableAsText(citbl.Table);
                                 }
                                 break;
                             case ImageBlock cib when cib.RawBytes != null:
@@ -885,9 +908,44 @@ internal sealed class RtfWriter
                 }
                 _body.Append(@"\cell");
             }
-            _body.Append(@"\row").Append('\n');
+            _body.Append(rowDef).Append(@"\row").Append('\n');
         }
-        _body.Append(@"\pard").Append('\n');
+        // \plain too: reset the character formatting the last cell left in scope, so body text after the
+        // table doesn't inherit it.
+        _body.Append(@"\pard\plain").Append('\n');
+    }
+
+    // "\trowd" + the per-cell properties and \cellx boundaries for one row. Built as a string because
+    // WriteTable emits it both before the cells and again before \row (see there).
+    private static string BuildRowDefinition(TableBlock tb, int row)
+    {
+        var d = new StringBuilder();
+        // \trgaph = half the gap between cell text and border; \trleft = row origin. Word always writes
+        // both, and readers that default them differently otherwise lay the row out at the wrong offset.
+        d.Append(@"\trowd\trgaph108\trleft0");
+        int x = 0;
+        for (int col = 0; col < tb.Columns; col++)
+        {
+            int wpx = col < tb.ColumnWidths.Count ? (int)tb.ColumnWidths[col] : 100;
+            x += wpx * 15;
+            // Merge flags must precede this cell's \cellx: \clmgf/\clmrg for the horizontal run,
+            // \clvmgf/\clvmrg for the vertical one (Word emits both on doubly-merged slots).
+            // Without them, a merged table pastes into Word/HWP with the merge dissolved.
+            var (ar, ac) = tb.AnchorOf(row, col);
+            var (cs, rs) = tb.SpanOf(ar, ac);
+            if (cs > 1) d.Append(col == ac ? @"\clmgf" : @"\clmrg");
+            if (rs > 1) d.Append(row == ar ? @"\clvmgf" : @"\clvmrg");
+            switch (tb.Cells[ar][ac].VerticalAlignment)
+            {
+                case CellVerticalAlignment.Center: d.Append(@"\clvertalc"); break;
+                case CellVerticalAlignment.Bottom: d.Append(@"\clvertalb"); break;
+            }
+            // Per-cell borders (single line, ~0.5pt) on all four sides — must precede this cell's
+            // \cellx. Without them HWP/Word render the table with no visible lines (transparent grid).
+            d.Append(@"\clbrdrt\brdrs\brdrw10\clbrdrl\brdrs\brdrw10\clbrdrb\brdrs\brdrw10\clbrdrr\brdrs\brdrw10");
+            d.Append($@"\cellx{x}");
+        }
+        return d.ToString();
     }
 
     // A table nested inside a cell flattens to text (tab between cells, \line between rows). True RTF
@@ -905,9 +963,21 @@ internal sealed class RtfWriter
                 if (!firstCell) _body.Append(@"\tab ");
                 firstCell = false;
                 foreach (var blk in tb.Cells[r][c].Blocks)
+                {
+                    // Same "content over structure" rule one level down: a picture or a further nested /
+                    // inline table inside the flattened cell must not vanish either.
                     if (blk is Paragraph p)
                         foreach (var inline in p.Inlines)
+                        {
                             if (inline is Run run && !string.IsNullOrEmpty(run.Text)) WriteRun(run, false, 0);
+                            else if (inline is InlineImage pimg && pimg.RawBytes != null)
+                                WritePict(pimg.RawBytes, pimg.MimeType, pimg.Width, pimg.Height);
+                            else if (inline is InlineTable pit) WriteNestedTableAsText(pit.Table);
+                        }
+                    else if (blk is ImageBlock bimg && bimg.RawBytes != null)
+                        WritePict(bimg.RawBytes, bimg.MimeType, bimg.Width, bimg.Height);
+                    else if (blk is TableBlock deeper) WriteNestedTableAsText(deeper);
+                }
             }
         }
     }

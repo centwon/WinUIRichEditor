@@ -248,9 +248,13 @@ public partial class RichEditor
         return false;
     }
 
-    // Selects a whole table when its left/top border is clicked (Delete then removes it).
+    // Selects a whole table when its left/top border is clicked (Delete then removes it). Editing only:
+    // in a read-only viewer the selection chrome would be a dead end (Delete is gated by IsReadOnly), and
+    // it would also swallow a click that should place the caret — TrySelectInlineTable already bails out
+    // the same way.
     private bool TrySelectTableBlock(Point pt)
     {
+        if (IsReadOnly) return false;
         if (!OnTableSelectBorder(pt, out var tb) || tb == null) return false;
         _selectedInline = null;
         _selectedBlock = tb;

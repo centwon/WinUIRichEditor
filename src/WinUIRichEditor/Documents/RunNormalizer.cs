@@ -19,8 +19,8 @@ internal static class RunNormalizer
     public static string Intern(string family) => _fontPool.GetOrAdd(family, family);
 
     /// <summary>Coalesces adjacent equal-format runs and interns font families across the whole document,
-    /// recursing into table cells. Returns the same instance for call-site convenience. Idempotent and
-    /// safe on any freshly loaded document.</summary>
+    /// recursing into the cells of block tables AND of inline tables. Returns the same instance for
+    /// call-site convenience. Idempotent and safe on any freshly loaded document.</summary>
     public static FlowDocument Compact(FlowDocument doc)
     {
         foreach (var b in doc.Blocks) CompactBlock(b);
@@ -33,7 +33,17 @@ internal static class RunNormalizer
         {
             case Paragraph p:
                 foreach (var inl in p.Inlines)
+                {
                     if (inl is Run r && r.FontFamily is { } f) r.FontFamily = Intern(f);
+                    // An INLINE table's cells hold real loaded content but hang off the paragraph's
+                    // inlines rather than the block list, so this walk used to skip them entirely — a
+                    // document whose text lives in inline tables got no compaction at all.
+                    else if (inl is InlineTable it)
+                        foreach (var row in it.Table.Cells)
+                            foreach (var cell in row)
+                                foreach (var cb in cell.Blocks)
+                                    CompactBlock(cb);
+                }
                 TextRange.CoalesceRuns(p);
                 break;
             case TableBlock tb:

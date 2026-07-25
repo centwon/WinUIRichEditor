@@ -23,6 +23,24 @@ public partial class RichEditorView : UserControl
     public RichEditorToolbar Toolbar { get; }
 
     private readonly TextBlock _status;
+    private Border _statusBar = null!; // the status-bar container, toggled by ShowStatusBar
+
+    /// <summary>Whether the status bar (character/word count · caret line/column · page count) is shown at
+    /// the bottom. Default true. Mirrors the original AvaloniaRichEditor's <c>RichEditorView.ShowStatusBar</c>.</summary>
+    public bool ShowStatusBar
+    {
+        get => _statusBar.Visibility == Visibility.Visible;
+        set => _statusBar.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>The editor's zoom factor (1.0 = 100%). A thin proxy over <see cref="RichEditor.Zoom"/> /
+    /// <see cref="RichEditor.SetZoom"/> — the port keeps zoom on the editor (engine-level crisp scaling),
+    /// and this restores the original AvaloniaRichEditor's <c>RichEditorView.ZoomFactor</c> surface.</summary>
+    public double ZoomFactor
+    {
+        get => Editor.Zoom;
+        set => Editor.SetZoom(value);
+    }
 
     /// <summary>The document shown in the editor.</summary>
     public FlowDocument? Document
@@ -85,19 +103,19 @@ public partial class RichEditorView : UserControl
 
         Grid.SetRow(Editor, 2);
 
-        var statusBar = new Border
+        _statusBar = new Border
         {
             Child = _status,
             BorderThickness = new Thickness(0, 1, 0, 0),
             BorderBrush = new SolidColorBrush(Color.FromArgb(40, 0, 0, 0)),
             Background = new SolidColorBrush(Color.FromArgb(12, 0, 0, 0)),
         };
-        Grid.SetRow(statusBar, 3);
+        Grid.SetRow(_statusBar, 3);
 
         grid.Children.Add(toolbarBar);
         grid.Children.Add(_findBarHost);
         grid.Children.Add(Editor);
-        grid.Children.Add(statusBar);
+        grid.Children.Add(_statusBar);
         Content = grid;
 
         Editor.StatusChanged += (_, _) => UpdateStatus();

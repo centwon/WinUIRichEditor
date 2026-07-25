@@ -483,4 +483,136 @@ public class EnhancementTests
             .First(r => r.Text == "t");
         Assert.Equal(expectBold, run.FontWeight.Weight >= 600);
     }
+
+    // ---- 6th review (2026-07-25) regressions ------------------------------------------------------
+
+    // The RTF writer handled Run and InlineImage inside a paragraph but had no branch for InlineTable, so
+    // an inline ("treat as character") table was dropped without a trace. That is real content loss:
+    // SetClipboardFromSelection writes RTF on EVERY copy, and Word/HWP prefer it over CF_HTML — so
+    // pasting such a paragraph into those apps lost the table. RTF has no inline grid, so a TOP-LEVEL
+    // host paragraph is split around real \trowd rows (what Word does for a table between two runs);
+    // inline-ness itself can't survive, so it comes back as a BLOCK table.
+    [Fact]
+    public void RtfExportKeepsInlineTableAsRealTable()
+    {
+        var doc = new FlowDocument();
+        var host = new Paragraph();
+        var it = new InlineTable { Table = new TableBlock(1, 2) };
+        ((Run)it.Table.Cells[0][0].Para.Inlines[0]).Text = "A1";
+        ((Run)it.Table.Cells[0][1].Para.Inlines[0]).Text = "B1";
+        host.Inlines.Add(new Run { Text = "before" });
+        host.Inlines.Add(it);
+        host.Inlines.Add(new Run { Text = "after" });
+        doc.Blocks.Add(host);
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        Assert.Contains(@"\trowd", rtf, System.StringComparison.Ordinal); // a REAL row, not flattened text
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var tbl = back.Blocks.OfType<TableBlock>().Single();
+        Assert.Equal(1, tbl.Rows);
+        Assert.Equal(2, tbl.Columns);
+        Assert.Equal("A1", string.Concat(tbl.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        Assert.Equal("B1", string.Concat(tbl.Cells[0][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        // The host paragraph's own text is split around the table, not swallowed by it.
+        var body = back.Blocks.OfType<Paragraph>()
+            .Select(p => string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text))).ToList();
+        Assert.Contains("before", body);
+        Assert.Contains("after", body);
+    }
+
+    // Inside a CELL the same promotion isn't available (real nesting needs \itap2 + \nestcell/\nestrow,
+    // outside this writer's subset), so an inline table there still flattens — content over structure,
+    // the same rule a nested TableBlock in a cell follows. It must not vanish.
+    [Fact]
+    public void RtfExportFlattensInlineTableInsideCell()
+    {
+        var doc = new FlowDocument();
+        var outer = new TableBlock(1, 1);
+        var cellPara = outer.Cells[0][0].Para;
+        cellPara.Inlines.Clear();
+        var it = new InlineTable { Table = new TableBlock(1, 2) };
+        ((Run)it.Table.Cells[0][0].Para.Inlines[0]).Text = "C1";
+        ((Run)it.Table.Cells[0][1].Para.Inlines[0]).Text = "D1";
+        cellPara.Inlines.Add(it);
+        doc.Blocks.Add(outer);
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        Assert.Contains("C1", rtf, System.StringComparison.Ordinal);
+        Assert.Contains("D1", rtf, System.StringComparison.Ordinal);
+    }
+
+    // Load-time compaction walked block tables' cells but not an INLINE table's, so a document whose text
+    // lives in one kept its per-word run fragmentation (the same blind spot the undo byte budget had).
+    [Fact]
+    public void RunNormalizerCompactsInsideInlineTable()
+    {
+        var doc = new FlowDocument();
+        var host = new Paragraph();
+        var it = new InlineTable { Table = new TableBlock(1, 1) };
+        var cellPara = it.Table.Cells[0][0].Para;
+        cellPara.Inlines.Clear();
+        // Three adjacent identically-formatted runs — the Word/Docs per-word <span> shape.
+        cellPara.Inlines.Add(new Run { Text = "one ", FontFamily = string.Concat("Ari", "al") });
+        cellPara.Inlines.Add(new Run { Text = "two ", FontFamily = string.Concat("Ari", "al") });
+        cellPara.Inlines.Add(new Run { Text = "three", FontFamily = string.Concat("Ari", "al") });
+        host.Inlines.Add(it);
+        doc.Blocks.Add(host);
+
+        RunNormalizer.Compact(doc);
+
+        var runs = cellPara.Inlines.OfType<Run>().ToList();
+        Assert.Single(runs);
+        Assert.Equal("one two three", runs[0].Text);
+        // Font families are interned to one shared instance across the document.
+        Assert.Same(RunNormalizer.Intern("Arial"), runs[0].FontFamily);
+    }
+
+    // HWP dropped the row structure of an exported table and pasted the cells as plain lines, even though
+    // \trowd/\cellx/\cell/\row were all present: strict readers need the row definition still in scope AT
+    // \row, which is why Word writes it twice. Assert the repeat, and that the round-trip survives it
+    // (our own parser sees a second \trowd after the cells and must treat it as a no-op).
+    [Fact]
+    public void RtfTableRepeatsRowDefinitionBeforeRow()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(2, 2);
+        ((Run)tb.Cells[0][0].Para.Inlines[0]).Text = "A1";
+        ((Run)tb.Cells[0][1].Para.Inlines[0]).Text = "B1";
+        ((Run)tb.Cells[1][0].Para.Inlines[0]).Text = "A2";
+        ((Run)tb.Cells[1][1].Para.Inlines[0]).Text = "B2";
+        doc.Blocks.Add(tb);
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        // 2 rows × (definition before the cells + definition before \row) = 4 \trowd.
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(rtf, @"\\trowd").Count);
+        // \row is preceded by the LAST \cellx of the repeated definition, not by a \cell.
+        Assert.Contains(@"\cellx3000\row", rtf, System.StringComparison.Ordinal);
+
+        var back = RtfDocumentFormatter.Parse(rtf).Blocks.OfType<TableBlock>().Single();
+        Assert.Equal(2, back.Rows);
+        Assert.Equal(2, back.Columns);
+        Assert.Equal("B2", string.Concat(back.Cells[1][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
+    // \pard resets alignment to left per the spec, but HWP carries a previously seen \qr forward — one
+    // right-aligned paragraph turned every following one right-aligned on paste. The writer now states
+    // the alignment on every paragraph, \ql included.
+    [Fact]
+    public void RtfWritesExplicitAlignmentOnEveryParagraph()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { TextAlignment = Microsoft.UI.Xaml.TextAlignment.Right, Inlines = { new Run { Text = "right" } } });
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "left" } } });
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        Assert.Contains(@"\pard\qr", rtf, System.StringComparison.Ordinal);
+        Assert.Contains(@"\pard\ql", rtf, System.StringComparison.Ordinal);
+
+        // And the explicit \ql still round-trips as Left (the parser maps it directly).
+        var paras = RtfDocumentFormatter.Parse(rtf).Blocks.OfType<Paragraph>()
+            .Where(p => p.Inlines.OfType<Run>().Any(r => !string.IsNullOrEmpty(r.Text))).ToList();
+        Assert.Equal(Microsoft.UI.Xaml.TextAlignment.Right, paras[0].TextAlignment);
+        Assert.Equal(Microsoft.UI.Xaml.TextAlignment.Left, paras[1].TextAlignment);
+    }
 }
