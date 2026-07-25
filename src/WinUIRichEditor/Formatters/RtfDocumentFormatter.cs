@@ -792,18 +792,26 @@ internal sealed class RtfWriter
     {
         WriteParagraphProps(p);
 
+        // Whether anything has been written into the paragraph currently open. Only a paragraph with
+        // content needs closing with \par before a table interrupts it; without this an inline table that
+        // is the FIRST thing in its host paragraph — the ordinary "글자처럼 취급" shape, where the table is
+        // all the paragraph holds — emitted a \par against an empty paragraph and Word/HWP showed a blank
+        // line above the table. (The empty paragraph AFTER a table is different: RTF requires one.)
+        bool wrote = false;
+
         if (p.ListType != ListKind.None)
         {
             WriteEscaped(ListMarkers.Text(p.ListType, p.ListMarker, ordered));
             _body.Append(@"\tab ");
+            wrote = true;
         }
 
         bool heading = p.HeadingLevel is >= 1 and <= 6;
         double headingSize = heading ? HeadingSize(p.HeadingLevel) : 0;
         foreach (var inline in p.Inlines)
         {
-            if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r, heading, headingSize);
-            else if (inline is InlineImage img && img.RawBytes != null) WritePict(img.RawBytes, img.MimeType, img.Width, img.Height);
+            if (inline is Run r && !string.IsNullOrEmpty(r.Text)) { WriteRun(r, heading, headingSize); wrote = true; }
+            else if (inline is InlineImage img && img.RawBytes != null) { WritePict(img.RawBytes, img.MimeType, img.Width, img.Height); wrote = true; }
             else if (inline is InlineTable itbl)
             {
                 // An INLINE table ("treat as character") lives in the paragraph's text flow, but RTF has
@@ -813,9 +821,10 @@ internal sealed class RtfWriter
                 // attempt) kept the words but lost the grid, which reads as "the table disappeared".
                 // Inline-ness itself cannot survive the format, so it round-trips back as a BLOCK table.
                 // A trailing empty paragraph is deliberate: RTF requires a paragraph after a table.
-                _body.Append(@"\par").Append('\n');
+                if (wrote) _body.Append(@"\par").Append('\n');
                 WriteTable(itbl.Table);   // ends with \pard\plain
                 WriteParagraphProps(p);
+                wrote = false;            // the reopened paragraph starts empty again
                 continue;
             }
         }

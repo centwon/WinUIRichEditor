@@ -654,6 +654,31 @@ HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModif
 > `ParseHtml` 직후의 **원본**(블록 표)이라 화면 상태와 달랐다. **스크린샷과 덤프가 같은 문서 상태인지
 > 먼저 확인할 것.**
 
+## 7차 전수 리뷰 (2026-07-25) — 완료
+6차 이후 이 세션에서만 소스 24개 파일 722줄이 바뀌었으므로, **자기 변경분 감사**를 1순위로 두고
+(새로 넣은 결함이 가장 위험하다) 그동안 한 번도 열지 않은 파일을 이어서 정독했다.
+빌드 0/0, 테스트 **74/74**(신규 1). 새 결함 **1건**.
+
+- [x] **인라인 표 앞에 빈 문단이 새던 문제**(`RtfWriter.WriteParagraph`, 6차의 인라인 표 승격이 넣은 결함):
+  호스트 문단을 표 앞뒤로 쪼갤 때 `\par`를 **무조건** 먼저 방출했다. 표가 문단의 **첫 내용**일 때 —
+  즉 "글자처럼 취급"의 통상적 형태(문단이 표 하나만 담음) — 그 `\par`가 빈 문단을 닫아 Word/HWP에서
+  표 위에 빈 줄이 생겼다. 내용이 실제로 쓰였을 때만 닫도록 `wrote` 플래그 도입. 표 **뒤**의 빈 문단은
+  RTF가 요구하므로 그대로 둔다. 회귀 테스트 추가 — 수정 전 FAIL 확인.
+
+**정독/검증 완료, 이상 없음**: 이번 세션 변경분 전체(`RichEditor.Formatting`의 `ClearList` 통합 3경로 ·
+`TextRange.BlockHolds` 재귀 · RTF 행 정의 2회 방출과 파서 재진입 · `DrawFindHighlights`의 현재 매치 제외 ·
+`ShowCaretWhenReadOnly`/`RestartBlink`/`OnReadOnlyChanged` · 툴바 Hook/Unhook 멱등성 · 데모 `--page`),
+그리고 `TableBlock`(구조 편집·병합·Extract·Clone 전부, 5차의 `RowHeights.Clear()` 판정 재확인),
+`DocumentSerializer` DTO↔모델 양방향, `ImageInfo`/`ImageEncoder`/`DocumentPackage`/`InlineObjects`/
+`RoundTripHarness`.
+
+### 오탐/무해로 확인 (근거를 실제로 확인함)
+- `DocumentSerializer`의 표 셀이 `Parent`를 세팅하지 않음 — **모든** 로드 경로가
+  `LoadDocument`→`Document` DP→`OnDocumentAssigned`→`UpdateParents`를 지나므로 컨트롤이 채운다(경로를
+  따라가 확인했다. "아마 괜찮다"로 넘기지 않는다 — 6차의 `TextRange` 오판이 그렇게 나왔다).
+- 손상 JSON의 `Cells: null` → `Rows=0` 표. 레이아웃/네비/정규화 전부 빈 그리드에서 무해하게 통과하고
+  높이 0으로 렌더된다. 정상 writer는 항상 Cells를 쓴다.
+
 ## 보류 / 백로그 (backlog)
 실수요가 생기면 그때 꺼내 쓸 항목. **파리티 갭 아님**(원본 AvaloniaRichEditor에도 없음) — 순수 net-new.
 - **암호화 `.flow` 저장** — 지금 구현 안 함(수요 근거 없음, 엔진 핵심 아님). 만들게 되면 *제대로* 할 것:

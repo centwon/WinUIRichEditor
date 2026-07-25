@@ -521,6 +521,29 @@ public class EnhancementTests
         Assert.Contains("after", body);
     }
 
+    // An inline table that is the FIRST thing in its host paragraph (the ordinary "treat as character"
+    // shape — the paragraph holds nothing else) must not be preceded by a \par: that closes an EMPTY
+    // paragraph and Word/HWP render a blank line above the table. The empty paragraph AFTER the table is
+    // a different thing — RTF requires one — so only the leading side is suppressed.
+    [Fact]
+    public void RtfInlineTableAloneHasNoLeadingEmptyParagraph()
+    {
+        var doc = new FlowDocument();
+        var host = new Paragraph();
+        var it = new InlineTable { Table = new TableBlock(1, 1) };
+        ((Run)it.Table.Cells[0][0].Para.Inlines[0]).Text = "X";
+        host.Inlines.Add(it);              // nothing before the table
+        doc.Blocks.Add(host);
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        // \par as a whole control word (not the \pard prefix) must first appear AFTER the row starts.
+        var par = System.Text.RegularExpressions.Regex.Match(rtf, @"\\par(?![a-zA-Z])");
+        int rowIdx = rtf.IndexOf(@"\trowd", System.StringComparison.Ordinal);
+        Assert.True(par.Success, "expected a trailing \\par after the table");
+        Assert.True(rowIdx >= 0 && rowIdx < par.Index,
+            $"a \\par at {par.Index} precedes \\trowd at {rowIdx} — that is the spurious empty paragraph");
+    }
+
     // Inside a CELL the same promotion isn't available (real nesting needs \itap2 + \nestcell/\nestrow,
     // outside this writer's subset), so an inline table there still flattens — content over structure,
     // the same rule a nested TableBlock in a cell follows. It must not vanish.
