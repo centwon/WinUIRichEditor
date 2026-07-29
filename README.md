@@ -17,14 +17,23 @@ DirectWrite-backed `CanvasTextLayout` instead of Avalonia's `TextLayout`.
 > loading a `.flow` saved by the original). See [`Project_Roadmap.md`](Project_Roadmap.md) and
 > [`CHANGELOG.md`](CHANGELOG.md). The control API may still change.
 
-> **Requires Windows App SDK 2.3.2 or later.** (Raised from 2.2.1 in 0.9.0 — see the CHANGELOG for the
-> other behavioural changes in that release.)
+> **Requires Windows App SDK 2.2.1 or later.**
+> ⚠️ **0.9.0 wrongly required 2.3.2 — use 0.9.1 or later.** 2.3.2 is *higher* than the WinUI version the
+> `Microsoft.WindowsAppSDK` meta-package brings (2.3.1 → WinUI 2.3.0), so framework-dependent apps
+> compiled against a newer WinUI than the runtime they ship on. 0.9.1 lowers the floor back to 2.2.1.
+>
+> **Consuming apps that publish self-contained** (`WindowsAppSDKSelfContained=true`) must reference the
+> **meta-package** `Microsoft.WindowsAppSDK` — only it brings `Microsoft.WindowsAppSDK.Runtime`, the
+> redistributable runtime. This library references the split `Microsoft.WindowsAppSDK.WinUI` component
+> because a *library* needs only the compile-time surface; copying that choice into an *app* leaves it
+> with no runtime to bundle.
 
 ## Tech stack
 
 - **.NET 10** (`net10.0-windows10.0.26100.0`), C# `nullable enable`. Target: **unpackaged** (no MSIX).
-- **WinUI 3 / Windows App SDK 2.3.x** — the library references the split `Microsoft.WindowsAppSDK.WinUI`
-  package (2.3.2); controls are **code-only** (no XAML, avoids AOT compiled-binding pitfalls).
+- **WinUI 3 / Windows App SDK 2.2.1+** — the library references the split `Microsoft.WindowsAppSDK.WinUI`
+  package (floor 2.2.1; the demo tracks the latest 2.3.x as a forward-compatibility canary); controls are
+  **code-only** (no XAML, avoids AOT compiled-binding pitfalls).
 - **Win2D 1.4.0** (`Microsoft.Graphics.Win2D`) — immediate-mode rendering; one `CanvasTextLayout` per
   paragraph drives render, caret, hit-testing, and selection.
 - **HtmlAgilityPack 1.12.4** for external HTML paste parsing.

@@ -8,17 +8,23 @@
 ## 기술 기반 (Tech Stack)
 
 - **런타임**: .NET 10 (`net10.0-windows10.0.26100.0`), C# `Nullable enable`. 목표: **Unpackaged**(MSIX 아님) + **Native AOT**.
-- **UI**: WinUI 3 / Windows App SDK **2.3.x**. 컨트롤은 XAML 없는 **코드 전용**(AOT의 컴파일 바인딩 함정 회피).
-  라이브러리는 분할 패키지 **`Microsoft.WindowsAppSDK.WinUI` 2.3.2**만 참조하고(메타패키지는 WebView2/AI/ML/
-  Widgets를 끌고 온다), 데모는 메타패키지 **`Microsoft.WindowsAppSDK` 2.3.1**을 쓴다. 라이브러리 쪽 버전이
-  **NuGet 소비자의 최소 요구치**가 되므로 올릴 때는 breaking으로 취급한다.
+- **UI**: WinUI 3 / Windows App SDK. 컨트롤은 XAML 없는 **코드 전용**(AOT의 컴파일 바인딩 함정 회피).
+  라이브러리는 분할 패키지 **`Microsoft.WindowsAppSDK.WinUI` 2.2.1**만 참조하고(메타패키지는 WebView2/AI/ML/
+  Widgets를 끌고 온다), 데모는 메타패키지 **`Microsoft.WindowsAppSDK` 2.3.1**을 쓴다 — 데모가 최신을
+  따라가는 **전방 호환 카나리아** 역할, 라이브러리는 **가장 낮은 지원 버전**이라는 역할 분리다.
+  ⚠ 라이브러리 하한선 규칙 2가지: ① 실제로 빌드·테스트·AOT가 통과하는 **가장 낮은** 버전 ② 소비자
+  메타패키지가 주는 WinUI를 **넘지 말 것**(2.2.0→WinUI 2.2.1, 2.3.1→WinUI **2.3.0**). 0.9.0이 2.3.2로
+  올렸다가 프레임워크 의존 앱을 깨뜨려 0.9.1에서 환원했다. 올리는 건 소비자에게 breaking이다.
+  ⚠ **소비자 앱이 self-contained 배포**(`WindowsAppSDKSelfContained=true`)를 한다면 **메타패키지**를
+  참조해야 한다 — `Microsoft.WindowsAppSDK.Runtime`(재배포 런타임)은 메타패키지에만 딸려온다. 라이브러리의
+  분할 참조를 앱이 따라 하면 번들할 런타임이 없어진다(어느 버전에서든 동일).
 - **렌더 백엔드**: **Win2D** `Microsoft.Graphics.Win2D` **1.4.0** (WinUI와 같은 AOT 프로젝션 레일).
   ⚠ Win2D 1.4.0의 nuspec은 `Microsoft.WindowsAppSDK.WinUI` **1.8.260204000 하한선**을 선언한다. 위 명시
   참조가 그걸 들어올리는 역할이므로 **빼면 안 된다** — 빼면 1.8이 해석되어 PRI277 self-contained 병합
   충돌이 되살아난다(예전엔 그 충돌을 데모의 PRI 스트립 타깃으로 우회했고, 지금은 그 타깃이 불필요해 삭제됨).
   - `CanvasControl.Draw` + `CanvasDrawingSession` = 즉시모드 렌더(Avalonia `Control.Render(DrawingContext)` 대응).
   - `CanvasTextLayout`(+`CanvasTextFormat`) = **단일 진실의 원천**. DirectWrite 기반이라 Avalonia 윈도우 `TextLayout`과 글리프 메트릭 일치. `HitTest`/`GetCaretPosition`/`GetCharacterRegions`/`SetUnderline`/인라인 객체 보유.
-- **NuGet**: 라이브러리 = Microsoft.WindowsAppSDK.WinUI 2.3.2 + Microsoft.Graphics.Win2D 1.4.0 +
+- **NuGet**: 라이브러리 = Microsoft.WindowsAppSDK.WinUI 2.2.1 + Microsoft.Graphics.Win2D 1.4.0 +
   HtmlAgilityPack 1.12.4(외부 HTML 붙여넣기 파싱). 데모 = Microsoft.WindowsAppSDK 2.3.1 + Win2D 1.4.0.
 
 ### Avalonia → WinUI/Win2D 매핑 (포팅 사전)

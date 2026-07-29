@@ -22,7 +22,7 @@
   <!-- NuGet 패키지 메타데이터. 버전은 태그(release)로 덮어쓸 수 있게 CI에서 -p:Version 전달 가능. -->
   <PropertyGroup Label="Packaging">
     <PackageId>WinUIRichEditor</PackageId>
-    <Version>0.9.0</Version>
+    <Version>0.9.1</Version>
     <Authors>centwon</Authors>
     <Company>centwon</Company>
     <Product>WinUIRichEditor</Product>
@@ -36,7 +36,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>winui;winui3;win2d;richtextbox;richtext;rich-text-editor;editor;wysiwyg;flowdocument;rtf;directwrite</PackageTags>
-    <PackageReleaseNotes>See CHANGELOG.md. Requires Windows App SDK 2.3.2+ (raised from 2.2.1). Breaking/behavioural: the synchronous ParseHtml/LoadHtml/InsertHtml no longer download remote images (use the Async variants); AllowRemoteImagesOnPaste now also governs LoadHtml*/InsertHtml; turning a list off now clears its nesting level; RTF output reshaped for HWP/Word table and alignment fidelity. The control API may still change.</PackageReleaseNotes>
+    <PackageReleaseNotes>See CHANGELOG.md. 0.9.1 lowers the Windows App SDK requirement back to 2.2.1 — 0.9.0 wrongly required 2.3.2, which is higher than the WinUI the Microsoft.WindowsAppSDK meta-package provides, breaking framework-dependent apps. Prefer 0.9.1 over 0.9.0. Behavioural changes carried over from 0.9.0: the synchronous ParseHtml/LoadHtml/InsertHtml no longer download remote images (use the Async variants); AllowRemoteImagesOnPaste now also governs LoadHtml*/InsertHtml; turning a list off now clears its nesting level; RTF output reshaped for HWP/Word table and alignment fidelity. The control API may still change.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
@@ -91,10 +91,16 @@
          demo csproj). We lift just the WinUI component rather than the full Microsoft.WindowsAppSDK
          meta-package: the library only needs the WinUI/Win2D surface, and the meta-package drags WebView2
          (WPF flavor → WindowsBase 4/5 conflict warning), AI, ML, and Widgets we never use.
-         This version is the package's declared MINIMUM for consumers — a consumer app on an older
-         WindowsAppSDK cannot install it, so raising it is a breaking change for them. Keep it at the
-         version the library is actually built and tested against. -->
-    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.2" />
+         This version is the package's declared MINIMUM for consumers, and it must satisfy TWO rules:
+         (1) Keep it at the LOWEST version the library actually builds, tests and AOT-publishes on —
+             raising it is breaking (a consumer on an older WindowsAppSDK cannot install the package).
+         (2) It must not EXCEED the WinUI version the consumer's Microsoft.WindowsAppSDK meta-package
+             brings (2.2.0 → WinUI 2.2.1; 2.3.1 → WinUI 2.3.0). A framework-dependent app otherwise
+             compiles against a newer WinUI than the runtime it ships on. 0.9.0 shipped 2.3.2 — above
+             what meta-package 2.3.1 provides — and broke exactly that; 0.9.1 lowered it back.
+         Verified at 2.2.1: solution builds 0/0, tests 74/74, AOT self-contained publish runs and
+         renders. Re-verify before changing. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
   </ItemGroup>
