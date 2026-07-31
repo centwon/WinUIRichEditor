@@ -809,6 +809,23 @@ public class EnhancementTests
     }
 
     [Fact]
+    public void Html_DocumentOfOnlyIndentedListItems_SurvivesRoundTrip()
+    {
+        // Reachable in the editor: make a paragraph a list item, press Tab to indent it, and that is the
+        // whole document. The export then opens a nested <ol> whose only child is another <ol>, and if
+        // the import finds no <li> at the level it looks at, the document parses to ZERO blocks — which
+        // trips the raw-text fallback and turns the entire file into literal HTML markup as text.
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { ListType = ListKind.Ordered, ListLevel = 1, Inlines = { new Run { Text = "들여쓴 항목" } } });
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        string text = string.Concat(back.Blocks.OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text));
+        Assert.Contains("들여쓴 항목", text, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("<ol", text, System.StringComparison.Ordinal); // not dumped as raw markup
+    }
+
+    [Fact]
     public void Rtf_ThreeLevelNesting_SurvivesRoundTrip()
     {
         // Depth is carried by \itap, so two levels can pass while three fails: the per-depth pending

@@ -550,7 +550,22 @@ internal sealed class RtfParser
 
     private void EndParagraph()
     {
-        if (_curRow != null) { _bytes.Add(10); return; }
+        // Inside a cell, \par is a real paragraph break — the model has held several paragraphs per cell
+        // since cells became block containers, and folding them into one paragraph with newlines lost
+        // that structure on every Word/HWP paste. It also made our own round trip non-idempotent: the
+        // count of paragraphs in a cell changed between the first and second cycle, because only a \par
+        // that happened to sit next to an \itap transition survived as a break (found by the fuzz).
+        if (_curRow != null)
+        {
+            FlushRun();
+            if (_para.Inlines.Count > 0)
+            {
+                if (!_cellPending.TryGetValue(_itap, out var pending)) _cellPending[_itap] = pending = new List<Block>();
+                pending.Add(_para);
+                _para = new Paragraph();
+            }
+            return;
+        }
         FlushRun();
         FinalizeTable();
         _doc.Blocks.Add(_para);

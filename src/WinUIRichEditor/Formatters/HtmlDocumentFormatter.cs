@@ -295,6 +295,20 @@ public static class HtmlDocumentFormatter
     private static void ParseList(HtmlNode listNode, FlowDocument flow, ListKind kind, int level, string? linkUri)
     {
         var marker = ListMarkerFromCss(ReadStyleValue(listNode, "list-style-type"));
+
+        // A sublist that is a DIRECT child of this list, with no <li> wrapping it. Our own export makes
+        // exactly that shape for an item whose ListLevel has no shallower item above it (indent the only
+        // list item in a document and you get <ol><ol><li>…), and only-<li> iteration never reached it:
+        // the items vanished, and when they were the whole document the parse produced zero blocks and
+        // the raw-text fallback dumped the entire file as literal markup.
+        foreach (var sub in listNode.ChildNodes)
+        {
+            if (!sub.Name.Equals("ul", StringComparison.OrdinalIgnoreCase)
+                && !sub.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)) continue;
+            ParseList(sub, flow, sub.Name.Equals("ol", StringComparison.OrdinalIgnoreCase) ? ListKind.Ordered : ListKind.Bullet,
+                      level + 1, linkUri);
+        }
+
         foreach (var li in listNode.ChildNodes.Where(n => n.Name.Equals("li", StringComparison.OrdinalIgnoreCase)))
         {
             var p = new Paragraph { ListType = kind, ListLevel = level, ListMarker = marker };
@@ -834,7 +848,10 @@ public static class HtmlDocumentFormatter
     }
 
     // Emits a table as an HTML <table>. Shared by block tables and inline tables.
-    private static void EmitTable(StringBuilder sb, TableBlock tb, bool asInline = false, bool opensParagraph = false)
+    // asInline: an InlineTable (marked + sized to its own columns so it sits in a text line).
+    // tight: suppress the pretty-printing newline after </table> because the table is emitted somewhere
+    // whose content parses as inline (a text line, or a <td>), where that whitespace becomes content.
+    private static void EmitTable(StringBuilder sb, TableBlock tb, bool asInline = false, bool opensParagraph = false, bool tight = false)
     {
         // `data-are-inline` is ours: HTML has no inline table, so an InlineTable came back from our own
         // export as a BLOCK table, permanently splitting the paragraph it lived in. External HTML never
@@ -872,21 +889,29 @@ public static class HtmlDocumentFormatter
                     sb.Append($"<td{span} style=\"background-color:{ColorUtil.ToCss(cbg)}\">");
                 else
                     sb.Append($"<td{span}>");
-                bool firstCellPara = true;
+                // <br> separates two CONSECUTIVE paragraphs. After a block element (a nested table, an
+                // image, a rule) the paragraph boundary already exists, and an extra <br> there is not a
+                // separator at all — it parses back as a newline INSIDE the next paragraph, and grows by
+                // one on every save/load cycle. So the flag has to mean "the previous block was a
+                // paragraph", not "some paragraph has been emitted".
+                bool prevWasParagraph = false;
                 foreach (var cblk in cell.Blocks)
                 {
                     if (cblk is Paragraph cpara)
                     {
-                        if (!firstCellPara) sb.Append("<br>");
-                        firstCellPara = false;
+                        if (prevWasParagraph) sb.Append("<br>");
+                        prevWasParagraph = true;
                         foreach (var inline in cpara.Inlines) EmitInline(sb, inline);
                     }
                     else if (cblk is ImageBlock cib && (cib.RawBytes != null || cib.Image != null))
-                        sb.Append(ImgTag(cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText));
+                    { sb.Append(ImgTag(cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText)); prevWasParagraph = false; }
                     else if (cblk is TableBlock nt)
-                        EmitTable(sb, nt);
+                        // tight: a <td>'s content is parsed as inline, so the pretty-printing newline
+                        // after a nested </table> lands INSIDE the cell as a whitespace text node and
+                        // comes back as content — one more newline per save/load cycle.
+                    { EmitTable(sb, nt, tight: true); prevWasParagraph = false; }
                     else if (cblk is DividerBlock)
-                        sb.Append("<hr/>");
+                    { sb.Append("<hr/>"); prevWasParagraph = false; }
                 }
                 sb.Append("</td>\n");
             }
