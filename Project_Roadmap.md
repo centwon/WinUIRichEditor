@@ -750,7 +750,18 @@ HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModif
       툴바 아이콘 정상).
 - [x] **`dotnet pack` 실물 검사** — 패키지 = `dll` + **`xml`**(신규) + `README` + 메타데이터.
       분석기·`PublicAPI.*` 미포함 확인.
-- [ ] **NuGet 소비자 스모크** — 로컬 pack → 별도 앱 설치 → 빌드 **및 실행**(사람이 실행).
+- [x] **NuGet 소비자 스모크 — 통과(13/13)**. 로컬 feed + `nuget.config` + **`PackageReference`**(ProjectReference
+      아님)로 별도 unpackaged WinUI 3 앱을 세워 빌드·실행. 1.0의 업그레이드 위험을 겨냥해 확인:
+      **breaking**(`RoundTripHarness`가 배포 어셈블리에 없음) · **동작 변경**(`LoadJson`/`LoadPackageAsync`가
+      손상 입력에 예외를 던지고, 그때 **열려 있던 문서가 보존됨**) · **신규 DP**(`SetValue`로 설정 가능) ·
+      `FocusEditor()` · HTML/RTF 왕복 · 중첩 표 `GetPlainText` · XML 문서가 복원된 패키지에 존재.
+      **재현 레시피**(스캐폴드는 임시 폴더라 매번 사라진다): 데모 csproj를 본떠
+      `WindowsPackageType=None` + 메타패키지 `Microsoft.WindowsAppSDK` + `WinUIRichEditor` PackageReference,
+      `App.xaml`은 `XamlControlsResources`만, 체크는 `OnLaunched`에서 **async로** 돌리고 결과를 파일로 쓴다.
+      ⚠️ 함정 3가지(실제로 다 밟았다): ① 비동기 API를 UI 스레드에서 `.GetResult()`로 블록하면 **데드락**
+      (continuation이 같은 스레드를 필요로 함) — 소비자도 반드시 `await`할 것 ② `DispatcherQueueTimer`를
+      지역 변수로 두면 울리기 전에 GC됨 ③ `FocusEditor()`는 **레이아웃 완료 전 `false`** — 실패가 아니라
+      WinUI가 Focus()를 무시하는 것.
 - [ ] **`v1.0.0` 태그 푸시** → `.github/workflows/publish.yml`이 nuget.org 자동 게시(사람이 실행).
 
 ### 구조적 잔여 (릴리스 차단 아님, 가장 큰 항목)
