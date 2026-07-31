@@ -82,12 +82,10 @@ public partial class RichEditorToolbar
             if (Equals(ci.Tag, FitWidthTag)) Target.FitToWidth();
             else if (ci.Tag is int pct) Target.SetZoom(pct / 100.0);
         };
-        // Monochrome magnifier (Segoe Fluent "Zoom") — the 🔍 emoji rendered in colour and off-size.
-        strip.Children.Add(new FontIcon
-        {
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons"),
-            Glyph = ((char)0xE71E).ToString(), FontSize = 14, VerticalAlignment = VerticalAlignment.Center, // no PUA literal in source
-        });
+        // No icon: the Segoe Fluent "Zoom" glyph is a magnifier, and so is the Find button's "Search" one
+        // — two unlabelled magnifiers side by side in the same strip read as the same control. The combo
+        // identifies itself without help: its first item is "Fit width" and the rest are percentages, and
+        // its tooltip says zoom. (The original toolbar has no icon here either.)
         strip.Children.Add(_zoom);
 
         _paper = MakeCombo(120, Loc("PaperTip"));
