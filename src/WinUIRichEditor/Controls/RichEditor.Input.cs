@@ -1498,7 +1498,7 @@ public partial class RichEditor
         var fromPara = _caret.Paragraph;
         // Cross-paragraph: nudge generously past the inter-paragraph margin so the move clears the gap
         // (a small ±2 nudge lands inside the margin and snaps back to the same line).
-        double targetY = down ? cp.LineBottom + 14 : cp.Y - 14;
+        double targetY = down ? cp.LineBottom + 14 : cp.LineTop - 14;
         // From outside an inline table, vertical movement should land on the host text, not dive into a
         // cell; from inside a cell it navigates normally.
         bool inInlineCell = _caret.Paragraph != null && FindInlineTableHost(_caret.Paragraph) != null;
@@ -1608,7 +1608,7 @@ public partial class RichEditor
         // (a) Move within the same cell (multi-line paragraph or several block paragraphs in the cell).
         if (CaretToDocPoint(cur) is { } cp)
         {
-            double ty = down ? cp.LineBottom + 2 : cp.Y - 2;
+            double ty = down ? cp.LineBottom + 2 : cp.LineTop - 2;
             _suppressInlineTableHit = false;
             TextPointer? inner;
             try { inner = GetPositionFromPoint(new Point(_desiredCaretX, ty)); }
@@ -1925,7 +1925,7 @@ public partial class RichEditor
     // The caret's top-level block comes from the parent chain + block layout map (O(depth) + O(1)); the
     // heavy layout is built only for the caret's own paragraph / host cell chain. Previously this
     // advanced from the document start on every caret paint, scroll and IME sync.
-    private (double X, double Y, double Height, double LineBottom)? CaretToDocPoint(TextPointer tp)
+    private (double X, double Y, double Height, double LineTop, double LineBottom)? CaretToDocPoint(TextPointer tp)
     {
         if (Document == null || tp.Paragraph == null) return null;
         if (TopLevelBlockFor(tp.Paragraph) is not { } top) return null;
@@ -1942,8 +1942,8 @@ public partial class RichEditor
             if (ReferenceEquals(p, tp.Paragraph))
             {
                 var layout = BuildTextLayout(p, pWidth);
-                var (cx, cy, ch, clb) = CaretInLayout(layout, p, tp.Offset, tp.AtLineEnd);
-                return (px + cx, y + cy, ch, y + clb);
+                var (cx, cy, ch, clt, clb) = CaretInLayout(layout, p, tp.Offset, tp.AtLineEnd);
+                return (px + cx, y + cy, ch, y + clt, y + clb);
             }
             // tp lives inside one of p's inline tables (the chain ended at the host paragraph).
             var hostLayout = BuildTextLayout(p, pWidth);
@@ -1965,7 +1965,7 @@ public partial class RichEditor
 
     // Finds the caret paragraph inside a cell block list and returns its document-space caret geometry
     // (mirrors DrawCellBlockList's advance). Recurses through nested tables.
-    private (double X, double Y, double Height, double LineBottom)? CaretInBlockList(System.Collections.Generic.IList<Block> blocks, double ox, double oy, double innerW, TextPointer tp)
+    private (double X, double Y, double Height, double LineTop, double LineBottom)? CaretInBlockList(System.Collections.Generic.IList<Block> blocks, double ox, double oy, double innerW, TextPointer tp)
     {
         double by = 0;
         foreach (var b in blocks)
@@ -1981,8 +1981,8 @@ public partial class RichEditor
                     if (ReferenceEquals(para, tp.Paragraph))
                     {
                         var layout = BuildTextLayout(para, pw);
-                        var (cx, cy, ch, clb) = CaretInLayout(layout, para, tp.Offset, tp.AtLineEnd);
-                        return (px + cx, blkY + cy, ch, blkY + clb);
+                        var (cx, cy, ch, clt, clb) = CaretInLayout(layout, para, tp.Offset, tp.AtLineEnd);
+                        return (px + cx, blkY + cy, ch, blkY + clt, blkY + clb);
                     }
                     if (HasInlineTable(para))
                     {
@@ -2015,7 +2015,7 @@ public partial class RichEditor
     // Caret geometry when tp lives inside one of paragraph p's inline-table cells (the offset->geometry
     // dual of HitInlineTable). Lets vertical caret movement read a starting point for a caret parked in
     // an inline-table cell, which CaretToDocPoint's top-level walk would otherwise miss.
-    private (double X, double Y, double Height, double LineBottom)? CaretInInlineTable(Paragraph p, CanvasTextLayout layout, double px, double oy, TextPointer tp)
+    private (double X, double Y, double Height, double LineTop, double LineBottom)? CaretInInlineTable(Paragraph p, CanvasTextLayout layout, double px, double oy, TextPointer tp)
     {
         using var pin = new LayoutPin(this); // `layout` (host) is used across the cell-layout builds below
         int off = 0;
@@ -2088,7 +2088,7 @@ public partial class RichEditor
         if (_printMode || !_hasFocus || !_caretOn) return;
         if (IsReadOnly && !ShowCaretWhenReadOnly) return; // viewer: no caret unless the host asks for one
         if (!IsCaretInParagraph(p)) return;
-        var (cx, cy, ch, _) = CaretInLayout(layout, p, _caret.Offset, _caret.AtLineEnd);
+        var (cx, cy, ch, _, _) = CaretInLayout(layout, p, _caret.Offset, _caret.AtLineEnd);
         float x = (float)(px + cx);
         ds.DrawLine(x, (float)(oy + cy), x, (float)(oy + cy + ch), CaretColor, 1.5f);
     }
@@ -2097,12 +2097,12 @@ public partial class RichEditor
     // under custom line spacing — the caret is glyph-sized and sits on the baseline, while the line box
     // is taller — and vertical movement must step over the LINE, not over the caret: probing from the
     // caret's bottom lands back inside the same line box at 200% spacing and above.
-    private (double X, double Y, double Height, double LineBottom) CaretInLayout(CanvasTextLayout layout, Paragraph p, int offset, bool atLineEnd = false)
+    private (double X, double Y, double Height, double LineTop, double LineBottom) CaretInLayout(CanvasTextLayout layout, Paragraph p, int offset, bool atLineEnd = false)
     {
         int len = GetParagraphLength(p);
         offset = Math.Clamp(offset, 0, len);
         double h = EmptyLineHeight(p);
-        double lineBottom = double.NaN;
+        double lineTop = double.NaN, lineBottom = double.NaN;
         double yTop;
         Vector2 pos;
         // Affinity: at a soft-wrap boundary the offset is shared by two visual positions. The trailing
@@ -2129,7 +2129,7 @@ public partial class RichEditor
             double emptyH = EmptyTextHeight(p);
             double bl = BaselineOfLineAt(layout, offset); // empty: line 0; fresh break: the trailing line
             if (!double.IsNaN(bl))
-                return (pos.X, yTop + bl - emptyH * BaselineFraction, emptyH, yTop + EmptyLineHeight(p));
+                return (pos.X, yTop + bl - emptyH * BaselineFraction, emptyH, yTop, yTop + EmptyLineHeight(p));
         }
         if (len > 0 && !onFreshBreakLine)
         {
@@ -2140,6 +2140,7 @@ public partial class RichEditor
                 if (regions.Length > 0)
                 {
                     var rb = regions[0].LayoutBounds;
+                    lineTop = rb.Y;
                     lineBottom = rb.Y + rb.Height;
                     double textH = PtToPx(RunFontSizeAt(p, probe)) * NaturalLineFactor;
                     // A region's LayoutBounds spans the whole LINE BOX, which is taller than the glyphs it
@@ -2166,8 +2167,10 @@ public partial class RichEditor
             }
             catch { }
         }
-        if (double.IsNaN(lineBottom)) lineBottom = yTop + h; // no region probed: the caret IS the line
-        return (pos.X, yTop, h, lineBottom);
+        // No region probed: the caret IS the line.
+        if (double.IsNaN(lineTop)) lineTop = yTop;
+        if (double.IsNaN(lineBottom)) lineBottom = yTop + h;
+        return (pos.X, yTop, h, lineTop, lineBottom);
     }
 
     // Baseline offset (from the line's top) of the visual line holding `offset`, or NaN if unavailable.
