@@ -150,9 +150,15 @@ internal sealed class RtfParser
     private List<CellDef> _curCellDefs = new();
     private List<List<CellDef>>? _tableRowDefs;
 
-    // Set by our own {\*\arinline} marker: the next top-level table was an InlineTable and belongs back
-    // on the preceding paragraph's text line.
+    // Set by our own {\*\arinlineN} marker: the next top-level table was an InlineTable and belongs back
+    // on a paragraph's text line.
     private bool _nextTableInline;
+    // N = 1 when the table OPENS its host paragraph — nothing preceded it, so the writer emitted no \par
+    // (that \par would render as a blank line above the table) and there is no closed host paragraph to
+    // reuse. Reattaching to the PREVIOUS paragraph in that case merges two paragraphs and swallows the
+    // earlier one — and "a paragraph holding nothing but the table" is the ordinary shape of an inline
+    // table, so this is the common case, not an edge one.
+    private bool _inlineTableOpensHost;
 
     public RtfParser(string s) => _s = s;
 
@@ -326,7 +332,7 @@ internal sealed class RtfParser
             // {\*\arinline}, so \* has already switched this group to Skip — the group is empty and only
             // the flag matters. A parser field rather than pushed/popped group state, because the marker
             // group CLOSES before the table it describes begins.
-            case "arinline": _nextTableInline = true; break;
+            case "arinline": _nextTableInline = true; _inlineTableOpensHost = (p ?? 0) != 0; break;
 
             case "shptxt": _st.Dest = Dest.Normal; break;
             case "sp": case "sn": case "sv": _st.Dest = Dest.Skip; break;
@@ -849,7 +855,9 @@ internal sealed class RtfParser
         _tableRowCellx = null;
         _tableRowDefs = null;
         bool inlineMark = _nextTableInline;
+        bool opensHost = _inlineTableOpensHost;
         _nextTableInline = false;
+        _inlineTableOpensHost = false;
         // A top-level table is done, so nothing nested inside it can still be pending: every nested row is
         // consumed by TakeCell when the cell one level up closes. Anything left is orphaned by truncated
         // or malformed input — and left in place it was picked up by the NEXT table's first cell, which
@@ -864,9 +872,13 @@ internal sealed class RtfParser
         // Marked as an inline table by our own writer ({\*\arinline}): put it back on the preceding
         // paragraph's line and continue that paragraph, so "text, table, more text" is one line again
         // instead of three blocks. The host paragraph was closed by the \par the writer emits before it.
-        if (inlineMark && _doc.Blocks.Count > 0 && _doc.Blocks[^1] is Paragraph host)
+        if (inlineMark && (opensHost || (_doc.Blocks.Count > 0 && _doc.Blocks[^1] is Paragraph)))
         {
-            _doc.Blocks.RemoveAt(_doc.Blocks.Count - 1);
+            // Reuse the paragraph the writer closed just before the table; when the table OPENED its host
+            // there is no such paragraph and a fresh one is the host.
+            Paragraph host;
+            if (opensHost) host = new Paragraph();
+            else { host = (Paragraph)_doc.Blocks[^1]; _doc.Blocks.RemoveAt(_doc.Blocks.Count - 1); }
             var it = new InlineTable { Table = tb, Parent = host };
             host.Inlines.Add(it);
             // Whatever the current paragraph has collected is the text that followed the table.
@@ -1103,12 +1115,16 @@ internal sealed class RtfWriter
                 // for a table between two runs of text. Flattening it to tab-separated text (the first
                 // attempt) kept the words but lost the grid, which reads as "the table disappeared".
                 // A trailing empty paragraph is deliberate: RTF requires a paragraph after a table.
+                bool opensHost = !wrote; // nothing preceded it, so no \par closes a host paragraph below
                 if (wrote) _body.Append(@"\par").Append('\n');
                 // Ours, and deliberately an ignorable destination: {\*\...} groups are skipped by
                 // definition, so every other reader still sees exactly the block-level table it saw
                 // before. Our own reader takes the marker and puts the table back on the text line, so
                 // RTF joins .flow/JSON/HTML in round-tripping an inline table through our save/load.
-                _body.Append(@"{\*\arinline}");
+                // The parameter says whether the table OPENS its host paragraph: without it the reader
+                // cannot tell that shape from "text, table, more text" and reattaches the table to the
+                // PREVIOUS paragraph, swallowing it.
+                _body.Append(opensHost ? @"{\*\arinline1}" : @"{\*\arinline0}");
                 WriteTable(itbl.Table);   // ends with \pard\plain
                 WriteParagraphProps(p);
                 wrote = false;            // the reopened paragraph starts empty again

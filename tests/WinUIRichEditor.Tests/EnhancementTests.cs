@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using Windows.UI;
 using WinUIRichEditor.Documents;
 using WinUIRichEditor.Formatters;
@@ -760,6 +760,55 @@ public class EnhancementTests
     }
 
     [Fact]
+    public void Rtf_InlineTableAloneInItsParagraph_StaysOnItsOwnParagraph()
+    {
+        // The common "글자처럼 취급" shape: the paragraph holds NOTHING but the inline table. The writer
+        // deliberately emits no \par before it (that \par would show as a blank line above the table in
+        // Word), so on the way back there is no closed host paragraph immediately before the rows — and
+        // the marker's reattachment must not then steal the PREVIOUS paragraph.
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "이전 문단" } } });
+        var host = new Paragraph();
+        var it = new InlineTable { Table = new TableBlock(1, 2) };
+        ((Run)it.Table.Cells[0][0].Para.Inlines[0]).Text = "X";
+        ((Run)it.Table.Cells[0][1].Para.Inlines[0]).Text = "Y";
+        host.Inlines.Add(it);            // the table is the paragraph's ONLY content
+        doc.Blocks.Add(host);
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "다음 문단" } } });
+
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var withTable = back.Blocks.OfType<Paragraph>().Single(p => p.Inlines.OfType<InlineTable>().Any());
+        string text = string.Concat(withTable.Inlines.OfType<Run>().Select(r => r.Text));
+        Assert.DoesNotContain("이전 문단", text, System.StringComparison.Ordinal); // must not swallow it
+        Assert.Contains("이전 문단", string.Concat(back.Blocks.OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text)), System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Html_InlineTableAloneInItsParagraph_StaysOnItsOwnParagraph()
+    {
+        // Same shape as the RTF case: a paragraph whose only content is the inline table. HTML parsers
+        // close an open <p> when a <table> starts, so the marker's reattachment must not grab whatever
+        // paragraph happens to precede it.
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "이전 문단" } } });
+        var host = new Paragraph();
+        var it = new InlineTable { Table = new TableBlock(1, 2) };
+        ((Run)it.Table.Cells[0][0].Para.Inlines[0]).Text = "X";
+        ((Run)it.Table.Cells[0][1].Para.Inlines[0]).Text = "Y";
+        host.Inlines.Add(it);
+        doc.Blocks.Add(host);
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "다음 문단" } } });
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var withTable = back.Blocks.OfType<Paragraph>().Single(p => p.Inlines.OfType<InlineTable>().Any());
+        string text = string.Concat(withTable.Inlines.OfType<Run>().Select(r => r.Text));
+        Assert.DoesNotContain("이전 문단", text, System.StringComparison.Ordinal);
+        Assert.Contains("이전 문단", string.Concat(back.Blocks.OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text)), System.StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Rtf_ThreeLevelNesting_SurvivesRoundTrip()
     {
         // Depth is carried by \itap, so two levels can pass while three fails: the per-depth pending
@@ -1094,7 +1143,8 @@ public class EnhancementTests
 
         string rtf = RtfDocumentFormatter.Write(doc);
         // The marker is an ignorable destination, so other readers skip it and still see a block table.
-        Assert.Contains(@"{\*\arinline}", rtf, System.StringComparison.Ordinal);
+        // Its parameter says whether the table opens its host paragraph — 0 here, since text precedes it.
+        Assert.Contains(@"{\*\arinline0}", rtf, System.StringComparison.Ordinal);
         Assert.Contains(@"\trowd", rtf, System.StringComparison.Ordinal); // a real table, not flattened text
 
         var back = RtfDocumentFormatter.Parse(rtf);

@@ -169,8 +169,13 @@ public static class HtmlDocumentFormatter
                 if (tbl != null && child.GetAttributeValue("data-are-inline", "") == "1")
                 {
                     var it = new InlineTable { Table = tbl };
+                    // `data-are-opens` says the table was the FIRST thing in its paragraph. There is then
+                    // no earlier paragraph of its own to rejoin, and taking the preceding one merges two
+                    // paragraphs and swallows it — and "a paragraph holding nothing but the table" is the
+                    // ordinary shape of an inline table, so this is the common case.
+                    bool opensParagraph = child.GetAttributeValue("data-are-opens", "") == "1";
                     if (current != null) current.Inlines.Add(it);
-                    else if (flow.Blocks.Count > 0 && flow.Blocks[^1] is Paragraph lastPara)
+                    else if (!opensParagraph && flow.Blocks.Count > 0 && flow.Blocks[^1] is Paragraph lastPara)
                     {
                         // Reopen that paragraph as the pending one (Flush re-adds it): HTML parsers close
                         // a <p> when a <table> starts, so the text that followed the table arrives as a
@@ -794,7 +799,11 @@ public static class HtmlDocumentFormatter
                 else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
                     pStyle += $"line-height:{p.LineHeight.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}px;";
                 sb.Append($"<{tag} style=\"{pStyle}\">");
-                foreach (var inline in p.Inlines) EmitInline(sb, inline);
+                // `first` tells an inline table it OPENS this paragraph: an HTML parser closes the <p>
+                // when the <table> starts, so on import there is no pending paragraph and the marker's
+                // reattachment would otherwise grab whatever paragraph precedes it.
+                bool firstInline = true;
+                foreach (var inline in p.Inlines) { EmitInline(sb, inline, firstInline); firstInline = false; }
                 sb.Append($"</{tag}>\n");
             }
             else if (block is DividerBlock)
@@ -825,12 +834,12 @@ public static class HtmlDocumentFormatter
     }
 
     // Emits a table as an HTML <table>. Shared by block tables and inline tables.
-    private static void EmitTable(StringBuilder sb, TableBlock tb, bool asInline = false)
+    private static void EmitTable(StringBuilder sb, TableBlock tb, bool asInline = false, bool opensParagraph = false)
     {
         // `data-are-inline` is ours: HTML has no inline table, so an InlineTable came back from our own
         // export as a BLOCK table, permanently splitting the paragraph it lived in. External HTML never
         // carries the attribute and keeps landing as a block table, as before.
-        string mark = asInline ? " data-are-inline=\"1\"" : "";
+        string mark = asInline ? " data-are-inline=\"1\"" + (opensParagraph ? " data-are-opens=\"1\"" : "") : "";
         // A block table fills the text column; an inline table is a character-sized object, so stretching
         // it to 100% turned it into a full-width band on its own line in every consumer but our own
         // importer. Size it to its own columns and let it sit in the line instead.
@@ -889,7 +898,7 @@ public static class HtmlDocumentFormatter
         sb.Append(asInline ? "</table>" : "</table>\n");
     }
 
-    private static void EmitInline(StringBuilder sb, Inline inline)
+    private static void EmitInline(StringBuilder sb, Inline inline, bool opensParagraph = false)
     {
         if (inline is InlineImage im && (im.RawBytes != null || im.Image != null))
         {
@@ -898,7 +907,7 @@ public static class HtmlDocumentFormatter
         }
         if (inline is InlineTable itbl)
         {
-            EmitTable(sb, itbl.Table, asInline: true); // marked + inline-sized so it round-trips inline
+            EmitTable(sb, itbl.Table, asInline: true, opensParagraph); // marked + inline-sized so it round-trips inline
             return;
         }
         if (inline is not Run r || r.Text == null) return;
