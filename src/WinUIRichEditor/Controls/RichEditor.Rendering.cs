@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Windows.Foundation;
 using Windows.UI;
@@ -433,7 +433,7 @@ public partial class RichEditor
     private void DrawDropPreview(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, double px, double oy)
     {
         if (_printMode || !_dragTextActive || _dropPreview is not { } dp || !ReferenceEquals(dp.Paragraph, p)) return;
-        var (cx, cy, ch) = CaretInLayout(layout, p, dp.Offset, dp.AtLineEnd);
+        var (cx, cy, ch, _) = CaretInLayout(layout, p, dp.Offset, dp.AtLineEnd);
         float x = (float)(px + cx);
         ds.DrawLine(x, (float)(oy + cy), x, (float)(oy + cy + ch), GrayBorderColor, 2f);
     }

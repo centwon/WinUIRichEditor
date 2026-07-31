@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Windows.UI;
 using Windows.UI.Text;
 using Microsoft.UI.Xaml;
@@ -216,7 +216,7 @@ public partial class RichEditor
     {
         if (CaretToDocPoint(new TextPointer(p, 0)) is not { } c) return null;
         var layout = BuildTextLayout(p, ParagraphWrapWidth(p));
-        var (cx, cy, _) = CaretInLayout(layout, p, 0, false);
+        var (cx, cy, _, _) = CaretInLayout(layout, p, 0, false);
         return (c.X - cx, c.Y - cy);
     }
 
