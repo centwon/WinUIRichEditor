@@ -23,7 +23,7 @@ internal partial class DocumentJsonContext : JsonSerializerContext { }
 public static class DocumentSerializer
 {
     /// <summary>Current document-format version written by <see cref="Serialize"/> (a SemVer string).
-    /// The reader does not branch on it ??it is an informational stamp ??and accepts both the new string
+    /// The reader does not branch on it — it is an informational stamp — and accepts both the new string
     /// form and the legacy integer form.</summary>
     public const string CurrentSchemaVersion = "1.0";
 

@@ -1,4 +1,4 @@
-# Project Roadmap — WinUIRichEditor
+﻿# Project Roadmap — WinUIRichEditor
 
 `AvaloniaRichEditor` → WinUI 3 (Win2D, unpackaged, Native AOT) 포팅.
 
@@ -705,20 +705,36 @@ HTML 파서 정적 상태 누수(`[ThreadStatic]`+`finally`) · IME 중 `IsModif
 버전 결정·CHANGELOG 재구성·README 정정·NuGet 소비자 스모크·태그 푸시 모두 끝났다.
 (`PublicAPI.Shipped.txt` 도입은 "0.9.0 이후" 후속 후보였고 **2026-07-31 트랙 E에서 완료**했다.)
 
-## 다음 릴리스 준비 (상류 1.0 대조 이후) — 미착수
-현재 `<Version>` 0.9.1. 상류 1.0 대조(아래 절)가 **breaking 1건 + 동작 변경 2건**을 넣었으므로 그대로
-게시할 수 없다. 태그를 밀기 전에 맞출 것:
-- [ ] **버전 결정** — 후보 **1.0.0**(원본이 1.0을 냈고 포트도 이제 그 검증 라운드를 따라잡았다) 또는
-      0.10.0. `RoundTripHarness` 제거가 **breaking**이라 0.9.x는 불가.
-- [ ] **`PackageReleaseNotes` 갱신** — 현재 0.9.1 문구 하드코딩. 새로 올릴 것 3건:
-      ① `Formatters.RoundTripHarness` 제거(개발 도구, 데모로 이관) ② 손상된 문서가 **예외를 던진다**
-      (종전엔 빈 문서 — 호스트가 예외를 처리해야 함) ③ RTF 표 출력 형태 변경(가로 병합이 기하 형태,
-      중첩 표가 실제 `\itap` 중첩).
-- [ ] **`PublicAPI.Unshipped.txt` → `Shipped.txt` 이관** — 릴리스 시점에 4줄을 승격하고 Unshipped를 비운다.
-- [ ] **AOT 게시 재검증** — 마지막 실측은 테스트 74개 시점. 이번 변경에 AOT 위험 요소는 없지만
-      (분석기는 빌드타임 전용) 태그 전 1회 확인.
-- [ ] **NuGet 소비자 스모크** — 로컬 pack → 별도 앱 설치 → 빌드 **및 실행**.
-- [ ] **태그 푸시** → `.github/workflows/publish.yml`이 nuget.org 자동 게시.
+## 1.0 직전 2차 대조 + 전수조사 (2026-07-31) — 완료
+동결 전 한 번 더. 상류는 `v1.0.0`에서 멈춰 있고 작업 트리도 깨끗 — 새로 들어온 것 없음.
+**결함 4건 추가 발견·수정.** 빌드 0/0, 테스트 **91/91**, AOT 게시 재검증 완료.
+- [x] **동작 플래그 8개가 더 CLR 속성**(`Allow*` 6 + `MaxRecommendedImages` + `ShowFormattingMenu`).
+      **교훈**: 트랙 E에서 "`AutoLinkOnType`만 그렇다"고 판단한 근거가 틀렸다 — 공개 표면 대조는
+      눈대중이 아니라 **원본 `PublicAPI.Shipped.txt`와 기계적으로** 맞출 것(그 스크립트가 이걸 잡았다).
+- [x] **중첩 표 누산기가 표 사이에 누수**(이번 세션이 넣은 RTF 표 모델의 결함). `_nestRow`/`_nestRows`/
+      `_cellPending`이 안 비워져, 끊긴 입력의 depth 2 잔여를 **다음 표의 첫 셀이 주워 갔다**.
+      `FinalizeTable`에서 정리. **핵심 계약**: 최상위 표가 끝나면 중첩 상태는 전부 소비됐어야 하므로
+      남은 것은 고아다 — 깊이 키 누산기를 새로 만들면 경계에서 비울 것.
+- [x] **찾기 바 닫으면 캐럿이 죽던 것**(트랙 C의 커버리지 구멍 — 툴바만 보고 찾기 바를 안 봤다).
+      `Editor.Focus()`는 컨트롤이 탭 스톱이 아니라 안 닿는다 → `FocusEditor()`.
+      **재발 방지**: `RichEditor`에 포커스를 주는 코드는 **반드시** `FocusEditor()`를 쓸 것.
+- [x] **찾기 바 버튼이 포커스 강탈**(다음 Enter가 검색 대신 버튼 재실행) → 검색 상자에 포커스 유지.
+- [x] **포매터 클래스 문서가 실제 동작과 불일치**(XML 문서가 이제 배포되므로 소비자에게 그대로 간다)
+      + 깨진 문자 4곳(`—`→`??`, 세션 이전부터 있던 것). 둘 다 수정.
+
+## 1.0.0 릴리스 준비 — 코드/문서 완료, 태그만 남음
+- [x] **`<Version>` 1.0.0** + `PackageReleaseNotes` 재작성(breaking 1건 + 동작 변경 2건을 앞세움).
+- [x] **`PublicAPI.Unshipped.txt` → `Shipped.txt` 이관** — 552줄로 동결, Unshipped 비움.
+- [x] **CHANGELOG `[1.0.0]` 절** — 맨 앞에 "이 버전으로 올릴 때 확인할 것"(breaking/동작 변경/SDK 하한).
+- [x] **README** 상태 배지 → 1.0 동결 + SemVer, stale 문구 정정(테스트 수 26→91, "API may still change" 제거).
+- [x] **AOT 게시 재검증(실측)** — self-contained `win-x64.pubxml` 성공: 총 **87MB**, 네이티브 exe
+      **15.1MB**, `coreclr.dll`·`clrjit.dll`·`System.Private.CoreLib.dll`·관리형 `WinUIRichEditor.dll`
+      전부 부재(= 진짜 AOT). **실행 + Win2D 렌더 확인**(PrintWindow 캡처 — 제목·서식·링크·인용·리스트·
+      툴바 아이콘 정상).
+- [x] **`dotnet pack` 실물 검사** — 패키지 = `dll` + **`xml`**(신규) + `README` + 메타데이터.
+      분석기·`PublicAPI.*` 미포함 확인.
+- [ ] **NuGet 소비자 스모크** — 로컬 pack → 별도 앱 설치 → 빌드 **및 실행**(사람이 실행).
+- [ ] **`v1.0.0` 태그 푸시** → `.github/workflows/publish.yml`이 nuget.org 자동 게시(사람이 실행).
 
 ### 구조적 잔여 (릴리스 차단 아님, 가장 큰 항목)
 - **테스트 인프라 격차**: 포트 90 vs 원본 528 유닛 + 17 렌더 + 상호작용 하네스. 이번 세션의 결함 중

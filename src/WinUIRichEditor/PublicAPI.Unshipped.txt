@@ -1,4 +1,1 @@
-﻿*REMOVED*WinUIRichEditor.Formatters.RoundTripHarness
-*REMOVED*static WinUIRichEditor.Formatters.RoundTripHarness.Run(string! inDir, string! outDir) -> void
-WinUIRichEditor.Controls.RichEditor.FocusEditor() -> bool
-static readonly WinUIRichEditor.Controls.RichEditor.AutoLinkOnTypeProperty -> Microsoft.UI.Xaml.DependencyProperty!
+﻿

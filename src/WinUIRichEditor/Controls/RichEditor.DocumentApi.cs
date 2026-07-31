@@ -1,7 +1,9 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Threading.Tasks;
 using WinUIRichEditor.Documents;
 using WinUIRichEditor.Formatters;
+
+using Microsoft.UI.Xaml;
 
 namespace WinUIRichEditor.Controls;
 
@@ -12,9 +14,17 @@ namespace WinUIRichEditor.Controls;
 // background; parsing builds the model on the UI thread (CanvasBitmap decode is deferred to render).
 public partial class RichEditor
 {
+    /// <summary>Identifies the <see cref="AllowLocalFileImages"/> dependency property.</summary>
+    public static readonly DependencyProperty AllowLocalFileImagesProperty = DependencyProperty.Register(
+        nameof(AllowLocalFileImages), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
+
     /// <summary>When true, <c>file://</c> and local-path images are loaded when parsing HTML
     /// via <see cref="LoadHtml"/>/<see cref="InsertHtml"/>. Default true.</summary>
-    public bool AllowLocalFileImages { get; set; } = true;
+    public bool AllowLocalFileImages
+    {
+        get => (bool)GetValue(AllowLocalFileImagesProperty);
+        set => SetValue(AllowLocalFileImagesProperty, value);
+    }
 
     /// <summary>Serializes the document to HTML.</summary>
     public string ToHtml() => Document != null ? HtmlDocumentFormatter.ToHtml(Document) : "";

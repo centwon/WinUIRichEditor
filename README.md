@@ -1,4 +1,4 @@
-# WinUIRichEditor
+﻿# WinUIRichEditor
 
 A from-scratch rich text editor control for **WinUI 3**, rendered with **Win2D**
 (`CanvasVirtualControl` / `CanvasTextLayout`). It is a port of
@@ -6,20 +6,20 @@ A from-scratch rich text editor control for **WinUI 3**, rendered with **Win2D**
 formatters, and "single `TextLayout` is the source of truth" engine design, rebuilt on the
 DirectWrite-backed `CanvasTextLayout` instead of Avalonia's `TextLayout`.
 
-> **Status: feature-converged with AvaloniaRichEditor; catching up to its 1.0 verification pass.**
-> Beyond matching the original's feature set, the two projects have exchanged improvements both
-> ways (a source-compatible alias layer here, platform-agnostic features back-ported there), and the
-> original's full-source audit has been swept against this codebase. AvaloniaRichEditor has since
-> released 1.0 — not new features, but verification depth (interaction and render-pixel test
-> infrastructure, an edit-sequence fuzz, real Word/HWP/browser checks). Its formatter-layer findings are
-> applied here; the control-layer and interop items are tracked in
-> [`Project_Roadmap.md`](Project_Roadmap.md) ("상류 1.0.0 대조"). Tables, images, formatting,
+> **Status: 1.0 — the public API is frozen and follows SemVer from here.**
+> The surface is tracked in `PublicAPI.Shipped.txt`, so it cannot change unnoticed. What made this 1.0
+> is verification depth, not new features: a full comparison against AvaloniaRichEditor 1.0 (which cut
+> its own 1.0 the same way) fixed 20 defects, including two memory-exhaustion paths reachable from a
+> paste, text loss when importing ordinary Word RTF, and a toolbar that silently took keyboard focus
+> from the editor. The two projects stay converged and have exchanged improvements both ways.
+> See [`CHANGELOG.md`](CHANGELOG.md) for the upgrade notes (one breaking removal, two behaviour
+> changes). Tables, images, formatting,
 > clipboard, page view, print/PDF, the drop-in host controls, localization and accessibility all work,
 > including the edge cases (nested/inline-table row·column resize, full keyboard caret traversal through
 > inline-table cells). **Native AOT** publish works end-to-end (self-contained — builds, runs, renders;
 > re-verified each release). The document format is byte-compatible with AvaloniaRichEditor (verified by
-> loading a `.flow` saved by the original). See [`Project_Roadmap.md`](Project_Roadmap.md) and
-> [`CHANGELOG.md`](CHANGELOG.md). The control API may still change.
+> loading a `.flow` saved by the original). See [`Project_Roadmap.md`](Project_Roadmap.md) for the
+> engineering log.
 
 > **Requires Windows App SDK 2.2.1 or later.**
 > ⚠️ **0.9.0 wrongly required 2.3.2 — use 0.9.1 or later.** 2.3.2 is *higher* than the WinUI version the
@@ -125,7 +125,7 @@ page (see `samples/.../ViewDemoPage.xaml`). File pickers need HWND interop (`Ini
 
 ```
 dotnet build WinUIRichEditor.slnx
-dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 26 headless model/formatter tests
+dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 91 headless model/formatter tests
 dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj
 # run the unpackaged exe directly:
 #   samples/WinUIRichEditor.Demo/bin/Debug/net10.0-windows10.0.26100.0/win-x64/WinUIRichEditor.Demo.exe

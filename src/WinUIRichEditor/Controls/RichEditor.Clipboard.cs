@@ -1,10 +1,12 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
 using WinUIRichEditor.Documents;
 using WinUIRichEditor.Formatters;
+
+using Microsoft.UI.Xaml;
 
 namespace WinUIRichEditor.Controls;
 
@@ -502,6 +504,10 @@ public partial class RichEditor
         return InBlocks(d.Blocks);
     }
 
+    /// <summary>Identifies the <see cref="AllowRemoteImagesOnPaste"/> dependency property.</summary>
+    public static readonly DependencyProperty AllowRemoteImagesOnPasteProperty = DependencyProperty.Register(
+        nameof(AllowRemoteImagesOnPaste), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
+
     /// <summary>Whether parsing HTML may download remote (http/https) images. Default true; set false
     /// for privacy-sensitive hosts — markup can reference tracking pixels, and loading it would
     /// otherwise issue network requests. Downloads are capped at 20MB per image and ~5s per parse.
@@ -509,7 +515,11 @@ public partial class RichEditor
     /// <see cref="LoadHtmlAsync"/> (the one other path that actually reaches the network) plus
     /// <see cref="LoadHtml"/>/<see cref="InsertHtml"/>, which are threaded for consistency even though
     /// the synchronous parser never performs network I/O.</para></summary>
-    public bool AllowRemoteImagesOnPaste { get; set; } = true;
+    public bool AllowRemoteImagesOnPaste
+    {
+        get => (bool)GetValue(AllowRemoteImagesOnPasteProperty);
+        set => SetValue(AllowRemoteImagesOnPasteProperty, value);
+    }
 
     // A trimmed FlowDocument for the current selection that preserves each paragraph's
     // list/heading/alignment/indent/background AND inline images, and keeps whole tables / block images /

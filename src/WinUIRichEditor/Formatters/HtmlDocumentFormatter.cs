@@ -14,7 +14,13 @@ namespace WinUIRichEditor.Formatters;
 
 /// <summary>Converts between <see cref="FlowDocument"/> and HTML.
 /// Supports full round-trip for bold/italic/underline/strikethrough, colors, sizes, alignment,
-/// headings, lists, tables (with cell merge), images, hyperlinks, and horizontal rules.</summary>
+/// headings, lists, tables (with cell merge and per-cell background), images, hyperlinks, and
+/// horizontal rules.
+/// <para>HTML has no inline table, so an <see cref="InlineTable"/> is emitted as a <c>&lt;table&gt;</c>
+/// carrying a <c>data-are-inline</c> marker and sized to its own columns
+/// (<c>display:inline-table</c>), so it sits in the text line in browsers and Word. This parser reads
+/// that marker back onto the text line; HTML from other applications carries no marker and keeps
+/// producing a block-level <see cref="TableBlock"/>.</para></summary>
 public static class HtmlDocumentFormatter
 {
     private static readonly HashSet<string> BlockOrMedia = new(StringComparer.OrdinalIgnoreCase)

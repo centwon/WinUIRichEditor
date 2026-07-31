@@ -22,7 +22,7 @@
   <!-- NuGet 패키지 메타데이터. 버전은 태그(release)로 덮어쓸 수 있게 CI에서 -p:Version 전달 가능. -->
   <PropertyGroup Label="Packaging">
     <PackageId>WinUIRichEditor</PackageId>
-    <Version>0.9.1</Version>
+    <Version>1.0.0</Version>
     <Authors>centwon</Authors>
     <Company>centwon</Company>
     <Product>WinUIRichEditor</Product>
@@ -36,7 +36,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>winui;winui3;win2d;richtextbox;richtext;rich-text-editor;editor;wysiwyg;flowdocument;rtf;directwrite</PackageTags>
-    <PackageReleaseNotes>See CHANGELOG.md. 0.9.1 lowers the Windows App SDK requirement back to 2.2.1 — 0.9.0 wrongly required 2.3.2, which is higher than the WinUI the Microsoft.WindowsAppSDK meta-package provides, breaking framework-dependent apps. Prefer 0.9.1 over 0.9.0. Behavioural changes carried over from 0.9.0: the synchronous ParseHtml/LoadHtml/InsertHtml no longer download remote images (use the Async variants); AllowRemoteImagesOnPaste now also governs LoadHtml*/InsertHtml; turning a list off now clears its nesting level; RTF output reshaped for HWP/Word table and alignment fidelity. The control API may still change.</PackageReleaseNotes>
+    <PackageReleaseNotes>See CHANGELOG.md. 1.0.0 freezes the public API: from here on it follows SemVer, and the surface is tracked in PublicAPI.Shipped.txt so a change to it cannot ship unnoticed. What made this 1.0 is verification depth, not new features — a full comparison against AvaloniaRichEditor 1.0 fixed 20 defects, including two memory-exhaustion DoS paths reachable from a paste (HTML colspan, JSON/.flow declared table size), text loss when importing ordinary Word RTF, and a toolbar that silently took keyboard focus away from the editor. BREAKING: Formatters.RoundTripHarness is gone (a development tool; it moved to the demo). BEHAVIOUR: a damaged document now throws (InvalidDataException / JsonException) instead of reading as an empty one, so hosts calling LoadJson/LoadJsonAsync/LoadPackageAsync must handle it — reading a damaged file as empty meant the next save overwrote a recoverable file. RTF table output changed shape for HWP fidelity (horizontal merge is geometric; tables nested in a cell are real \itap nesting), and inline tables now survive an HTML/RTF round trip. Added: nine behaviour flags became dependency properties (bindable), XML documentation now ships with the package.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>

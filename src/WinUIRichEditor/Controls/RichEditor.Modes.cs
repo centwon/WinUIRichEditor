@@ -1,5 +1,7 @@
-using System;
+﻿using System;
 using WinUIRichEditor.Documents;
+
+using Microsoft.UI.Xaml;
 
 namespace WinUIRichEditor.Controls;
 
@@ -9,10 +11,18 @@ namespace WinUIRichEditor.Controls;
 // the caret blink and undo history (see OnReadOnlyChanged).
 public partial class RichEditor
 {
+    /// <summary>Identifies the <see cref="MaxRecommendedImages"/> dependency property.</summary>
+    public static readonly DependencyProperty MaxRecommendedImagesProperty = DependencyProperty.Register(
+        nameof(MaxRecommendedImages), typeof(int), typeof(RichEditor), new PropertyMetadata(50));
+
     /// <summary>Soft limit on the document's image count. When the count first exceeds this value,
     /// <see cref="RecommendedImageLimitExceeded"/> is raised once; editing is never blocked. Zero or
     /// negative disables the warning. Default 50.</summary>
-    public int MaxRecommendedImages { get; set; } = 50;
+    public int MaxRecommendedImages
+    {
+        get => (int)GetValue(MaxRecommendedImagesProperty);
+        set => SetValue(MaxRecommendedImagesProperty, value);
+    }
 
     /// <summary>Raised (once per crossing) when the document's image count exceeds
     /// <see cref="MaxRecommendedImages"/>. Re-arms when the count drops back to the limit or below.</summary>

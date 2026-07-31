@@ -783,6 +783,23 @@ public class EnhancementTests
     }
 
     [Fact]
+    public void Rtf_OrphanedNestedRows_DoNotLeakIntoTheNextTable()
+    {
+        // The nested-table accumulators are keyed by \itap depth and consumed when the cell one level up
+        // closes. Truncated or malformed input can leave a depth-2 row that no cell ever collects — and
+        // without clearing it at the end of the top-level table, the NEXT table's first cell picked it up:
+        // a nested table teleporting into an unrelated table further down the document.
+        var doc = RtfDocumentFormatter.Parse(
+            @"{\rtf1\ansi\trowd\cellx4000\intbl\itap2 잔여\nestcell\nestrow\row\pard 사이\par" +
+            @"\trowd\cellx4000\intbl\itap1 정상\cell\row\pard}");
+
+        var tables = doc.Blocks.OfType<TableBlock>().ToList();
+        var last = tables[^1];
+        foreach (var (_, _, cell) in last.LogicalCells())
+            Assert.Empty(cell.Blocks.OfType<TableBlock>());
+    }
+
+    [Fact]
     public void Rtf_HorizontalMerge_UsesTheGeometricForm()
     {
         // HWP dissolved the merge when it was expressed as Word's flag form (one \cellx per column with

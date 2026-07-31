@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Windows.System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -56,7 +56,9 @@ public partial class RichEditorView
     {
         _findBarHost.Visibility = Visibility.Collapsed;
         Editor.ClearFindHighlight(); // the highlight-all overlay lives only while the bar is open
-        Editor.Focus(FocusState.Programmatic);
+        // FocusEditor, not Focus: the control itself is not a tab stop (focus lives on its inner canvas),
+        // so Focus() here left the caret unpainted and the keyboard dead after closing the bar.
+        Editor.FocusEditor();
     }
 
     // Single place that drives the replace row + the chevron's checked/glyph state, so opening via Ctrl+H
@@ -94,6 +96,7 @@ public partial class RichEditorView
         };
 
         _matchCase = new ToggleButton { Content = "Aa", FontSize = 12, Padding = new Thickness(6, 2, 6, 2) };
+        _matchCase.AllowFocusOnInteraction = false;
         ToolTipService.SetToolTip(_matchCase, L("MatchCase"));
         _matchCase.Click += (_, _) =>
         {
@@ -106,6 +109,9 @@ public partial class RichEditorView
         Button Btn(string text, string tip, Action act)
         {
             var b = new Button { Content = text, FontSize = 12, Padding = new Thickness(8, 2, 8, 2) };
+            // Keep focus where it is (the search box), VS Code / browser style: clicking Next should not
+            // move focus onto the button, or the next Enter re-fires the button instead of searching on.
+            b.AllowFocusOnInteraction = false;
             ToolTipService.SetToolTip(b, tip);
             b.Click += (_, _) => act();
             return b;
@@ -114,6 +120,7 @@ public partial class RichEditorView
         // Leading chevron (VS Code / browser convention): expands the replace row in place, so a search
         // started with Ctrl+F or the toolbar's Find button doesn't have to be reopened with Ctrl+H.
         _expandReplace = new ToggleButton { Content = "▸", FontSize = 12, Padding = new Thickness(6, 2, 6, 2) };
+        _expandReplace.AllowFocusOnInteraction = false;
         ToolTipService.SetToolTip(_expandReplace, L("ToggleReplace") + " (Ctrl+H)");
         _expandReplace.Click += (_, _) =>
         {

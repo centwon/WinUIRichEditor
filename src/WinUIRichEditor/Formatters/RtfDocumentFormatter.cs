@@ -11,11 +11,21 @@ using WinUIRichEditor.Documents;
 namespace WinUIRichEditor.Formatters;
 
 /// <summary>
-/// Parses a practical subset of RTF ??the "Rich Text Format" both Word and the Korean HWP put on
-/// the clipboard ??into a <see cref="FlowDocument"/>: paragraphs, bold/italic/underline/strike,
+/// Parses a practical subset of RTF — the "Rich Text Format" both Word and the Korean HWP put on
+/// the clipboard — into a <see cref="FlowDocument"/>: paragraphs, bold/italic/underline/strike,
 /// font size, foreground colour, embedded images (<c>\pict</c> PNG/JPEG, bytes carried inline), and
-/// simple tables (<c>\trowd??cell??row</c>). Zero external dependencies beyond a code-page provider
-/// for CJK text (<c>\'hh</c> bytes are decoded with the document's <c>\ansicpg</c>).
+/// tables (<c>\trowd</c>…<c>\cell</c>…<c>\row</c>) including merged cells, per-cell shading and
+/// tables nested in a cell. Zero external dependencies beyond a code-page provider for CJK text
+/// (<c>\'hh</c> bytes are decoded with the document's <c>\ansicpg</c>).
+/// <para>A horizontal merge is written GEOMETRICALLY — the merged span is one cell whose <c>\cellx</c>
+/// sits at its right edge — because HWP dissolves the flag form (<c>\clmgf</c>/<c>\clmrg</c>) that Word
+/// also accepts. Reading handles both. Vertical merge has no geometric encoding and keeps the flags.</para>
+/// <para>Known losses: a nested table's column widths come back at the default (they live in the
+/// ignorable <c>{\*\nesttableprops}</c> group), and a table whose every row is merged identically reads
+/// back as one wide column, because nothing in the file then reveals the underlying grid.</para>
+/// <para>RTF has no inline table, so an <see cref="InlineTable"/> is written as a block-level table that
+/// splits its host paragraph — other applications see exactly that. Our own ignorable
+/// <c>{\*\arinline}</c> marker rides along so this reader puts it back on the text line.</para>
 /// </summary>
 public static class RtfDocumentFormatter
 {
@@ -821,6 +831,14 @@ internal sealed class RtfParser
         _tableRowDefs = null;
         bool inlineMark = _nextTableInline;
         _nextTableInline = false;
+        // A top-level table is done, so nothing nested inside it can still be pending: every nested row is
+        // consumed by TakeCell when the cell one level up closes. Anything left is orphaned by truncated
+        // or malformed input — and left in place it was picked up by the NEXT table's first cell, which
+        // made a nested table teleport into an unrelated table further down the document.
+        _nestRow.Clear();
+        _nestRows.Clear();
+        _cellPending.Clear();
+        _itap = 1;
         if (rows == null) return;
         if ((BuildTableFromGeometry(rows, rowCellx, defs) ?? BuildTable(rows, cellx)) is not { } tb) return;
 

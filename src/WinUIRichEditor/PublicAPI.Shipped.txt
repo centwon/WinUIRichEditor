@@ -73,6 +73,7 @@ WinUIRichEditor.Controls.RichEditor.FindPrev(string! query, bool matchCase) -> b
 WinUIRichEditor.Controls.RichEditor.FindRequested -> System.EventHandler<bool>?
 WinUIRichEditor.Controls.RichEditor.FitToWidth() -> void
 WinUIRichEditor.Controls.RichEditor.FocusDocumentEnd() -> void
+WinUIRichEditor.Controls.RichEditor.FocusEditor() -> bool
 WinUIRichEditor.Controls.RichEditor.FontFamilyChoices.get -> System.Collections.Generic.IReadOnlyList<string!>!
 WinUIRichEditor.Controls.RichEditor.FontFamilyChoices.set -> void
 WinUIRichEditor.Controls.RichEditor.GetCaretFormat() -> WinUIRichEditor.Controls.RichEditor.CaretFormat
@@ -524,6 +525,13 @@ static WinUIRichEditor.RichEditorLocalization.Language.get -> string!
 static WinUIRichEditor.RichEditorLocalization.Language.set -> void
 static WinUIRichEditor.RichEditorLocalization.LanguageChanged -> System.EventHandler?
 static WinUIRichEditor.RichEditorLocalization.Register(string! language, System.Collections.Generic.IReadOnlyDictionary<string!, string!>! strings) -> void
+static readonly WinUIRichEditor.Controls.RichEditor.AllowFindReplaceProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.AllowImagesProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.AllowLocalFileImagesProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.AllowRemoteImagesOnPasteProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.AllowRichPasteProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.AllowTablesProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.AutoLinkOnTypeProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.CanvasBackgroundProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.CaretBrushProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.DefaultFontFamilyProperty -> Microsoft.UI.Xaml.DependencyProperty!
@@ -531,12 +539,14 @@ static readonly WinUIRichEditor.Controls.RichEditor.DefaultFontSizeProperty -> M
 static readonly WinUIRichEditor.Controls.RichEditor.DocumentProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.FontFamilyChoicesProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.IsReadOnlyProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.MaxRecommendedImagesProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.PageFooterProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.PageHeaderProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.PageOrientationProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.PageSizeProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.SelectionBrushProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.ShowCaretWhenReadOnlyProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditor.ShowFormattingMenuProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.ShowPageBoundariesProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.ShowPageNumbersProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.TextForegroundProperty -> Microsoft.UI.Xaml.DependencyProperty!

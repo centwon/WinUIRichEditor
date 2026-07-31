@@ -1,9 +1,27 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to WinUIRichEditor. This project is a WinUI 3 + Win2D port of AvaloniaRichEditor;
-the format follows [Keep a Changelog](https://keepachangelog.com/). The control API is not yet stable.
+the format follows [Keep a Changelog](https://keepachangelog.com/). The public API is frozen as of 1.0.0
+and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-07-31
+
+**공개 API를 동결한다.** 이제부터 SemVer를 따른다 — 주 버전을 올리지 않고는 breaking 변경이 없다.
+표면은 `PublicAPI.Shipped.txt`(552줄)로 추적되므로 공개 API 변경은 빌드 경고와 diff로 드러난다.
+
+1.0을 만든 것은 새 기능이 아니라 **검증 깊이**다. 상류 AvaloniaRichEditor가 1.0을 낸 뒤 그 검증 라운드를
+포트 소스에 1:1로 대조해 **결함 20건**을 고쳤다 — 붙여넣기로 도달 가능한 메모리 고갈 2건, 평범한 Word
+RTF를 가져올 때의 텍스트 손실, 툴바가 조용히 키보드 포커스를 앗아가던 문제를 포함한다. 아래 절들이
+트랙 A~E와 그 뒤의 2차 대조·전수조사 내역이다.
+
+### ⚠️ 이 버전으로 올릴 때 확인할 것
+- **Breaking**: `Formatters.RoundTripHarness` 제거(개발 도구, 데모로 이관).
+- **동작 변경**: 손상된 문서가 **예외를 던진다**(`InvalidDataException`/`JsonException`). 종전엔 빈 문서를
+  돌려줬다 — `LoadJson`/`LoadJsonAsync`/`LoadPackageAsync`를 쓰는 호스트는 예외를 처리해야 한다.
+- **동작 변경**: RTF 표 출력 형태(가로 병합=기하 형태, 셀 안 중첩 표=실제 `\itap` 중첩).
+- 최소 요구 `Microsoft.WindowsAppSDK.WinUI`는 **2.2.1 그대로**다.
 
 ### 상류 1.0 대조 — 트랙 D: 상호운용 (2026-07-31, 부분)
 
@@ -34,6 +52,35 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
 - 인라인 표가 Word/HWP에서 줄에서 분리되는 것은 결함이 아니다: RTF에 인라인 표가 없어 호스트 문단을
   쪼개는 구조이고 원본 1.0도 동일하다(자체 왕복만 마커로 복원, HTML 경로는 브라우저에서 줄 안에 앉는다).
 
+### 1.0 직전 2차 대조 + 전수조사 (2026-07-31)
+
+동결 전 한 번 더 대조하고 훑었다. 상류는 `v1.0.0`에서 멈춰 있고(1.0 이후 커밋 없음) 작업 트리도 깨끗해
+새로 들어온 것은 없었다. **결함 4건**을 더 찾았다. 테스트 90 → 91.
+
+#### 2차 대조 — 공개 표면을 멤버 단위로 재대조
+- **동작 플래그 8개가 더 CLR 속성이었다**(위 트랙 E 항목 참조). 트랙 E에서 `AutoLinkOnType`만 그런 줄
+  알고 고쳤는데, 원본 `PublicAPI.Shipped.txt`와 멤버 단위로 맞춰 보니 `Allow*` 6개 + `MaxRecommendedImages`
+  + `ShowFormattingMenu`도 같은 상태였다. **혼자만 그렇다는 판단의 근거가 틀렸던 것** — 표면 대조를
+  눈대중이 아니라 기계적으로 했어야 했다.
+- 나머지 차이는 전부 플랫폼 전용(Avalonia `OnPointerPressed`/`Render` 등 protected override)이거나
+  문서화된 의도적 이탈(줌 훅 API, `InsertImage(Bitmap)`)로 확인했다.
+
+#### 전수조사 — 이번 세션이 넣은 코드부터
+가장 위험한 것은 방금 넣은 코드라는 7차 리뷰의 규칙대로 자기 변경분(24파일)을 먼저 봤다.
+- **중첩 표 누산기가 표 사이에 새던 결함**(방금 넣은 RTF 표 모델의 결함). `_nestRow`/`_nestRows`/
+  `_cellPending`이 어디서도 비워지지 않아, 끊긴 입력이 depth 2에 남긴 잔여를 **다음 표의 첫 셀이 주워
+  갔다** — 중첩 표가 무관한 표로 순간이동한다. `FinalizeTable`에서 정리한다(최상위 표가 끝나면 그 안에
+  중첩된 것은 이미 소비됐어야 하므로 남은 것은 전부 고아다). 반증 테스트로 재현 확인 후 수정.
+- **찾기 바가 닫힐 때 캐럿이 죽던 결함**(트랙 C의 커버리지 구멍). `HideFindBar`가
+  `Editor.Focus(FocusState.Programmatic)`를 부르는데 `RichEditor`는 탭 스톱이 아니고 포커스는 내부
+  캔버스에 있다 — `FocusEditor()`를 만든 바로 그 이유다. 툴바만 고치고 찾기 바를 안 본 것이 구멍이었다.
+- **찾기 바 버튼이 포커스를 가져가던 것** — "다음"을 클릭하면 포커스가 버튼으로 가서 이어지는 Enter가
+  검색이 아니라 버튼을 다시 눌렀다. 검색 상자에 포커스가 남도록 했다(VS Code/브라우저 관례).
+- **포매터 클래스 문서가 실제 동작과 어긋나 있었다.** XML 문서가 이제 패키지에 실리므로 소비자에게
+  그대로 간다: RTF는 "simple tables"라고만 적혀 있었고(병합·셀 배경·중첩·인라인 표 마커·손실 목록 누락),
+  HTML은 인라인 표 왕복을 언급하지 않았다. 둘 다 실제 동작으로 갱신했다. 곁들여 **깨진 문자 4곳**
+  (`—`가 `??`로)도 고쳤다 — 이번 세션 이전부터 있던 것이지만 이제 배포된다.
+
 ### 상류 1.0 대조 — 트랙 E: 공개 API 표면 (2026-07-31)
 
 빌드 0/0, 테스트 90/90, `dotnet pack` 정상.
@@ -44,9 +91,13 @@ the format follows [Keep a Changelog](https://keepachangelog.com/). The control 
   내렸다. 포트에서는 어디에서도 참조되지 않는 **죽은 공개 API**였다. 공개 API 제거는 breaking이라
   동결 이후에는 못 한다 — 그래서 지금 한다. 데모에서 `--roundtrip=<dir>`로 실행하면 그 디렉터리에
   `roundtrip-report.txt`를 쓴다(WinExe라 stdout이 갈 곳이 없다).
-- **`RichEditor.AutoLinkOnType`이 의존성 속성이 됐다**(`AutoLinkOnTypeProperty` 신설). 다른 동작 플래그
-  (`IsReadOnly`·`Allow*`)와 달리 혼자만 평범한 CLR 속성이라 바인딩·스타일이 안 됐다. 이름도 기본값도
-  그대로이므로 기존 코드는 그대로 동작한다.
+- **동작 플래그 9개가 전부 의존성 속성이 됐다** — `AutoLinkOnType`, `AllowImages`, `AllowTables`,
+  `AllowRichPaste`, `AllowFindReplace`, `AllowLocalFileImages`, `AllowRemoteImagesOnPaste`,
+  `MaxRecommendedImages`, `ShowFormattingMenu`. 전부 평범한 CLR 속성이라 **바인딩도 스타일도 안 됐다**
+  (`IsReadOnly`만 DP였다). 원본은 이들을 모두 `StyledProperty`로 두고 있다. 이름도 기본값도 그대로이고
+  DP 추가는 순수 가산이므로 기존 코드는 그대로 동작한다.
+  *(2차 대조에서 잡았다 — 처음엔 `AutoLinkOnType`만 그런 줄 알고 그것만 고쳤는데, 공개 표면을 원본과
+  멤버 단위로 다시 맞춰 보고서야 나머지 8개도 같은 상태임이 드러났다.)*
 
 #### Added
 - **`PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt` 도입**(`Microsoft.CodeAnalysis.PublicApiAnalyzers`,

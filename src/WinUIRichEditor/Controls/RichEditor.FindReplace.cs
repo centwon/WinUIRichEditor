@@ -1,6 +1,8 @@
-using System;
+﻿using System;
 using Windows.Foundation;
 using WinUIRichEditor.Documents;
+
+using Microsoft.UI.Xaml;
 
 namespace WinUIRichEditor.Controls;
 
@@ -8,8 +10,16 @@ namespace WinUIRichEditor.Controls;
 // Ported from the Avalonia original (name adaptations only).
 public partial class RichEditor
 {
+    /// <summary>Identifies the <see cref="AllowFindReplace"/> dependency property.</summary>
+    public static readonly DependencyProperty AllowFindReplaceProperty = DependencyProperty.Register(
+        nameof(AllowFindReplace), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
+
     /// <summary>Enables find/replace (set false to disable in read-only presets).</summary>
-    public bool AllowFindReplace { get; set; } = true;
+    public bool AllowFindReplace
+    {
+        get => (bool)GetValue(AllowFindReplaceProperty);
+        set => SetValue(AllowFindReplaceProperty, value);
+    }
 
     /// <summary>Raised when the user presses Ctrl+F (arg <see langword="false"/>) or Ctrl+H
     /// (<see langword="true"/> = with the replace row). <see cref="RichEditorView"/> opens its built-in
