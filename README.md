@@ -22,9 +22,8 @@ DirectWrite-backed `CanvasTextLayout` instead of Avalonia's `TextLayout`.
 > engineering log.
 
 > **Requires Windows App SDK 2.2.1 or later.**
-> ⚠️ **0.9.0 wrongly required 2.3.2 — use 0.9.1 or later.** 2.3.2 is *higher* than the WinUI version the
-> `Microsoft.WindowsAppSDK` meta-package brings (2.3.1 → WinUI 2.3.0), so framework-dependent apps
-> compiled against a newer WinUI than the runtime they ship on. 0.9.1 lowers the floor back to 2.2.1.
+> (Historical: 0.9.0 alone wrongly required 2.3.2 — *higher* than the WinUI the
+> `Microsoft.WindowsAppSDK` meta-package brings — which broke framework-dependent apps. Fixed in 0.9.1.)
 >
 > **Consuming apps that publish self-contained** (`WindowsAppSDKSelfContained=true`) must reference the
 > **meta-package** `Microsoft.WindowsAppSDK` — only it brings `Microsoft.WindowsAppSDK.Runtime`, the
@@ -125,7 +124,7 @@ page (see `samples/.../ViewDemoPage.xaml`). File pickers need HWND interop (`Ini
 
 ```
 dotnet build WinUIRichEditor.slnx
-dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 91 headless model/formatter tests
+dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 106 headless model/formatter tests
 dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj
 # run the unpackaged exe directly:
 #   samples/WinUIRichEditor.Demo/bin/Debug/net10.0-windows10.0.26100.0/win-x64/WinUIRichEditor.Demo.exe

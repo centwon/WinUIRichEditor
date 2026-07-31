@@ -1,9 +1,19 @@
 # CLAUDE.md
 
-`AvaloniaRichEditor`(WPF `RichTextBox`/`FlowDocument`를 순수 C# + Avalonia `TextLayout`로 바닥부터 이식한 리치텍스트 에디터)를 **WinUI 3로 포팅**하는 프로젝트.
-원본: `C:\Users\centw\source\repos\AvaloniaRichEditor` (라이브러리 ~13,000줄). 이 포팅은 그 엔진을 WinUI 3 + Win2D 위에 다시 세운다.
+WinUI 3 + Win2D 리치텍스트 에디터 컨트롤. `AvaloniaRichEditor`(WPF `RichTextBox`/`FlowDocument`를 순수
+C# + Avalonia `TextLayout`로 바닥부터 이식한 에디터)를 포팅해 시작했고, **2026-07-31 `1.0.0` 게시로
+공개 API가 동결**됐다(SemVer, 표면은 `PublicAPI.Shipped.txt`가 추적).
 
-- **진행 상황·단계는 `Project_Roadmap.md`를 먼저 확인**하고 작업 후 갱신한다.
+**상류와의 관계**: 이제 포팅-원본이 아니라 **대등한 수렴 peer**다
+(`C:\Users\centw\source\repos\AvaloniaRichEditor`, 그쪽도 1.0). 양방향으로 개선을 주고받았다.
+공유 설계(포매터·문서 모델·편집 규칙)를 건드릴 때는 **원본을 먼저 대조할 것** — 대개 그쪽이 이미 같은
+문제를 겪었다. 공개 표면 대조는 **눈대중 말고 원본 `PublicAPI.Shipped.txt`와 기계적으로** 할 것
+(눈대중 한 번이 플래그 9개 중 8개를 놓친 적이 있다).
+
+- **진행 상황·다음 우선순위는 `Project_Roadmap.md`를 먼저 확인**하고 작업 후 갱신한다.
+  개발 이력은 `docs/roadmap-archive.md`, 릴리스별 변경은 `CHANGELOG.md`.
+- **공개 API를 바꾸면** `PublicAPI.Unshipped.txt`에 선언해야 빌드가 통과한다(제거는 `*REMOVED*`).
+  breaking 변경은 major 범프가 필요하다.
 
 ## 기술 기반 (Tech Stack)
 
@@ -58,14 +68,20 @@ dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj   # exe �
   공동저자 표기가 실제 작성자와 어긋난다. 과거 커밋이 `Opus 4.8`인 것은 그때 맞았던 표기이므로
   고치지 않는다.
 
-## 포팅 단계 (Phase)
-0. ✅ 스캐폴드(라이브러리+unpackaged 데모, Win2D, CanvasControl 스모크 렌더).
-1. 문서 모델(`Documents/`) + 포매터(`Formatters/`) — Avalonia 타입 치환, 대부분 기계적.
-2. 렌더링 엔진(`BuildTextLayout`→`CanvasTextLayout`), 읽기 전용 렌더.
-3. 입력(포인터·키보드·히트테스트·선택·캐럿).
-4. IME(`CoreTextEditContext`).
-5. 클립보드·서식·표·이미지·찾기·툴바·컨텍스트메뉴.
-6. 테스트 + 데모 마감 + AOT 퍼블리시 검증.
+## 검증 (1.0 이후 이 프로젝트의 실제 리스크)
+포팅 단계(Phase 0~6)는 전부 끝났다 — 이력은 `docs/roadmap-archive.md`.
+
+기능은 완성돼 있고 **남은 리스크는 검증 쪽**이다. 이 코드베이스에서 결함을 실제로 잡아온 수단은
+정독이 **아니라** 아래 넷이며, 새 작업에도 그대로 쓸 것:
+1. **상류 대조** — 원본이 같은 문제를 먼저 겪었을 확률이 높다.
+2. **왕복 테스트는 2회** — 1회로는 "구분자가 내용이 되어 매번 쌓이는" 계열이 안 보인다(실제로 세 번 나왔다).
+3. **랜덤 편집열 퍼즈**(`DocumentFuzzTests`) — 정독이 못 보는 "안 시험한 조합"을 잡는다.
+   포매터를 건드리면 **시드를 넓혀** 돌릴 것(CI 예산은 24, 결함 하나는 200시드에서만 나왔다).
+4. **실기 확인** — 컨트롤 계층(포커스·캐럿·포인터)은 자동 검증이 없어 사람이 봐야 한다.
+   이것이 1.1 최우선 항목(상호작용 테스트 인프라)인 이유다.
+
+⚠️ **자기 변경분이 가장 위험하다.** 이 프로젝트에서 고친 결함의 상당수가 같은 세션에 새로 넣은
+코드였다(캐럿 수정 하나가 결함 셋을 파생시켰다). 큰 변경 뒤에는 그 변경분부터 감사할 것.
 
 ## 원본의 비자명한 핵심 규칙 (이식 시 유지)
 원본 `AvaloniaRichEditor/CLAUDE.md`의 "비자명한 핵심 규칙" 8개를 그대로 따른다. 요약:
