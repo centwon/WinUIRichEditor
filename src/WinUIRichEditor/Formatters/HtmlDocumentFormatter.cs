@@ -49,8 +49,8 @@ public static class HtmlDocumentFormatter
     /// When <paramref name="allowLocalFileImages"/> is false, <c>file://</c> image sources are skipped.
     /// <para>This overload performs NO network I/O: remote (<c>http</c>) images are skipped, because
     /// fetching them here would block the calling thread — typically the UI thread, via
-    /// <see cref="RichEditor.LoadHtml"/>/<see cref="RichEditor.InsertHtml"/>. Use
-    /// <see cref="ParseHtmlAsync"/> (or <see cref="RichEditor.LoadHtmlAsync"/>) to include them;
+    /// <see cref="Controls.RichEditor.LoadHtml"/>/<see cref="Controls.RichEditor.InsertHtml"/>. Use
+    /// <see cref="ParseHtmlAsync"/> (or <see cref="Controls.RichEditor.LoadHtmlAsync"/>) to include them;
     /// <c>data:</c> and <c>file:</c> images load on both paths.</para></summary>
     public static FlowDocument ParseHtml(string html, bool allowLocalFileImages = true, bool allowRemoteImages = true)
     {
@@ -154,8 +154,33 @@ public static class HtmlDocumentFormatter
 
             if (name == "table")
             {
-                Flush();
                 var tbl = ParseTable(child);
+                // Our own export marks a table that was inline (see EmitTable): put it back on the text
+                // line instead of flushing the paragraph, following the same ladder as the small-icon
+                // <img> case — the pending paragraph, else the preceding one, else a new one. Without
+                // this an inline table came back as a BLOCK table and permanently split its host
+                // paragraph on every save/load. Foreign HTML carries no marker and still lands as a block.
+                if (tbl != null && child.GetAttributeValue("data-are-inline", "") == "1")
+                {
+                    var it = new InlineTable { Table = tbl };
+                    if (current != null) current.Inlines.Add(it);
+                    else if (flow.Blocks.Count > 0 && flow.Blocks[^1] is Paragraph lastPara)
+                    {
+                        // Reopen that paragraph as the pending one (Flush re-adds it): HTML parsers close
+                        // a <p> when a <table> starts, so the text that followed the table arrives as a
+                        // later sibling and has to land back on the same line.
+                        lastPara.Inlines.Add(it);
+                        flow.Blocks.RemoveAt(flow.Blocks.Count - 1);
+                        current = lastPara;
+                    }
+                    else
+                    {
+                        current = new Paragraph();
+                        current.Inlines.Add(it);
+                    }
+                    continue;
+                }
+                Flush();
                 if (tbl != null) flow.Blocks.Add(tbl);
             }
             else if (name == "img")
@@ -320,6 +345,11 @@ public static class HtmlDocumentFormatter
         return System.Text.RegularExpressions.Regex.Replace(s, "\\s+", " ");
     }
 
+    // Ceiling on the column count an imported table may claim. Foreign HTML controls colspan, and the
+    // occupancy grid (and then the TableBlock) is allocated from it. Far beyond any real document —
+    // Word tops out at 63 columns — and matched to the JSON importer's own cap.
+    private const int MaxTableColumns = 1000;
+
     private static TableBlock? ParseTable(HtmlNode node)
     {
         var rows = node.Descendants("tr")
@@ -347,7 +377,11 @@ public static class HtmlDocumentFormatter
             {
                 Ensure(occupied[r], col);
                 while (col < occupied[r].Count && occupied[r][col]) col++;
-                int cs = Math.Max(1, td.GetAttributeValue("colspan", 1));
+                // Both spans are attacker-controlled (any pasted web page is foreign input) and the
+                // occupancy grid is sized from them, so both need a ceiling. rowspan is naturally bounded
+                // by the rows that actually exist; colspan had none, so a single colspan="100000000" grew
+                // the grid — and then the TableBlock — until the process ran out of memory.
+                int cs = Math.Clamp(td.GetAttributeValue("colspan", 1), 1, MaxTableColumns);
                 int rs = Math.Max(1, Math.Min(td.GetAttributeValue("rowspan", 1), R - r));
                 placements[r].Add((col, cs, rs, td));
                 for (int rr = r; rr < r + rs; rr++)
@@ -360,6 +394,7 @@ public static class HtmlDocumentFormatter
             }
         }
         if (colCount == 0) return null;
+        if (colCount > MaxTableColumns) colCount = MaxTableColumns;
 
         var tb = new TableBlock(R, colCount);
         var colNodes = node.Descendants("col")
@@ -776,10 +811,27 @@ public static class HtmlDocumentFormatter
         return sb.ToString();
     }
 
-    // Emits a table as an HTML <table>. Shared by block tables and inline tables.
-    private static void EmitTable(StringBuilder sb, TableBlock tb)
+    private static double SumColumnWidths(TableBlock tb)
     {
-        sb.Append("<table border=\"1\" style=\"border-collapse:collapse; width:100%;\">\n");
+        double w = 0;
+        for (int c = 0; c < tb.Columns; c++) w += c < tb.ColumnWidths.Count ? tb.ColumnWidths[c] : 100;
+        return w;
+    }
+
+    // Emits a table as an HTML <table>. Shared by block tables and inline tables.
+    private static void EmitTable(StringBuilder sb, TableBlock tb, bool asInline = false)
+    {
+        // `data-are-inline` is ours: HTML has no inline table, so an InlineTable came back from our own
+        // export as a BLOCK table, permanently splitting the paragraph it lived in. External HTML never
+        // carries the attribute and keeps landing as a block table, as before.
+        string mark = asInline ? " data-are-inline=\"1\"" : "";
+        // A block table fills the text column; an inline table is a character-sized object, so stretching
+        // it to 100% turned it into a full-width band on its own line in every consumer but our own
+        // importer. Size it to its own columns and let it sit in the line instead.
+        string sizing = asInline
+            ? $"width:{(int)Math.Max(1, SumColumnWidths(tb))}px; display:inline-table; vertical-align:middle;"
+            : "width:100%;";
+        sb.Append($"<table{mark} border=\"1\" style=\"border-collapse:collapse; {sizing}\">\n");
         if (tb.ColumnWidths.Count > 0)
         {
             sb.Append("<colgroup>");
@@ -825,7 +877,10 @@ public static class HtmlDocumentFormatter
             }
             sb.Append("</tr>\n");
         }
-        sb.Append("</table>\n");
+        // An inline table sits INSIDE a text line, so the pretty-printing newline after </table> becomes a
+        // whitespace text node between the table and the text that follows it — which the parser normalizes
+        // to a space, inserting one more after every inline table on each save/load cycle.
+        sb.Append(asInline ? "</table>" : "</table>\n");
     }
 
     private static void EmitInline(StringBuilder sb, Inline inline)
@@ -837,7 +892,7 @@ public static class HtmlDocumentFormatter
         }
         if (inline is InlineTable itbl)
         {
-            EmitTable(sb, itbl.Table);
+            EmitTable(sb, itbl.Table, asInline: true); // marked + inline-sized so it round-trips inline
             return;
         }
         if (inline is not Run r || r.Text == null) return;

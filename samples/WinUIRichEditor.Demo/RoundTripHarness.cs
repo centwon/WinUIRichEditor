@@ -1,15 +1,21 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace WinUIRichEditor.Formatters;
+using WinUIRichEditor.Formatters;
+
+namespace WinUIRichEditor.Demo;
 
 /// <summary>Round-trip validation harness: for every <c>*.html</c> in a corpus directory, runs
 /// <c>ParseHtml → ToHtml</c> and reports which rich-text feature tokens survived.
-/// Heuristic (token counts, not strict DOM diff) — useful for CI regression checks.</summary>
-public static class RoundTripHarness
+/// Heuristic (token counts, not strict DOM diff) — useful for CI regression checks.
+/// <para>A development tool, not consumer API: it uses nothing but the public formatter surface, so it
+/// lives in the demo rather than in the library. It was public library API until the 1.0 API review —
+/// removing public API is breaking, which is why it happens before any freeze rather than after.</para>
+/// </summary>
+internal static class RoundTripHarness
 {
     private static readonly (string Label, Regex Rx)[] Features =
     {
@@ -36,7 +42,7 @@ public static class RoundTripHarness
 
     /// <summary>Runs the harness against all HTML files in <paramref name="inDir"/>,
     /// writes regenerated HTML to <paramref name="outDir"/>, and prints a fidelity report to stdout.</summary>
-    public static void Run(string inDir, string outDir)
+    internal static void Run(string inDir, string outDir)
     {
         if (!Directory.Exists(inDir))
         {

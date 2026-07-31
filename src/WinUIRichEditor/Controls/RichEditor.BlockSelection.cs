@@ -31,6 +31,15 @@ public partial class RichEditor
     // always drawn (and thus recorded) before it can be clicked.
     private readonly Dictionary<InlineImage, (Paragraph p, Rect rect)> _inlineImageRects = new();
     private readonly Dictionary<InlineTable, (Paragraph host, Rect rect)> _inlineTableRects = new();
+    // Rendered rects of block images inside table CELLS. Top-level block images come from the block
+    // layout map (BlockImageRects); a cell image is not in that map at all, so without this registry it
+    // could not be clicked, selected, resized or deleted — at any nesting depth. The recorded rect is the
+    // size the image was DRAWN at: a cell scales a picture down to fit its width (CellImageSize), so the
+    // declared Width is normally several times larger (insertion caps to the document width, not the
+    // cell's). That is also why the drag below is measured against this rect and not against Width —
+    // seeding it from the declared size puts every realistic drag inside the range that still clamps to
+    // the same drawn width, so the handle looks dead.
+    private readonly Dictionary<ImageBlock, Rect> _cellImageRects = new();
 
     private const double ResizeHandleSize = 11;
     private const double ResizeGrab = 14;   // grab radius around the corner
@@ -113,16 +122,17 @@ public partial class RichEditor
     // starts a resize; a click inside any block image selects it. Returns true when it consumed the press.
     private bool TryBeginImageInteraction(Point pt, PointerRoutedEventArgs e)
     {
-        // Resize handle of the already-selected BLOCK image (edit only).
+        // Resize handle of the already-selected BLOCK image (edit only). The drag is seeded from the
+        // rect the handle was DRAWN at, for both registries — see _cellImageRects for why.
         if (!IsReadOnly && _selectedBlock is ImageBlock selB)
-            foreach (var (img, rect) in BlockImageRects())
-                if (ReferenceEquals(img, selB) && OnResizeHandle(rect, pt))
+            foreach (var rect in BlockImageHandleRects(selB))
+                if (OnResizeHandle(rect, pt))
                 {
                     _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
                     _resizingImage = selB;
-                    _imageAspect = selB.Height > 0 ? selB.Width / selB.Height : 1;
+                    _imageAspect = rect.Height > 0 ? rect.Width / rect.Height : 1;
                     _resizeStartX = pt.X;
-                    _resizeStartW = selB.Width > 0 ? selB.Width : rect.Width;
+                    _resizeStartW = rect.Width;
                     _canvas.CapturePointer(e.Pointer);
                     return true;
                 }
@@ -139,6 +149,23 @@ public partial class RichEditor
             _canvas.CapturePointer(e.Pointer);
             return true;
         }
+
+        // --- selection clicks. Every resize-handle test above runs first: a handle's grab band extends
+        // outside its own rect, so it can land inside a neighbouring object and must win. ---
+
+        // A click inside a cell-hosted block image selects it (top-level images are handled below).
+        foreach (var (img, rect) in _cellImageRects)
+            if (rect.Contains(pt))
+            {
+                _selectedBlock = img;
+                _selectedInline = null;
+                _isSelecting = false;
+                CollapseSelectionToCaret();
+                RestartBlink();
+                InvalidateCanvas();
+                RaiseStatusChanged();
+                return true;
+            }
 
         // A click on an INLINE image selects it (checked before block — inline images sit within text).
         foreach (var (img, v) in _inlineImageRects)
@@ -180,6 +207,9 @@ public partial class RichEditor
             double newW = Math.Clamp(_resizeStartW + dx, 24, Math.Max(24, _layoutWidth - 40));
             _resizingImage.Width = newW;
             _resizingImage.Height = _imageAspect > 0 ? newW / _imageAspect : _resizingImage.Height;
+            // A block image in a cell sizes that cell, and so the row. Evict the enclosing table chain
+            // the way the column/row drags do, or the row only grows after the NEXT edit.
+            if (_resizingImage.Parent is TableCell rc && rc.Parent is TableBlock rtb) InvalidateTableMeasure(rtb);
             RelayoutToViewport();
             return true;
         }
@@ -260,6 +290,15 @@ public partial class RichEditor
         AfterEdit();
     }
 
+    // The drawn rect(s) a given block image's resize handle can sit on: the block layout map for a
+    // top-level image, the cell registry for one inside a table cell (which is not in that map).
+    private IEnumerable<Rect> BlockImageHandleRects(ImageBlock target)
+    {
+        if (_cellImageRects.TryGetValue(target, out var cellRect)) yield return cellRect;
+        foreach (var (img, rect) in BlockImageRects())
+            if (ReferenceEquals(img, target)) yield return rect;
+    }
+
     // Block image rects in document space, straight off the block layout map (no advance walk).
     private IEnumerable<(ImageBlock img, Rect rect)> BlockImageRects()
     {
@@ -274,6 +313,15 @@ public partial class RichEditor
     {
         if (_printMode || !ReferenceEquals(_selectedBlock, img)) return;
         DrawSelectionChrome(ds, rect);
+    }
+
+    // Records a cell-hosted block image's DRAWN rect for hit-testing and draws its selection chrome if
+    // selected. Called from the cell block walk, which is the only place that knows the scaled size.
+    private void TrackCellImage(CanvasDrawingSession ds, ImageBlock img, Rect rect)
+    {
+        if (_printMode) return; // print renders must not touch the screen hit-test geometry
+        _cellImageRects[img] = rect;
+        if (ReferenceEquals(_selectedBlock, img)) DrawSelectionChrome(ds, rect);
     }
 
     // Records an inline image's rect for hit-testing and draws its selection chrome if selected.

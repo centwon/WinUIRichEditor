@@ -30,9 +30,16 @@ public partial class RichEditor
     public void FocusDocumentEnd()
     {
         if (Document == null) return;
-        _canvas?.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+        FocusEditor();
         GoToDocEdge(start: false, shift: false); // scrolls, restarts blink, syncs IME, raises status
     }
+
+    /// <summary>Gives keyboard focus back to the editing surface without moving the caret. Focus lives on
+    /// the inner canvas (the control itself is not a tab stop), so a host or the toolbar cannot simply
+    /// call <c>Focus()</c> on this control. The caret is only painted while the canvas is focused, so
+    /// anything that takes focus away — a toolbar button, a picker popup — must hand it back through
+    /// here or the caret vanishes and the next keystroke goes elsewhere.</summary>
+    public bool FocusEditor() => _canvas?.Focus(Microsoft.UI.Xaml.FocusState.Programmatic) ?? false;
 
     /// <summary>Inserts an inline table (flows within a text line, like an inline image) of the given
     /// size at the caret. The port otherwise reaches this via <see cref="InsertTable"/> + the right-click

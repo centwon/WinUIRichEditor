@@ -14,7 +14,8 @@ namespace WinUIRichEditor.Controls;
 /// control can repaint. Keyed by the bytes' CONTENT hash: pasting the same picture twice (distinct
 /// arrays, equal content) shares one decode and one GPU bitmap — array identity only deduplicated
 /// <c>Clone()</c>-shared arrays (undo snapshots). The hash is computed once per array and memoized by
-/// array identity (<see cref="ConditionalWeakTable{TKey,TValue}"/>), so the per-draw <see cref="Get"/>
+/// array identity (<see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/>),
+/// so the per-draw <see cref="Get"/>
 /// never rehashes. It never mutates the model's <c>RawBytes</c> (the <c>Image</c> setter would
 /// discard them).</summary>
 internal sealed class ImageCache

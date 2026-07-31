@@ -31,6 +31,7 @@ public partial class RichEditor
     {
         _inlineImageRects.Clear();
         _inlineTableRects.Clear();
+        _cellImageRects.Clear();
         _columnBoundaries.Clear();
         _rowBoundaries.Clear();
         _tableRects.Clear();

@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using WinUIRichEditor.Documents;
 
@@ -51,9 +52,19 @@ public partial class RichEditor
         else if (result == ContentDialogResult.Secondary) SetHyperlink(null);
     }
 
+    /// <summary>Identifies the <see cref="AutoLinkOnType"/> dependency property.</summary>
+    public static readonly DependencyProperty AutoLinkOnTypeProperty = DependencyProperty.Register(
+        nameof(AutoLinkOnType), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
+
     /// <summary>When true (default), typing a space/tab/Enter right after a URL-looking token
-    /// (http://, https://, www.) turns it into a hyperlink (Word/HWP behavior).</summary>
-    public bool AutoLinkOnType { get; set; } = true;
+    /// (http://, https://, www.) turns it into a hyperlink (Word/HWP behavior).
+    /// <para>A dependency property, like every other behaviour flag (<see cref="IsReadOnly"/>,
+    /// <c>Allow*</c>), so it can be bound and styled rather than only assigned in code.</para></summary>
+    public bool AutoLinkOnType
+    {
+        get => (bool)GetValue(AutoLinkOnTypeProperty);
+        set => SetValue(AutoLinkOnTypeProperty, value);
+    }
 
     // Called after a whitespace commit at `boundary` (the offset just past the token). Applies
     // NavigateUri to the completed token when it parses as an http(s) URL; runs inside the same undo

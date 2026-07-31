@@ -6,10 +6,14 @@ A from-scratch rich text editor control for **WinUI 3**, rendered with **Win2D**
 formatters, and "single `TextLayout` is the source of truth" engine design, rebuilt on the
 DirectWrite-backed `CanvasTextLayout` instead of Avalonia's `TextLayout`.
 
-> **Status: converged with AvaloniaRichEditor — feature parity in both directions.**
-> Beyond matching the original's feature set, the two projects have since exchanged improvements both
+> **Status: feature-converged with AvaloniaRichEditor; catching up to its 1.0 verification pass.**
+> Beyond matching the original's feature set, the two projects have exchanged improvements both
 > ways (a source-compatible alias layer here, platform-agnostic features back-ported there), and the
-> original's own full-source audit has been swept against this codebase. Tables, images, formatting,
+> original's full-source audit has been swept against this codebase. AvaloniaRichEditor has since
+> released 1.0 — not new features, but verification depth (interaction and render-pixel test
+> infrastructure, an edit-sequence fuzz, real Word/HWP/browser checks). Its formatter-layer findings are
+> applied here; the control-layer and interop items are tracked in
+> [`Project_Roadmap.md`](Project_Roadmap.md) ("상류 1.0.0 대조"). Tables, images, formatting,
 > clipboard, page view, print/PDF, the drop-in host controls, localization and accessibility all work,
 > including the edge cases (nested/inline-table row·column resize, full keyboard caret traversal through
 > inline-table cells). **Native AOT** publish works end-to-end (self-contained — builds, runs, renders;

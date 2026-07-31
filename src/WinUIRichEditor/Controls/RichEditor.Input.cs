@@ -397,8 +397,8 @@ public partial class RichEditor
         if (!IsReadOnly && (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt))) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
         bool onHandle = false;
         if (_selectedBlock is ImageBlock selB)
-            foreach (var (img, rect) in BlockImageRects())
-                if (ReferenceEquals(img, selB) && OnResizeHandle(rect, pt)) { onHandle = true; break; }
+            foreach (var rect in BlockImageHandleRects(selB)) // top-level map + cell registry
+                if (OnResizeHandle(rect, pt)) { onHandle = true; break; }
         if (!onHandle && _selectedInline is { } selI
             && _inlineImageRects.TryGetValue(selI.img, out var ir) && OnResizeHandle(ir.rect, pt)) onHandle = true;
         SetCursorShape(onHandle ? InputSystemCursorShape.SizeNorthwestSoutheast : InputSystemCursorShape.IBeam);
@@ -2115,6 +2115,16 @@ public partial class RichEditor
         // on the old line until the next keystroke moved it). Keep GetCaretPosition's Y and the natural
         // empty-line height.
         bool onFreshBreakLine = !trailing && offset == len && EndsWithHardBreak(p);
+        // A glyph-less line (empty paragraph, or the fresh line after a soft break) has no region to
+        // probe, so h would be the whole line box — a caret taller than the text, and twice its height
+        // under custom spacing. Sit it on that line's baseline at text height, the same rule the
+        // measured branch below uses, so a blank line's caret matches one on a line with text.
+        if (len == 0 || onFreshBreakLine)
+        {
+            double emptyH = EmptyTextHeight(p);
+            double bl = BaselineOfLineAt(layout, offset); // empty: line 0; fresh break: the trailing line
+            if (!double.IsNaN(bl)) return (pos.X, yTop + bl - emptyH * BaselineFraction, emptyH);
+        }
         if (len > 0 && !onFreshBreakLine)
         {
             try
@@ -2125,16 +2135,53 @@ public partial class RichEditor
                 {
                     var rb = regions[0].LayoutBounds;
                     double textH = PtToPx(RunFontSizeAt(p, probe)) * NaturalLineFactor;
-                    // A line dominated by a tall inline object (image/table) gives a giant region height —
-                    // keep the caret at normal text height, aligned to the bottom of the line.
-                    if (rb.Height > textH * 1.5) { h = textH; yTop = rb.Y + rb.Height - textH; }
-                    else { h = rb.Height; yTop = rb.Y; }
+                    // A region's LayoutBounds spans the whole LINE BOX, which is taller than the glyphs it
+                    // holds — by the font's line gap at natural spacing, and by a lot under custom spacing.
+                    // So the caret is placed relative to the line's BASELINE, which is where the glyphs
+                    // actually sit, and sized to the run's own text height. One rule at every spacing:
+                    // the formula mentions only the baseline and the font size, and neither changes when
+                    // line spacing does. (Using the line box instead left the caret sitting low — the same
+                    // defect list markers had, fixed the same way on 2026-07-16.)
+                    double lineBaseline = BaselineOfLineAt(layout, probe);
+                    bool tallInlineObject = rb.Height > textH * 1.5 && !ParagraphHasCustomSpacing(p);
+                    if (tallInlineObject)
+                    {
+                        // The line is tall because a big image/table is on it. An inline object's baseline
+                        // IS its bottom edge, so bottom-aligning already puts the caret on the baseline.
+                        h = textH; yTop = rb.Y + rb.Height - textH;
+                    }
+                    else if (!double.IsNaN(lineBaseline))
+                    {
+                        h = textH; yTop = rb.Y + lineBaseline - textH * BaselineFraction;
+                    }
+                    else { h = rb.Height; yTop = rb.Y; } // no metrics: fall back to the line box
                 }
             }
             catch { }
         }
         return (pos.X, yTop, h);
     }
+
+    // Baseline offset (from the line's top) of the visual line holding `offset`, or NaN if unavailable.
+    // rb.Y from a character region is that same line's top, so the two combine into an absolute baseline.
+    private static double BaselineOfLineAt(CanvasTextLayout layout, int offset)
+    {
+        Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
+        try { lines = layout.LineMetrics; } catch { return double.NaN; }
+        int acc = 0;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            acc += lines[i].CharacterCount;
+            if (offset < acc) return lines[i].Baseline;
+        }
+        return lines.Length > 0 ? lines[^1].Baseline : double.NaN;
+    }
+
+    // Whether this paragraph asks for a line height other than the font's natural one — i.e. whether
+    // CreateLayout switched the layout to Uniform spacing with an explicit baseline. Mirrors
+    // ResolveLineHeight's rule that a proportional spacing of 1.0 or less keeps the natural metrics.
+    private static bool ParagraphHasCustomSpacing(Paragraph p)
+        => (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 1.0) || (!double.IsNaN(p.LineHeight) && p.LineHeight > 0);
 
     // Whether the paragraph's last character is a soft line break, so the caret at its end sits on a
     // fresh (empty) visual line. Walks back over the inlines instead of building the whole plain string.

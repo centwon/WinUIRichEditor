@@ -26,30 +26,33 @@ public partial class RichEditor
     {
         var doc = Document;
         if (doc == null) return 0;
-        int n = 0;
-        foreach (var b in doc.Blocks)
-        {
-            switch (b)
-            {
-                case ImageBlock: n++; break;
-                case Paragraph p: n += CountInlineImages(p); break;
-                case TableBlock t:
-                    foreach (var (_, _, cell) in t.LogicalCells())
-                        foreach (var cb in cell.Blocks)
-                        {
-                            if (cb is Paragraph cp) n += CountInlineImages(cp);
-                            else if (cb is ImageBlock) n++;
-                        }
-                    break;
-            }
-        }
-        return n;
+        return Count(doc.Blocks);
 
-        static int CountInlineImages(Paragraph p)
+        // Recursive: a cell's blocks can hold a nested table and a paragraph can hold an inline table,
+        // both of which carry images of their own. Counting one level deep under-reported them, so the
+        // soft-limit warning fired late (or never).
+        static int Count(System.Collections.Generic.IEnumerable<Block> blocks)
         {
-            int k = 0;
-            foreach (var i in p.Inlines) if (i is InlineImage) k++;
-            return k;
+            int n = 0;
+            foreach (var b in blocks)
+            {
+                switch (b)
+                {
+                    case ImageBlock: n++; break; // block images in cells count too
+                    case Paragraph p:
+                        foreach (var i in p.Inlines)
+                        {
+                            if (i is InlineImage) n++;
+                            else if (i is InlineTable it)
+                                foreach (var (_, _, cell) in it.Table.LogicalCells()) n += Count(cell.Blocks);
+                        }
+                        break;
+                    case TableBlock t:
+                        foreach (var (_, _, cell) in t.LogicalCells()) n += Count(cell.Blocks);
+                        break;
+                }
+            }
+            return n;
         }
     }
 

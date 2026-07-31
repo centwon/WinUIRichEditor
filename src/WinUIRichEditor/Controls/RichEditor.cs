@@ -22,6 +22,11 @@ public partial class RichEditor : ContentControl
     // ---- layout constants (mirror the Avalonia original) -------------------
     internal const double BodyFontSizePt = 10;
     internal const double NaturalLineFactor = 1.2;
+    // Where the text baseline sits inside a line box, as a fraction of its height. Used BOTH to tell
+    // DirectWrite where to put the baseline under custom (Uniform) line spacing and to work back from a
+    // baseline to the glyph top when placing the caret. One constant, because if the two disagree the
+    // caret drifts away from the text — which is exactly what a hard-coded pair did at 200% spacing.
+    internal const double BaselineFraction = 0.8;
     private const double ListMarkerWidth = 22;
     private const double DividerHeight = 18;
     internal const double A4ContentWidth = 698;
@@ -369,6 +374,12 @@ public partial class RichEditor : ContentControl
         return !double.IsNaN(lh) && lh > 0 ? lh : PtToPx(pt) * NaturalLineFactor;
     }
 
+    // The glyph-sized (natural) line height for an empty paragraph, ignoring custom line spacing. The
+    // caret on a blank line must be as tall as a character would be, sitting on the line's baseline —
+    // not the full spaced line box, which at 200% draws a caret twice the height of the text.
+    private double EmptyTextHeight(Paragraph p)
+        => PtToPx(p.HeadingLevel is >= 1 and <= 6 ? HeadingFontSize(p.HeadingLevel) : DefaultFontSize) * NaturalLineFactor;
+
     // ---- text layout (the single source of truth) -------------------------
     // The paragraph's logical text, with each atomic object inline (image, table) collapsed to one
     // U+FFFC so character offsets line up with the CanvasTextLayout (rule #2).
@@ -500,7 +511,7 @@ public partial class RichEditor : ContentControl
         {
             layout.LineSpacingMode = CanvasLineSpacingMode.Uniform;
             layout.LineSpacing = (float)lh;
-            layout.LineSpacingBaseline = (float)(lh * 0.8);
+            layout.LineSpacingBaseline = (float)(lh * BaselineFraction);
         }
 
         return layout;

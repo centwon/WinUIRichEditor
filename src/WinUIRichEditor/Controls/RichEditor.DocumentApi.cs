@@ -46,6 +46,10 @@ public partial class RichEditor
     public string ToJson() => Document != null ? DocumentSerializer.Serialize(Document) : "";
 
     /// <summary>Replaces the document with one loaded from the library's JSON format.</summary>
+    /// <exception cref="System.Text.Json.JsonException"><paramref name="json"/> is not valid JSON. A
+    /// damaged file is reported rather than read as an empty document, so the open document is left
+    /// alone instead of being replaced by a blank one the next save would write over the original.
+    /// </exception>
     public void LoadJson(string json) => LoadDocument(DocumentSerializer.Deserialize(json));
 
     /// <summary>Serializes the document to JSON on a background thread, keeping the UI responsive for
@@ -61,6 +65,8 @@ public partial class RichEditor
     /// <summary>Parses JSON into a document on a background thread, then swaps it in. Model objects are
     /// built in the background (value-type colors are thread-safe; image decode is deferred to first
     /// render), so only the document swap touches the UI. Call (and await) from the UI thread.</summary>
+    /// <exception cref="System.Text.Json.JsonException"><paramref name="json"/> is not valid JSON
+    /// (see <see cref="LoadJson"/>). The open document is left alone.</exception>
     public async Task LoadJsonAsync(string json)
         => LoadDocument(await Task.Run(() => DocumentSerializer.Deserialize(json)));
 
@@ -75,6 +81,11 @@ public partial class RichEditor
 
     /// <summary>Reads a <c>.flow</c> package from <paramref name="source"/> on a background thread, then
     /// swaps the document in. Call (and await) from the UI thread.</summary>
+    /// <exception cref="System.IO.InvalidDataException"><paramref name="source"/> is not a readable
+    /// <c>.flow</c> package (not a zip, or damaged).</exception>
+    /// <exception cref="System.Text.Json.JsonException">The package's <c>document.json</c> is not valid
+    /// JSON. As with <see cref="LoadJson"/>, a damaged package is reported rather than read as an empty
+    /// document; the open document is left alone.</exception>
     public async Task LoadPackageAsync(System.IO.Stream source)
         => LoadDocument(await Task.Run(() => DocumentPackage.Load(source)));
 
@@ -89,14 +100,14 @@ public partial class RichEditor
         if (Document == null) return "";
         var sb = new System.Text.StringBuilder();
         bool first = true;
-        void AddPara(Paragraph p) { if (!first) sb.Append('\n'); first = false; sb.Append(BuildPlain(p)); }
-        foreach (var block in Document.Blocks)
+        // Every paragraph in document order at ANY depth. The walk used to descend exactly one level
+        // (top-level paragraphs + a cell's own paragraphs), so text inside a nested table or an inline
+        // table was dropped entirely — including from the accessibility peer, which reads this.
+        foreach (var p in AllParagraphs())
         {
-            if (block is Paragraph p) AddPara(p);
-            else if (block is TableBlock tb)
-                foreach (var (_, _, cell) in tb.LogicalCells())
-                    foreach (var cb in cell.Blocks)
-                        if (cb is Paragraph cp) AddPara(cp);
+            if (!first) sb.Append('\n');
+            first = false;
+            sb.Append(BuildPlain(p));
         }
         return sb.ToString().ReplaceLineEndings();
     }

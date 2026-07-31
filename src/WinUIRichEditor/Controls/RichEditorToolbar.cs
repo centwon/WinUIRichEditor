@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Threading.Tasks;
@@ -166,10 +166,67 @@ public partial class RichEditorToolbar : UserControl
         if (_target != null) _target.StatusChanged -= OnTargetStatusChanged;
     }
 
-    private void OnLanguageChanged(object? sender, EventArgs e) { Content = Build(); Sync(); }
+    // LanguageChanged is raised synchronously on whatever thread set RichEditorLocalization.Language, and
+    // rebuilding the strip touches XAML — so a host that switches language from a background thread (a
+    // settings load, a locale watcher) would take the toolbar down with RPC_E_WRONG_THREAD. Marshal.
+    private void OnLanguageChanged(object? sender, EventArgs e)
+    {
+        if (DispatcherQueue is { } dq && !dq.HasThreadAccess) { dq.TryEnqueue(RebuildForLanguage); return; }
+        RebuildForLanguage();
+    }
+
+    private void RebuildForLanguage() { Content = Build(); Sync(); }
+
     private void OnTargetStatusChanged(object? sender, EventArgs e) => Sync();
 
     private ToolbarWrapPanel? _strip; // current strip, kept so a rebuild can detach reused host items
+
+    // ---- focus discipline --------------------------------------------------------------------------
+    // The caret is painted only while the editor's canvas has focus, so anything in the strip that takes
+    // focus hides the caret AND sends the next keystroke somewhere else. The commands still ran (they act
+    // on the remembered caret position), which is exactly why this looked like it worked while the
+    // keyboard had gone dead. Two rules:
+    //  (a) nothing in the strip accepts focus on interaction — including host-supplied Leading/Trailing
+    //      items, which sit in the same strip and grab focus just the same;
+    //  (b) what legitimately needs focus while open (a combo's dropdown, a picker popup) hands it back on
+    //      close — on CLOSE, not on selection change, which would yank focus mid-arrowing through a list.
+
+    /// <summary>Marks an element so clicking it does not move keyboard focus. Applied to every button the
+    /// toolbar builds; hosts adding their own to <see cref="LeadingItems"/>/<see cref="TrailingItems"/>
+    /// get it applied automatically when the strip is built.</summary>
+    private static T NoFocus<T>(T element) where T : FrameworkElement
+    {
+        element.AllowFocusOnInteraction = false;
+        return element;
+    }
+
+    // Gives focus back to the editing surface. Used by every popup/dropdown close handler.
+    private void ReturnFocusToEditor() => Target?.FocusEditor();
+
+    // Wires a picker popup to hand focus back when it closes.
+    private FlyoutBase ReturnsFocus(FlyoutBase flyout)
+    {
+        flyout.Closed += (_, _) => ReturnFocusToEditor();
+        return flyout;
+    }
+
+    // Clears focus-on-interaction across a built subtree. The factories already do it for what this class
+    // creates; this catches host items (whose content we don't control) and anything added later. Walks
+    // the LOGICAL structure — at build time nothing is in the visual tree yet, so VisualTreeHelper is
+    // empty. Depth is bounded by the strip's own nesting, and host items are shallow wrappers in practice.
+    private static void ClearFocusOnInteraction(object? node, int depth = 0)
+    {
+        if (depth > 12) return; // a host could hand us anything; don't walk an arbitrary graph forever
+        switch (node)
+        {
+            case ButtonBase b: b.AllowFocusOnInteraction = false; break;
+            case Panel panel:
+                foreach (var child in panel.Children) ClearFocusOnInteraction(child, depth + 1);
+                return;
+            case Border border: ClearFocusOnInteraction(border.Child, depth + 1); return;
+            case ContentControl cc: ClearFocusOnInteraction(cc.Content, depth + 1); return;
+        }
+    }
 
     private UIElement Build()
     {
@@ -315,6 +372,8 @@ public partial class RichEditorToolbar : UserControl
         if (TrailingItems.Count > 0) AddSep();
         foreach (var c in TrailingItems) Add(c);
 
+        // Host-supplied Leading/TrailingItems come through here too — see ClearFocusOnInteraction.
+        foreach (var child in strip.Children) ClearFocusOnInteraction(child);
         return new Border { Padding = new Thickness(4), Child = strip };
     }
 
@@ -334,6 +393,7 @@ public partial class RichEditorToolbar : UserControl
     private Flyout BuildTableGridPicker()
     {
         var flyout = new Flyout { FlyoutPresenterStyle = TightFlyoutPresenter() };
+        ReturnsFocus(flyout); // the popup takes focus while open; give it back on close
         var root = new StackPanel { Spacing = 4, Padding = new Thickness(2) };
         var label = new TextBlock { Text = "1 × 1", HorizontalAlignment = HorizontalAlignment.Center, FontSize = 12 };
         var grid = new Grid();
@@ -415,6 +475,7 @@ public partial class RichEditorToolbar : UserControl
         // Word/HWP pickers do carry one; Google Docs doesn't, and with a complete toggle the simpler
         // shape wins. The explicit, labelled "목록 제거" survives in the right-click menu.
         var menu = new MenuFlyout();
+        ReturnsFocus(menu);
         foreach (var (style, g) in options)
         {
             var s = style;
@@ -460,13 +521,32 @@ public partial class RichEditorToolbar : UserControl
             Background = ClearBrush, TextAlignment = TextAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
         };
-        void Commit() => ApplySpacingPercent(CurrentSpacingPercent());
-        _spacingBox.KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Enter) { Commit(); e.Handled = true; } };
+        // Each commit applies a line spacing, and that pushes an undo checkpoint — so one Enter must
+        // produce exactly one. Returning focus below raises LostFocus, whose own Commit is suppressed.
+        bool committing = false;
+        void Commit()
+        {
+            if (committing) return;
+            committing = true;
+            try { ApplySpacingPercent(CurrentSpacingPercent()); }
+            finally { committing = false; }
+        }
+        // The box is a real edit field, so it takes focus on purpose (unlike the buttons). Enter means
+        // "done" — commit AND hand focus back, or the caret stays hidden and typing goes on landing here.
+        _spacingBox.KeyDown += (_, e) =>
+        {
+            if (e.Key != Windows.System.VirtualKey.Enter) return;
+            e.Handled = true;
+            committing = true;
+            try { ApplySpacingPercent(CurrentSpacingPercent()); ReturnFocusToEditor(); }
+            finally { committing = false; }
+        };
         _spacingBox.LostFocus += (_, _) => Commit();
         ToolTipService.SetToolTip(_spacingBox, Loc("LineSpacing"));
         row.Children.Add(_spacingBox);
 
         var menu = new MenuFlyout();
+        ReturnsFocus(menu);
         foreach (var pct in SpacingPercents)
         {
             int p = pct;
@@ -674,7 +754,7 @@ public partial class RichEditorToolbar : UserControl
             HorizontalContentAlignment = HorizontalAlignment.Center,
         };
         ToolTipService.SetToolTip(b, tip);
-        return b;
+        return NoFocus(b); // the caret must survive a button click — see the focus discipline section
     }
 
     private ToggleButton ToggleBtn(string glyph, string tip, Action act, bool bold = false, bool italic = false, RichEditorIcon? icon = null)
@@ -697,7 +777,7 @@ public partial class RichEditorToolbar : UserControl
         ApplyToggleCheckedStyle(b);
         // Drive on click; Sync() owns IsChecked, so don't react to Checked/Unchecked (would double-toggle).
         b.Click += (_, _) => { if (!_suppress) act(); };
-        return b;
+        return NoFocus(b);
     }
 
     // Retints the ToggleButton template's Checked visual states. Without this the checked background
@@ -716,7 +796,7 @@ public partial class RichEditorToolbar : UserControl
         b.Resources["ToggleButtonBorderBrushCheckedPressed"] = ClearBrush;
     }
 
-    private static ComboBox MakeCombo(double width, string tip)
+    private ComboBox MakeCombo(double width, string tip)
     {
         // No margin: the wrap panel's HorizontalSpacing is the single source of gaps, so the space
         // between any two strip controls is identical (per-control margins made combo gaps wider).
@@ -734,6 +814,11 @@ public partial class RichEditorToolbar : UserControl
             VerticalContentAlignment = VerticalAlignment.Center,
         };
         ToolTipService.SetToolTip(c, tip);
+        // A combo legitimately needs focus while its list is open, so it can't simply refuse it like the
+        // buttons do. Hand focus back once the dropdown CLOSES — doing it on SelectionChanged instead
+        // would yank focus away while arrowing through an open list. Every combo in the strip (including
+        // the page/zoom ones in RichEditorToolbar.PageFile) is built here, so this is the single point.
+        c.DropDownClosed += (_, _) => ReturnFocusToEditor();
         return c;
     }
 
@@ -774,6 +859,7 @@ public partial class RichEditorToolbar : UserControl
         ToolTipService.SetToolTip(btn, tip);
 
         var flyout = new Flyout();
+        ReturnsFocus(flyout); // ditto — a swatch/hex click must leave the caret where it was
         void Apply(Color? c)
         {
             if (Target == null) return;

@@ -61,6 +61,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <!-- Ship the XML docs in the package: the library is heavily commented, and without this none of it
+         reaches a consumer's IntelliSense. CS1591 ("missing XML comment") stays off — the public surface
+         is documented, but the analyzer also flags members we deliberately leave to their summary. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
 
     <!-- RID-specific 호스트 앱(예: NewSchool, win-x64)이 ProjectReference 로 참조할 때
@@ -103,6 +108,17 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.2.1" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <!-- Tracks the public surface in PublicAPI.*.txt so any change to it shows up as a diff instead of
+         slipping out in a release. Analyzer-only: nothing is added to the package. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="3.3.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
   </ItemGroup>
 
   <ItemGroup>

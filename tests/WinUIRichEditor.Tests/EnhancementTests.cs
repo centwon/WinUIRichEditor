@@ -147,13 +147,67 @@ public class EnhancementTests
     }
 
     [Fact]
-    public void Json_MalformedInput_ReturnsEmptyDocument()
+    public void Json_MalformedInput_Throws()
     {
-        // The documented contract: parse errors yield an empty document, not a JsonException
-        // (the .flow zip path already behaved; this covers the plain-string LoadJson path).
-        var doc = DocumentSerializer.Deserialize("{ not valid json !!");
+        // A damaged file is REPORTED, not read as an empty document. Swallowing it is the worst outcome
+        // available: the host cannot tell "this file was empty" from "this file is damaged", shows a
+        // blank editor, and the next save overwrites a recoverable file with nothing.
+        Assert.Throws<System.Text.Json.JsonException>(() => DocumentSerializer.Deserialize("{ not valid json !!"));
+    }
+
+    [Fact]
+    public void Json_LiteralNull_IsEmptyDocument()
+    {
+        // A literal null IS valid JSON, so it stays a (empty) document rather than an error.
+        var doc = DocumentSerializer.Deserialize("null");
         Assert.NotNull(doc);
         Assert.Empty(doc.Blocks);
+    }
+
+    [Fact]
+    public void FlowPackage_Corrupt_Throws()
+    {
+        // Same contract on the .flow path: DocumentPackage.Load used to swallow a corrupt zip.
+        using var ms = new System.IO.MemoryStream(new byte[] { 0x50, 0x4B, 1, 2, 3, 4, 5, 6, 7, 8 });
+        Assert.Throws<System.IO.InvalidDataException>(() => DocumentPackage.Load(ms));
+    }
+
+    [Fact]
+    public void Json_NullEntries_AreSkippedNotThrown()
+    {
+        // JSON nulls inside Blocks / Cells / Inlines are hostile-but-plausible input (any pasted or
+        // picked file is untrusted). They used to take the load down with a NullReferenceException.
+        var doc = DocumentSerializer.Deserialize(
+            """{"Blocks":[null,{"Type":"Paragraph","Inlines":[null,{"Type":"Run","Text":"ok"}]},""" +
+            """{"Type":"Table","Rows":1,"Columns":1,"Cells":[null,[null]]}]}""");
+        Assert.NotNull(doc);
+        var p = Assert.IsType<Paragraph>(doc.Blocks[0]);           // the null block was skipped
+        Assert.Equal("ok", ((Run)p.Inlines.Single()).Text);        // the null inline was skipped
+        Assert.IsType<TableBlock>(doc.Blocks[1]);                  // the null row/cell did not throw
+    }
+
+    [Fact]
+    public void Json_HugeDeclaredTable_DoesNotAllocateIt()
+    {
+        // The declared Rows/Columns used to size the TableBlock constructor, whose whole result is
+        // discarded three lines later in favour of the cells that actually exist — so a file claiming
+        // 100,000,000 columns exhausted memory before a single cell was read.
+        var doc = DocumentSerializer.Deserialize(
+            """{"Blocks":[{"Type":"Table","Rows":100000000,"Columns":100000000,"Cells":[[{"Type":"Run","Text":"x"}]]}]}""");
+        var tb = Assert.IsType<TableBlock>(doc.Blocks[0]);
+        Assert.Equal(1, tb.Rows);
+        Assert.True(tb.Columns <= 1000, $"declared column count must be capped, got {tb.Columns}");
+    }
+
+    [Fact]
+    public void Html_HugeColspan_DoesNotExhaustMemory()
+    {
+        // rowspan was bounded by the rows that exist; colspan had no ceiling at all, and both the
+        // occupancy grid and the TableBlock are allocated from it. One pasted (or merely buggy) table
+        // hung the application.
+        var doc = HtmlDocumentFormatter.ParseHtml("""<table><tr><td colspan="100000000">x</td></tr></table>""");
+        var tb = Assert.IsType<TableBlock>(doc.Blocks.First(b => b is TableBlock));
+        Assert.True(tb.Columns <= 1000, $"colspan must be capped, got {tb.Columns}");
     }
 
     [Fact]
@@ -490,8 +544,9 @@ public class EnhancementTests
     // an inline ("treat as character") table was dropped without a trace. That is real content loss:
     // SetClipboardFromSelection writes RTF on EVERY copy, and Word/HWP prefer it over CF_HTML — so
     // pasting such a paragraph into those apps lost the table. RTF has no inline grid, so a TOP-LEVEL
-    // host paragraph is split around real \trowd rows (what Word does for a table between two runs);
-    // inline-ness itself can't survive, so it comes back as a BLOCK table.
+    // host paragraph is split around real \trowd rows (what Word does for a table between two runs).
+    // Other applications see exactly that block table; OUR reader also sees the {\*\arinline} marker
+    // (an ignorable group everyone else skips) and puts the table back on its text line.
     [Fact]
     public void RtfExportKeepsInlineTableAsRealTable()
     {
@@ -509,16 +564,19 @@ public class EnhancementTests
         Assert.Contains(@"\trowd", rtf, System.StringComparison.Ordinal); // a REAL row, not flattened text
 
         var back = RtfDocumentFormatter.Parse(rtf);
-        var tbl = back.Blocks.OfType<TableBlock>().Single();
+        // Restored to the text line, so the paragraph is whole again instead of split into three blocks.
+        var hostBack = back.Blocks.OfType<Paragraph>().Single(p => p.Inlines.OfType<InlineTable>().Any());
+        var tbl = hostBack.Inlines.OfType<InlineTable>().Single().Table;
         Assert.Equal(1, tbl.Rows);
         Assert.Equal(2, tbl.Columns);
         Assert.Equal("A1", string.Concat(tbl.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
         Assert.Equal("B1", string.Concat(tbl.Cells[0][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
-        // The host paragraph's own text is split around the table, not swallowed by it.
-        var body = back.Blocks.OfType<Paragraph>()
-            .Select(p => string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text))).ToList();
-        Assert.Contains("before", body);
-        Assert.Contains("after", body);
+        // The host paragraph's own text survives, in order, around the table on that one line.
+        string hostText = string.Concat(hostBack.Inlines.OfType<Run>().Select(r => r.Text));
+        Assert.Contains("before", hostText, System.StringComparison.Ordinal);
+        Assert.Contains("after", hostText, System.StringComparison.Ordinal);
+        Assert.True(hostText.IndexOf("before", System.StringComparison.Ordinal)
+                    < hostText.IndexOf("after", System.StringComparison.Ordinal));
     }
 
     // An inline table that is the FIRST thing in its host paragraph (the ordinary "treat as character"
@@ -675,5 +733,242 @@ public class EnhancementTests
             .Where(p => p.Inlines.OfType<Run>().Any(r => !string.IsNullOrEmpty(r.Text))).ToList();
         Assert.Equal(Microsoft.UI.Xaml.TextAlignment.Right, paras[0].TextAlignment);
         Assert.Equal(Microsoft.UI.Xaml.TextAlignment.Left, paras[1].TextAlignment);
+    }
+
+    // ---- RTF table model: real nesting + geometric horizontal merge ---------------------------------
+
+    [Fact]
+    public void Rtf_NestedTableInACell_SurvivesAsARealTable()
+    {
+        // Both directions used to flatten a table inside a cell to tab/newline text: the grid was lost
+        // ("the table disappeared" to a user, even though the words were there).
+        var inner = new TableBlock(2, 2);
+        ((Run)inner.Cells[0][0].Para.Inlines[0]).Text = "중첩1";
+        ((Run)inner.Cells[0][1].Para.Inlines[0]).Text = "중첩2";
+        ((Run)inner.Cells[1][0].Para.Inlines[0]).Text = "중첩3";
+        ((Run)inner.Cells[1][1].Para.Inlines[0]).Text = "중첩4";
+
+        var outer = new TableBlock(1, 1);
+        outer.Cells[0][0].Blocks.Clear();
+        outer.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "앞 문단" } } });
+        outer.Cells[0][0].Blocks.Add(inner);
+        outer.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "뒤 문단" } } });
+
+        var doc = new FlowDocument();
+        doc.Blocks.Add(outer);
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        Assert.Contains(@"\nestcell", rtf, System.StringComparison.Ordinal);
+        Assert.Contains(@"\itap2", rtf, System.StringComparison.Ordinal);
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var outBack = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+        var cell = outBack.Cells[0][0];
+        var innerBack = cell.Blocks.OfType<TableBlock>().Single();
+        Assert.Equal(2, innerBack.Rows);
+        Assert.Equal(2, innerBack.Columns);
+        Assert.Equal("중첩1", string.Concat(innerBack.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        Assert.Equal("중첩4", string.Concat(innerBack.Cells[1][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+
+        // The parent cell's own paragraphs keep their order AROUND the nested table — without the
+        // per-depth pending list the deeper table swallows the text that preceded it.
+        var blocks = cell.Blocks.ToList();
+        int iInner = blocks.IndexOf(innerBack);
+        string Before = string.Concat(blocks.Take(iInner).OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text));
+        string After = string.Concat(blocks.Skip(iInner + 1).OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text));
+        Assert.Contains("앞 문단", Before, System.StringComparison.Ordinal);
+        Assert.Contains("뒤 문단", After, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Rtf_HorizontalMerge_UsesTheGeometricForm()
+    {
+        // HWP dissolved the merge when it was expressed as Word's flag form (one \cellx per column with
+        // \clmgf/\clmrg). The base RTF model — one cell whose \cellx sits at the merged right edge — is
+        // what both readers honour, so that is what we write.
+        // A merged header row over an ordinary row — the shape a real document has, and the one the
+        // column grid can be recovered from (the unmerged row is what reveals the true columns).
+        var tb = new TableBlock(2, 2);
+        tb.SetSpan(0, 0, 2, 1);
+        ((Run)tb.Cells[0][0].Para.Inlines[0]).Text = "머리글";
+        ((Run)tb.Cells[1][0].Para.Inlines[0]).Text = "좌";
+        ((Run)tb.Cells[1][1].Para.Inlines[0]).Text = "우";
+        var doc = new FlowDocument();
+        doc.Blocks.Add(tb);
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        Assert.DoesNotContain(@"\clmrg", rtf, System.StringComparison.Ordinal);
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var tb2 = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+        Assert.Equal(2, tb2.Rows);
+        Assert.Equal(2, tb2.Columns);
+        Assert.Equal((2, 1), tb2.SpanOf(0, 0));                      // the merge survived
+        Assert.Equal("머리글", string.Concat(tb2.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        Assert.Equal("우", string.Concat(tb2.Cells[1][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
+    [Fact]
+    public void Rtf_FullyMergedRow_CollapsesToOneColumn()
+    {
+        // Documented limit of the geometric form: when EVERY row is merged the same way, nothing in the
+        // file reveals the underlying grid, so it reads back as a single wide column. That renders
+        // identically — the merged cell has the same total width — but the model is not identical, so
+        // pin the behaviour rather than let it look like a silent bug later.
+        var tb = new TableBlock(1, 2);
+        tb.SetSpan(0, 0, 2, 1);
+        var doc = new FlowDocument();
+        doc.Blocks.Add(tb);
+
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var tb2 = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+        Assert.Equal(1, tb2.Columns);
+    }
+
+    [Fact]
+    public void Rtf_WordFlagFormMerge_StillImports()
+    {
+        // Word writes the OTHER form, and pasting from Word has to keep working: one \cellx per column,
+        // \clmgf on the anchor and \clmrg on the continuation.
+        var doc = RtfDocumentFormatter.Parse(
+            @"{\rtf1\ansi\trowd\clmgf\cellx4000\clmrg\cellx8000\intbl merged\cell\cell\row\pard}");
+        var tb = Assert.IsType<TableBlock>(doc.Blocks.First(b => b is TableBlock));
+        Assert.Equal(2, tb.Columns);
+        Assert.Equal((2, 1), tb.SpanOf(0, 0));
+    }
+
+    // ---- inline-table fidelity through the export formats (trackD) ----------------------------------
+    // An InlineTable ("treat as character") has no equivalent in HTML or RTF, so it goes out as a
+    // block-level <table> / \trowd row set. Without a marker it came BACK as a block table, permanently
+    // splitting its host paragraph — one save/load turned one line into three blocks.
+
+    private static Paragraph InlineTableHost()
+    {
+        var inner = new TableBlock(1, 2);
+        inner.Cells[0][0].Blocks.Clear();
+        inner.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "A" } } });
+        inner.Cells[0][1].Blocks.Clear();
+        inner.Cells[0][1].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "B" } } });
+        var host = new Paragraph();
+        host.Inlines.Add(new Run { Text = "before" });
+        host.Inlines.Add(new InlineTable { Table = inner });
+        host.Inlines.Add(new Run { Text = "after" });
+        return host;
+    }
+
+    [Fact]
+    public void Html_InlineTable_StaysInlineThroughRoundTrip()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(InlineTableHost());
+
+        string html = HtmlDocumentFormatter.ToHtml(doc);
+        Assert.Contains("data-are-inline", html, System.StringComparison.Ordinal);
+        // Sized to its own columns, not width:100% — otherwise browsers and Word lay it out as a
+        // full-width band on its own line.
+        Assert.Contains("display:inline-table", html, System.StringComparison.Ordinal);
+
+        var back = HtmlDocumentFormatter.ParseHtml(html);
+        var host = Assert.IsType<Paragraph>(back.Blocks[0]);
+        Assert.Single(host.Inlines.OfType<InlineTable>());
+        Assert.DoesNotContain(back.Blocks.Skip(1), b => b is TableBlock); // did NOT become a block table
+        string text = string.Concat(host.Inlines.OfType<Run>().Select(r => r.Text));
+        Assert.Contains("before", text, System.StringComparison.Ordinal);
+        Assert.Contains("after", text, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Html_InlineTable_DoesNotGrowASpacePerRoundTrip()
+    {
+        // The pretty-printing newline after </table> parsed back as a whitespace text node, so each
+        // save/load inserted one more space after every inline table.
+        var doc = new FlowDocument();
+        doc.Blocks.Add(InlineTableHost());
+
+        string Text(FlowDocument d) => string.Concat(
+            d.Blocks.OfType<Paragraph>().SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text));
+
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+        Assert.Equal(Text(once), Text(twice));
+    }
+
+    [Fact]
+    public void Rtf_InlineTable_StaysInlineThroughRoundTrip()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(InlineTableHost());
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        // The marker is an ignorable destination, so other readers skip it and still see a block table.
+        Assert.Contains(@"{\*\arinline}", rtf, System.StringComparison.Ordinal);
+        Assert.Contains(@"\trowd", rtf, System.StringComparison.Ordinal); // a real table, not flattened text
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var host = back.Blocks.OfType<Paragraph>().FirstOrDefault(p => p.Inlines.OfType<InlineTable>().Any());
+        Assert.NotNull(host);
+        Assert.Single(host!.Inlines.OfType<InlineTable>());
+    }
+
+    [Fact]
+    public void Rtf_CellBackground_RoundTrips()
+    {
+        // The editor can set a cell background (right-click ▸ cell colour) and the model/JSON/HTML carry
+        // it, but RTF wrote no \clcbpat and read none — so it was dropped by Word, HWP and our own reader.
+        var tb = new TableBlock(1, 1);
+        tb.Cells[0][0].Background = Color.FromArgb(255, 0xFF, 0xC0, 0x40);
+        var doc = new FlowDocument();
+        doc.Blocks.Add(tb);
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        Assert.Contains(@"\clcbpat", rtf, System.StringComparison.Ordinal);
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var tb2 = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+        var bg = tb2.Cells[0][0].Background;
+        Assert.NotNull(bg);
+        Assert.Equal((0xFF, 0xC0, 0x40), (bg!.Value.R, bg.Value.G, bg.Value.B));
+    }
+
+    // Word writes ignorable groups routinely — bookmarks, fields, a nested table's {\*\nesttableprops}.
+    // The pending run was flushed at the group's CLOSING brace, by which point the skipped destination
+    // was active and FlushRun threw it away: ordinary Word documents imported with text missing.
+    [Fact]
+    public void RtfImport_KeepsTextBeforeAnIgnorableGroup()
+    {
+        var doc = RtfDocumentFormatter.Parse(
+            @"{\rtf1\ansi before{\*\bkmkstart mark}{\*\bkmkend mark}after\par}");
+        Assert.Contains("before", PlainText(doc), System.StringComparison.Ordinal);
+        Assert.Contains("after", PlainText(doc), System.StringComparison.Ordinal);
+    }
+
+    // \trowd / \cell / \row / \cellx used to act regardless of destination, and Word puts a nested
+    // table's row definition inside {\*\nesttableprops \trowd …} — so the half-built parent cell was
+    // restarted and its accumulated text discarded mid-row.
+    [Fact]
+    public void RtfImport_IgnoresRowDefinitionsInsideASkippedGroup()
+    {
+        var doc = RtfDocumentFormatter.Parse(
+            @"{\rtf1\ansi\trowd\cellx4000\cellx8000\intbl keep me{\*\nesttableprops\trowd\cellx2000\nestrow}" +
+            @"\cell second\cell\row\pard after\par}");
+        var tb = Assert.IsType<TableBlock>(doc.Blocks.First(b => b is TableBlock));
+        string cell = string.Concat(tb.Cells[0][0].Blocks.OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text));
+        Assert.Contains("keep me", cell, System.StringComparison.Ordinal);
+    }
+
+    // {\nonesttables …} is the flattened fallback copy of a nested table, for readers that can't nest.
+    // We flatten ourselves, so it must be skipped — its \par used to land as a stray break in the
+    // parent cell and its text arrived a second time.
+    [Fact]
+    public void RtfImport_SkipsTheNoNestTablesFallback()
+    {
+        var doc = RtfDocumentFormatter.Parse(
+            @"{\rtf1\ansi real{\nonesttables fallback\par}\par}");
+        string text = PlainText(doc);
+        Assert.Contains("real", text, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("fallback", text, System.StringComparison.Ordinal);
     }
 }

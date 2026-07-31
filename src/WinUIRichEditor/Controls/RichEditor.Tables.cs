@@ -267,6 +267,7 @@ public partial class RichEditor
                     var bmp = _images.Get(_canvas, cimg, cimg.RawBytes, cimg.Image);
                     var ir = new Rect(ox, blkY, iw, ih);
                     if (bmp != null) ds.DrawImage(bmp, ir); else DrawPlaceholder(ds, ir, "");
+                    TrackCellImage(ds, cimg, ir); // selection/resize registry — see _cellImageRects
                     by += ih;
                     break;
                 }
@@ -577,17 +578,36 @@ public partial class RichEditor
         return RemoveBlockFromCells(Document.Blocks, b);
     }
 
+    // Searches the document's top level and then recurses through cells — of block tables AND of inline
+    // tables, whose grid hangs off a paragraph's inlines. Descending into block tables only meant an
+    // image, divider or nested table living in an inline table's cell was never found: Delete pushed an
+    // undo checkpoint, dropped the selection, and left the block on screen.
     private static bool RemoveBlockFromCells(IEnumerable<Block> blocks, Block target)
     {
         foreach (var blk in blocks)
+        {
             if (blk is TableBlock tb)
-                foreach (var row in tb.Cells)
-                    foreach (var cell in row)
-                    {
-                        if (cell.Blocks.Remove(target)) return true;
-                        if (RemoveBlockFromCells(cell.Blocks, target)) return true;
-                    }
+            {
+                if (RemoveFromTable(tb, target)) return true;
+            }
+            else if (blk is Paragraph p)
+            {
+                foreach (var inl in p.Inlines)
+                    if (inl is InlineTable it && RemoveFromTable(it.Table, target)) return true;
+            }
+        }
         return false;
+
+        static bool RemoveFromTable(TableBlock tb, Block target)
+        {
+            foreach (var row in tb.Cells)
+                foreach (var cell in row)
+                {
+                    if (cell.Blocks.Remove(target)) return true;
+                    if (RemoveBlockFromCells(cell.Blocks, target)) return true;
+                }
+            return false;
+        }
     }
 
     // The selected rectangular cell block defined by the two selection endpoints (span-aware), or null

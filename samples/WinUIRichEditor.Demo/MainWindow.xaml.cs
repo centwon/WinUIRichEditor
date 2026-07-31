@@ -39,8 +39,16 @@ public sealed partial class MainWindow : Window
     {
         string page = "control";
         foreach (var arg in System.Environment.GetCommandLineArgs())
+        {
             if (arg.StartsWith("--page=", System.StringComparison.OrdinalIgnoreCase))
                 page = arg["--page=".Length..].ToLowerInvariant();
+            // `--roundtrip=<dir>`: HTML fidelity report over a corpus directory. A development tool that
+            // lives here rather than in the library (it only uses the public formatter API), so shipping
+            // it to consumers would have been shipping a dev tool. Writes the report next to the corpus
+            // because a WinExe has no console to print to.
+            else if (arg.StartsWith("--roundtrip=", System.StringComparison.OrdinalIgnoreCase))
+                RunRoundTrip(arg["--roundtrip=".Length..]);
+        }
 
         switch (page)
         {
@@ -49,6 +57,22 @@ public sealed partial class MainWindow : Window
             case "view": RootFrame.Navigate(typeof(ViewDemoPage)); break;
             default: RootFrame.Navigate(typeof(ControlPage), false); break; // the bare editing control
         }
+    }
+
+    // Redirects the harness's Console output into a file: the demo is a WinExe, so stdout goes nowhere.
+    private static void RunRoundTrip(string dir)
+    {
+        if (dir.Length == 0) return;
+        string outDir = System.IO.Path.Combine(dir, "roundtrip-out");
+        var prev = System.Console.Out;
+        try
+        {
+            using var report = new System.IO.StreamWriter(System.IO.Path.Combine(dir, "roundtrip-report.txt"), false);
+            System.Console.SetOut(report);
+            RoundTripHarness.Run(dir, outDir);
+        }
+        catch (System.Exception ex) { System.Diagnostics.Debug.WriteLine($"roundtrip failed: {ex.Message}"); }
+        finally { System.Console.SetOut(prev); }
     }
 
     private void OnNavControl(object sender, RoutedEventArgs e) => RootFrame.Navigate(typeof(ControlPage), false);
