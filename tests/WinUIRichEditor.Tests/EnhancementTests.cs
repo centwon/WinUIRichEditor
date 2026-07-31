@@ -606,8 +606,11 @@ public class EnhancementTests
     // outside this writer's subset), so an inline table there still flattens — content over structure,
     // the same rule a nested TableBlock in a cell follows. It must not vanish.
     [Fact]
-    public void RtfExportFlattensInlineTableInsideCell()
+    public void RtfExportNestsInlineTableInsideCell()
     {
+        // Was RtfExportFlattensInlineTableInsideCell, asserting only that the words survived — which
+        // stayed true when the writer moved from flattening to real \itap nesting, so the test passed
+        // while its name and premise had become false. It now pins the behaviour it claims to describe.
         var doc = new FlowDocument();
         var outer = new TableBlock(1, 1);
         var cellPara = outer.Cells[0][0].Para;
@@ -619,8 +622,17 @@ public class EnhancementTests
         doc.Blocks.Add(outer);
 
         string rtf = RtfDocumentFormatter.Write(doc);
-        Assert.Contains("C1", rtf, System.StringComparison.Ordinal);
-        Assert.Contains("D1", rtf, System.StringComparison.Ordinal);
+        Assert.Contains(@"\nestcell", rtf, System.StringComparison.Ordinal); // a grid, not tab-separated text
+        Assert.Contains(@"\itap2", rtf, System.StringComparison.Ordinal);
+
+        // RTF has no inline table, so inside a cell it comes back as a real NESTED table (the
+        // {\*\arinline} marker only promotes a TOP-LEVEL one back onto its text line).
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var outBack = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+        var inner = outBack.Cells[0][0].Blocks.OfType<TableBlock>().Single();
+        Assert.Equal(2, inner.Columns);
+        Assert.Equal("C1", string.Concat(inner.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        Assert.Equal("D1", string.Concat(inner.Cells[0][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
     }
 
     // Load-time compaction walked block tables' cells but not an INLINE table's, so a document whose text
@@ -733,6 +745,168 @@ public class EnhancementTests
             .Where(p => p.Inlines.OfType<Run>().Any(r => !string.IsNullOrEmpty(r.Text))).ToList();
         Assert.Equal(Microsoft.UI.Xaml.TextAlignment.Right, paras[0].TextAlignment);
         Assert.Equal(Microsoft.UI.Xaml.TextAlignment.Left, paras[1].TextAlignment);
+    }
+
+    // ---- RTF table model: the combinations the axis-by-axis tests don't reach -----------------------
+    // The table model (parser cell = TableCell, \itap nesting, geometric horizontal merge) is the
+    // largest single change in this area and sits on the paste path, so these push the axes TOGETHER —
+    // depth against merge, structure against malformed input, and one round trip against two.
+
+    private static TableBlock Cell1x1(string text)
+    {
+        var t = new TableBlock(1, 1);
+        ((Run)t.Cells[0][0].Para.Inlines[0]).Text = text;
+        return t;
+    }
+
+    [Fact]
+    public void Rtf_ThreeLevelNesting_SurvivesRoundTrip()
+    {
+        // Depth is carried by \itap, so two levels can pass while three fails: the per-depth pending
+        // lists and the "re-declare my own \itap after a nested table" rule only interact from 3 down.
+        var innermost = Cell1x1("깊이3");
+        var mid = new TableBlock(1, 1);
+        mid.Cells[0][0].Blocks.Clear();
+        mid.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "깊이2" } } });
+        mid.Cells[0][0].Blocks.Add(innermost);
+        var outer = new TableBlock(1, 1);
+        outer.Cells[0][0].Blocks.Clear();
+        outer.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "깊이1" } } });
+        outer.Cells[0][0].Blocks.Add(mid);
+
+        var doc = new FlowDocument();
+        doc.Blocks.Add(outer);
+        string rtf = RtfDocumentFormatter.Write(doc);
+        Assert.Contains(@"\itap3", rtf, System.StringComparison.Ordinal);
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var l1 = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+        var l2 = l1.Cells[0][0].Blocks.OfType<TableBlock>().Single();
+        var l3 = l2.Cells[0][0].Blocks.OfType<TableBlock>().Single();
+        Assert.Equal("깊이3", string.Concat(l3.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
+    [Fact]
+    public void Rtf_MergedCellHoldingANestedTable_KeepsBoth()
+    {
+        // The geometric merge SKIPS covered columns when emitting \cellx and \cell, and a nested table
+        // re-declares \itap on the way out. Both rewrite the same emission loop, so they have to be
+        // exercised together: a merge that drops the wrong cell desynchronizes the row definition from
+        // the cells, which loses the whole row.
+        var tb = new TableBlock(2, 2);
+        tb.SetSpan(0, 0, 2, 1); // row 0 is one merged cell
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "병합앞" } } });
+        tb.Cells[0][0].Blocks.Add(Cell1x1("중첩속"));
+        ((Run)tb.Cells[1][0].Para.Inlines[0]).Text = "좌";
+        ((Run)tb.Cells[1][1].Para.Inlines[0]).Text = "우";
+
+        var doc = new FlowDocument();
+        doc.Blocks.Add(tb);
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var t = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+
+        Assert.Equal(2, t.Rows);
+        Assert.Equal(2, t.Columns);
+        Assert.Equal((2, 1), t.SpanOf(0, 0));                       // merge survived
+        Assert.Single(t.Cells[0][0].Blocks.OfType<TableBlock>());   // so did the nested table inside it
+        Assert.Equal("우", string.Concat(t.Cells[1][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
+    [Fact]
+    public void Rtf_CellMergedBothWays_KeepsBothSpans()
+    {
+        // Horizontal merge is geometric (no \clmgf) while vertical stays on the flags — a doubly merged
+        // cell is the one place the two encodings have to agree about the same slot.
+        var tb = new TableBlock(3, 3);
+        tb.SetSpan(0, 0, 2, 2);
+        ((Run)tb.Cells[0][0].Para.Inlines[0]).Text = "덩어리";
+        ((Run)tb.Cells[2][2].Para.Inlines[0]).Text = "끝";
+
+        var doc = new FlowDocument();
+        doc.Blocks.Add(tb);
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var t = Assert.IsType<TableBlock>(back.Blocks.First(b => b is TableBlock));
+
+        Assert.Equal(3, t.Columns);
+        Assert.Equal((2, 2), t.SpanOf(0, 0));
+        Assert.Equal("덩어리", string.Concat(t.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        Assert.Equal("끝", string.Concat(t.Cells[2][2].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
+    [Fact]
+    public void Rtf_ComprehensiveTable_SurvivesTwoRoundTrips()
+    {
+        // Idempotence, not just correctness: the HTML inline-table defect was one space accumulating per
+        // cycle, invisible in a single round trip. Everything the table model can carry, twice.
+        var inner = new TableBlock(1, 2);
+        ((Run)inner.Cells[0][0].Para.Inlines[0]).Text = "N1";
+        ((Run)inner.Cells[0][1].Para.Inlines[0]).Text = "N2";
+
+        var tb = new TableBlock(2, 2);
+        tb.SetSpan(0, 0, 2, 1);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "머리" } } });
+        tb.Cells[1][0].Background = Color.FromArgb(255, 0xFF, 0xF1, 0x76);
+        tb.Cells[1][0].Blocks.Clear();
+        tb.Cells[1][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "앞" } } });
+        tb.Cells[1][0].Blocks.Add(inner);
+        tb.Cells[1][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = "뒤" } } });
+        ((Run)tb.Cells[1][1].Para.Inlines[0]).Text = "옆";
+
+        var doc = new FlowDocument();
+        doc.Blocks.Add(tb);
+
+        string Shape(FlowDocument d)
+        {
+            var t = d.Blocks.OfType<TableBlock>().First();
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"{t.Rows}x{t.Columns};span00={t.SpanOf(0, 0)};");
+            foreach (var (r, c, cell) in t.LogicalCells())
+            {
+                sb.Append($"[{r},{c}").Append(cell.Background is { } bg ? $",bg{bg.R:X2}{bg.G:X2}{bg.B:X2}" : "");
+                foreach (var b in cell.Blocks)
+                    sb.Append(b is TableBlock nt ? $",T{nt.Rows}x{nt.Columns}"
+                            : b is Paragraph p ? "," + string.Concat(p.Inlines.OfType<Run>().Select(x => x.Text)) : ",?");
+                sb.Append(']');
+            }
+            return sb.ToString();
+        }
+
+        var once = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var twice = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(once));
+        Assert.Equal(Shape(once), Shape(twice)); // the second cycle must add and lose nothing
+
+        // And the shape is the right one: everything is still there after a cycle (Shape prints a nested
+        // table's dimensions only, so its contents are checked directly).
+        var t1 = once.Blocks.OfType<TableBlock>().First();
+        Assert.Equal((2, 1), t1.SpanOf(0, 0));
+        Assert.NotNull(t1.Cells[1][0].Background);
+        var nested = t1.Cells[1][0].Blocks.OfType<TableBlock>().Single();
+        Assert.Equal("N1", string.Concat(nested.Cells[0][0].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        Assert.Equal("N2", string.Concat(nested.Cells[0][1].Para.Inlines.OfType<Run>().Select(r => r.Text)));
+        // The parent cell's own paragraphs keep their order around the nested table.
+        var blocks = t1.Cells[1][0].Blocks.ToList();
+        int i = blocks.IndexOf(nested);
+        Assert.Contains("앞", string.Concat(blocks.Take(i).OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text)), System.StringComparison.Ordinal);
+        Assert.Contains("뒤", string.Concat(blocks.Skip(i + 1).OfType<Paragraph>()
+            .SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text)), System.StringComparison.Ordinal);
+    }
+
+    [Theory]
+    // Every one of these is reachable from a paste. None may throw or hang; content may degrade.
+    [InlineData(@"{\rtf1\ansi\trowd\cellx1000\intbl\itap2 열린채\nestcell")]                       // truncated mid-nest
+    [InlineData(@"{\rtf1\ansi\trowd\cellx1000\intbl\itap9 깊이점프\nestcell\nestrow\cell\row\pard}")] // \itap jumps levels
+    [InlineData(@"{\rtf1\ansi\trowd\cellx1000\intbl\nestrow\nestrow\nestrow\cell\row\pard}")]      // rows with no cells
+    [InlineData(@"{\rtf1\ansi\trowd\cellx1000\intbl\itap2 A\nestcell\nestrow\itap1 B\cell\row\pard}")] // depth down mid-cell
+    [InlineData(@"{\rtf1\ansi\trowd\intbl 경계없음\cell\row\pard}")]                                 // \cell with no \cellx
+    [InlineData(@"{\rtf1\ansi\trowd\cellx-5000\cellx1000\intbl A\cell B\cell\row\pard}")]           // negative boundary
+    public void Rtf_MalformedNesting_DoesNotThrow(string rtf)
+    {
+        var doc = RtfDocumentFormatter.Parse(rtf);
+        Assert.NotNull(doc);
+        Assert.NotEmpty(doc.Blocks); // Parse's contract: an empty document on failure, never null
     }
 
     // ---- RTF table model: real nesting + geometric horizontal merge ---------------------------------

@@ -797,6 +797,20 @@ internal sealed class RtfParser
         return cell;
     }
 
+    // Drops one trailing '\n' from a paragraph, and the run that held it if it becomes empty.
+    private static void TrimOneTrailingNewline(Paragraph p)
+    {
+        for (int i = p.Inlines.Count - 1; i >= 0; i--)
+        {
+            if (p.Inlines[i] is not Run r) return;              // an object inline ends it; nothing to trim
+            if (string.IsNullOrEmpty(r.Text)) continue;          // skip empties and keep looking back
+            if (r.Text[^1] != '\n') return;
+            r.Text = r.Text[..^1];
+            if (r.Text.Length == 0) p.Inlines.RemoveAt(i);
+            return;
+        }
+    }
+
     // \itap<N> switches nesting depth. Going deeper closes the text collected so far as a paragraph of
     // the cell being filled, so "text, then a nested table" keeps that order instead of the text being
     // swallowed into the nested table's first cell.
@@ -806,6 +820,11 @@ internal sealed class RtfParser
         if (depth > _itap)
         {
             FlushRun();
+            // The writer MUST close this paragraph with \par before descending, or Word glues its text
+            // onto the nested table's first cell — so that break is the paragraph boundary itself, not
+            // content. Inside a cell \par is otherwise read as a newline, which made the separator come
+            // back as text: one more '\n' before the nested table on every save/load cycle.
+            TrimOneTrailingNewline(_para);
             if (_para.Inlines.Count > 0)
             {
                 // The paragraph belongs to the cell being filled at the CURRENT depth, not the deeper one.
