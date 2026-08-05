@@ -36,6 +36,9 @@ and follows [Semantic Versioning](https://semver.org/).
   (실제로 `COMException 0x80004005`가 `PageFile.cs:275`의 `PickSingleFileAsync()`에서 난다는 것을
   이 경로로 확인했다).
 - 데모 `ToolbarPage`가 `RichEditorDiagnostics.Fault`를 구독해 캡션에 표시한다 — 새 API의 사용 예시.
+- ✅ **실기 확인 완료** (2026-08-05, 두 경로 모두): Import는 정상 파일이 열리고 손상 파일에서 기존 문서가
+  유지되는 것까지, Export는 파일이 정상 저장되는 것까지. 가드가 **정상 경로를 막지 않는다**는 확인이
+  핵심이다 — 전체 본문을 try로 감쌌으므로 성공 경로가 조용히 삼켜질 여지가 있었다.
 
 ### Added — 삼킨 예외를 볼 수 있는 진단 훅 (2026-08-05, 외부 코드 리뷰)
 
