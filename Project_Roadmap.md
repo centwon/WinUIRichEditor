@@ -35,6 +35,24 @@
 캐럿 깜빡임이 OS 설정을 따르고 끄면 정지하되 보이는 것(`11379da`) 모두 확인. 후자는
 `tools/measure-caret-blink.ps1`로 **측정**했다 — 항목 1(컨트롤 레벨 자동 검증)의 첫 조각이다.
 
+#### 상류(AvaloniaRichEditor)로 보낼 후보 (2026-08-05, 대조 완료 @ `08f1a11`)
+이번 수정 3건은 **포팅이 만든 결함이 아니라 양쪽이 공유하는 결함**이다. 상류 코드를 직접 대조해 확인했다.
+
+1. **손상 RTF가 문서를 지운다** — 상류 `LoadRtf`는 수정 전과 **글자 그대로 동일**하고
+   `RtfDocumentFormatter.Parse`도 `catch { return new FlowDocument(); }` 그대로다. 결정적으로 상류
+   `LoadJson`에는 *"손상된 파일은 빈 문서로 읽지 않고 보고한다 — 안 그러면 빈 페이지가 뜨고 저장이
+   원본을 덮는다"* 는 주석이 **이미 있다**. 양쪽 다 그 계약을 세우고 양쪽 다 RTF만 빠뜨렸다 →
+   설계가 아니라 공통 누락. (우리 쪽 해법: `TryParse` + `LoadRtf`가 실패 시 문서 유지, `2cef3de`.)
+2. **툴바 파일 액션의 fire-and-forget 구멍** — 상류도 `() => _ = ImportAsync()`이고
+   `OpenFilePickerAsync`가 `try` **밖**(`PageFile.cs:290` vs try `:296`), `ExportAsync`는 try/catch가
+   **아예 없다**. 피커가 던지면 관측되지 않은 Task로 소멸하는 것까지 동일. (`fd4d849`.)
+3. (판단 필요) **진단 훅** — 상류에는 `RichEditorDiagnostics` 상당물이 없다. 1·2와 달리 공개 표면이
+   커지는 결정이라 그쪽에서 별도 판단할 일. 다만 2번을 추적 가능하게 만든 것이 이 훅이었다.
+
+⚠️ 이번에 **공개 표면이 갈렸다**: WinUI 쪽에만 `RtfDocumentFormatter.TryParse`,
+`RichEditorDiagnostics`(+`RichEditorFaultEventArgs`), `RichEditorToolbar.FontSizes`/`Palette`가 있다.
+상류가 같은 문제를 다른 이름으로 풀면 수렴이 깨지므로, 백포트 시 **이름을 맞출 것**.
+
 #### 외부 코드 리뷰 분류 (2026-08-05)
 받은 리뷰 5개 항목을 코드와 대조했다. **사실 관계는 대체로 맞았고 진단은 절반이 빗나갔다** —
 리뷰가 `tests/`·퍼즈·상류 `AvaloniaRichEditor`·1.0 API 동결을 하나도 언급하지 않았는데, 이 코드베이스를
