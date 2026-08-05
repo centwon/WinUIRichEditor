@@ -73,10 +73,21 @@ public partial class RichEditorToolbar : UserControl
     // "Active" (toggled-on) face: a soft tint, not the system accent. WinUI's ToggleButton Checked
     // state paints the accent colour with a white glyph, which shouts next to the flat icon strip —
     // ApplyToggleCheckedStyle overrides the template's checked brushes with these.
-    private static readonly SolidColorBrush ActiveBrush = new(Color.FromArgb(255, 0xDD, 0xE7, 0xF3));
-    private static readonly SolidColorBrush ActiveHoverBrush = new(Color.FromArgb(255, 0xCB, 0xDA, 0xEC));
-    private static readonly SolidColorBrush ClearBrush = new(Colors.Transparent);
-    private static readonly SolidColorBrush BlackInk = new(Colors.Black); // shared: Sync runs per keystroke
+    //
+    // Created LAZILY, not in field initializers. A SolidColorBrush is a XAML object whose construction
+    // needs the WinUI runtime, and a static field initializer runs on FIRST TOUCH OF ANY STATIC MEMBER —
+    // so `RichEditorToolbar.FontSizes = ...` from a plain unit test (or from Main before
+    // Application.Start) used to die with a COMException from the class initializer, nowhere near the
+    // line that caused it. Deferring to first USE moves the runtime requirement to where a brush is
+    // actually painted, which is always inside a built toolbar.
+    //
+    // `??=` is not synchronized: these are only ever touched while building/syncing a toolbar, which is
+    // UI-thread work. A torn race would cost an extra brush, not correctness.
+    private static SolidColorBrush? _activeBrush, _activeHoverBrush, _clearBrush, _blackInk;
+    private static SolidColorBrush ActiveBrush => _activeBrush ??= new(Color.FromArgb(255, 0xDD, 0xE7, 0xF3));
+    private static SolidColorBrush ActiveHoverBrush => _activeHoverBrush ??= new(Color.FromArgb(255, 0xCB, 0xDA, 0xEC));
+    private static SolidColorBrush ClearBrush => _clearBrush ??= new(Colors.Transparent);
+    private static SolidColorBrush BlackInk => _blackInk ??= new(Colors.Black); // shared: Sync runs per keystroke
 
     // Variation Selector-15: forces text (monochrome) presentation of an emoji that has no symbol-font
     // glyph, so the leftover emoji fallbacks don't render as colour and clash with the FontIcon set.
@@ -87,7 +98,8 @@ public partial class RichEditorToolbar : UserControl
     private ToggleButton? _bold, _italic, _underline, _strike, _painter;
     private Button? _bullet, _number;                 // list-box icon buttons (toggle the list)
     private TextBlock? _bulletPreview, _numberPreview; // current list marker shown in the list boxes
-    private static readonly SolidColorBrush DimInk = new(Color.FromArgb(255, 0xBF, 0xC3, 0xC7)); // inactive marker
+    private static SolidColorBrush? _dimInk;
+    private static SolidColorBrush DimInk => _dimInk ??= new(Color.FromArgb(255, 0xBF, 0xC3, 0xC7)); // inactive marker
     private ComboBox? _font, _size, _heading, _align;
     private TextBox? _spacingBox; // editable line-spacing %, reflects/sets the caret paragraph
     private Button? _undo, _redo;
@@ -99,12 +111,11 @@ public partial class RichEditorToolbar : UserControl
     private static double[] _fontSizes = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72 };
 
     /// <summary>The available font sizes in the toolbar combo box. Hosts can replace this array to customize the options.
-    /// <para>Read while the strip is being built, so assign it BEFORE creating the toolbar —
-    /// <c>App.OnLaunched</c> is the natural place. NOT from <c>Main</c> before <c>Application.Start</c>:
-    /// this class holds static XAML brushes, so touching any member of it initializes them and that needs
-    /// the WinUI runtime to be up (it throws <see cref="System.Runtime.InteropServices.COMException"/>
-    /// otherwise). An existing toolbar keeps the sizes it was built with until something rebuilds it —
-    /// assigning <see cref="Target"/> or <see cref="ToolbarLevel"/> does.</para></summary>
+    /// <para>Read while the strip is being built, so assign it BEFORE creating the toolbar. Any point
+    /// works, including <c>Main</c> before <c>Application.Start</c> — the toolbar's static brushes are
+    /// created lazily precisely so that touching this property does not drag in the WinUI runtime. An
+    /// existing toolbar keeps the sizes it was built with until something rebuilds it — assigning
+    /// <see cref="Target"/> or <see cref="ToolbarLevel"/> does.</para></summary>
     /// <exception cref="ArgumentNullException"><paramref name="value"/> is null.</exception>
     /// <exception cref="ArgumentException">The array is empty, or holds a size that is not a positive
     /// finite number.</exception>
@@ -136,11 +147,10 @@ public partial class RichEditorToolbar : UserControl
     // matching the original AvaloniaRichEditor toolbar. Internal: the editor's cell-background
     // context-menu palette reuses it so all color pickers offer the same swatches.
     /// <summary>The color palette (hex strings) shared by the toolbar's text/highlight pickers and the editor's cell background context menu. Hosts can replace this array.
-    /// <para>Read when a color flyout is built, so assign it before the toolbar is created, and from
-    /// <c>App.OnLaunched</c> rather than before <c>Application.Start</c> (see <see cref="FontSizes"/> for
-    /// why). Entries are parsed as <c>#RRGGBB</c> or <c>#AARRGGBB</c>; an entry that does not parse
-    /// renders as BLACK rather than throwing, so a typo shows up as an unexpected swatch, not a crash.
-    /// </para></summary>
+    /// <para>Read when a color flyout is built, so assign it before the toolbar is created (see
+    /// <see cref="FontSizes"/> — any point works). Entries are parsed as <c>#RRGGBB</c> or
+    /// <c>#AARRGGBB</c>; an entry that does not parse renders as BLACK rather than throwing, so a typo
+    /// shows up as an unexpected swatch, not a crash.</para></summary>
     /// <exception cref="ArgumentNullException"><paramref name="value"/> is null.</exception>
     /// <exception cref="ArgumentException">The array is empty.</exception>
     public static string[] Palette
@@ -167,7 +177,8 @@ public partial class RichEditorToolbar : UserControl
         "#FFCDD2","#FFE0B2","#FFF9C4","#C8E6C9","#B2DFDB","#BBDEFB","#E1BEE7","#F8BBD0",
     };
 
-    private static readonly SolidColorBrush NoColorBrush = new(Color.FromArgb(255, 0xDD, 0xDD, 0xDD)); // "no highlight" face
+    private static SolidColorBrush? _noColorBrush;
+    private static SolidColorBrush NoColorBrush => _noColorBrush ??= new(Color.FromArgb(255, 0xDD, 0xDD, 0xDD)); // "no highlight" face
     private Border? _colorSwatch, _highlightSwatch; // current-colour bars under the picker glyphs
 
     // Uniform strip metrics: every control renders in a 32px-tall box (the WinUI ComboBox default
