@@ -38,7 +38,19 @@
 정적 생성자가 WinUI 런타임을 요구해 헤드리스로 못 만진다(static 브러시 2개를 지연 생성으로 바꾸면
 풀린다 — 덤으로 `Application.Start` 이전 할당도 열린다).
 
-#### 상류(AvaloniaRichEditor)로 보낼 후보 (2026-08-05, 대조 완료 @ `08f1a11`)
+#### 상류(AvaloniaRichEditor) 백포트 ✅ 완료 (2026-08-05, `fd850ad` + `95e2d36`)
+아래 3건 전부 상류에 이식했다. 이름은 **양쪽 동일**하게 맞춰 표면 수렴을 유지했다
+(`RtfDocumentFormatter.TryParse`, `RichEditorDiagnostics`/`RichEditorFaultEventArgs`).
+상류 테스트 **618 → 631**, 경고 0.
+- 상류에서는 **컨트롤 계층 테스트가 가능**해서(`[AvaloniaFact]` + headless) 이쪽에서 못 한 검증을 붙였다:
+  `LoadRtf_DamagedInput_KeepsTheOpenDocument`가 문서 인스턴스가 **교체조차 되지 않음**을 단정한다.
+  같은 검증이 WinUI 쪽에는 여전히 없다 — 1.1 항목 1이 필요한 이유가 여기서도 확인된다.
+- 삼킴 지점은 상류도 **38곳 전부** 배선했다(부분 배선은 "구독했는데 안 보이니 문제없음" 함정).
+- ⚠️ 상류 작업 트리에 사용자 README 작업분이 있었다 — 스테이징에서 제외했다.
+
+<details><summary>대조 근거 (당시 기록)</summary>
+
+
 이번 수정 3건은 **포팅이 만든 결함이 아니라 양쪽이 공유하는 결함**이다. 상류 코드를 직접 대조해 확인했다.
 
 1. **손상 RTF가 문서를 지운다** — 상류 `LoadRtf`는 수정 전과 **글자 그대로 동일**하고
@@ -52,9 +64,11 @@
 3. (판단 필요) **진단 훅** — 상류에는 `RichEditorDiagnostics` 상당물이 없다. 1·2와 달리 공개 표면이
    커지는 결정이라 그쪽에서 별도 판단할 일. 다만 2번을 추적 가능하게 만든 것이 이 훅이었다.
 
-⚠️ 이번에 **공개 표면이 갈렸다**: WinUI 쪽에만 `RtfDocumentFormatter.TryParse`,
-`RichEditorDiagnostics`(+`RichEditorFaultEventArgs`), `RichEditorToolbar.FontSizes`/`Palette`가 있다.
-상류가 같은 문제를 다른 이름으로 풀면 수렴이 깨지므로, 백포트 시 **이름을 맞출 것**.
+표면 수렴 상태: `TryParse`와 `RichEditorDiagnostics`는 **양쪽 동일**하게 맞췄다. 아직 이쪽에만 있는 것은
+`RichEditorToolbar.FontSizes`/`Palette`(툴바 커스터마이즈) — 상류에 보낼지는 미정.
+
+</details>
+
 
 #### 외부 코드 리뷰 분류 (2026-08-05)
 받은 리뷰 5개 항목을 코드와 대조했다. **사실 관계는 대체로 맞았고 진단은 절반이 빗나갔다** —
