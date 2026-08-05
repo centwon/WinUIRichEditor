@@ -362,7 +362,8 @@ public partial class RichEditor
     {
         var result = new List<double>();
         CanvasLineMetrics[] lm;
-        try { lm = layout.LineMetrics; } catch { return new List<double> { paraH }; }
+        try { lm = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return new List<double> { paraH }; }
         if (lm.Length <= 1) return new List<double> { paraH };
         double acc = 0;
         for (int i = 0; i < lm.Length; i++)

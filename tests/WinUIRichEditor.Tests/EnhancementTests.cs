@@ -1,4 +1,5 @@
-﻿using System.Linq;
+﻿using System.Collections.Generic;
+using System.Linq;
 using Windows.UI;
 using WinUIRichEditor.Controls;
 using WinUIRichEditor.Documents;
@@ -1302,5 +1303,86 @@ public class EnhancementTests
     {
         Assert.Equal(530, SystemInputSettings.FallbackBlinkMs);
         Assert.Equal(500, SystemInputSettings.FallbackDoubleClickMs);
+    }
+
+    // ---- swallowed-fault diagnostics --------------------------------------
+    //
+    // These live in THIS class deliberately: RichEditorDiagnostics is process-global state, xUnit runs
+    // test CLASSES in parallel, and the damaged-RTF parses above are the other things that raise faults.
+    // Keeping them in one class makes them sequential; the per-site filtering below covers the rest.
+
+    private static List<RichEditorFaultEventArgs> CaptureFaults(System.Action body)
+    {
+        var seen = new List<RichEditorFaultEventArgs>();
+        void Handler(object? _, RichEditorFaultEventArgs e) { lock (seen) seen.Add(e); }
+        RichEditorDiagnostics.Reset();
+        RichEditorDiagnostics.Fault += Handler;
+        try { body(); }
+        finally { RichEditorDiagnostics.Fault -= Handler; RichEditorDiagnostics.Reset(); }
+        return seen;
+    }
+
+    [Fact]
+    public void Diagnostics_ReportsASwallowedFault()
+    {
+        var faults = CaptureFaults(() => RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}"));
+        var f = Assert.Single(faults, e => e.File == "RtfDocumentFormatter.cs");
+        Assert.NotNull(f.Exception);
+        Assert.True(f.Line > 0);
+        Assert.NotEmpty(f.Member);
+        Assert.Contains(f.Exception.GetType().Name, f.ToString(), System.StringComparison.Ordinal);
+    }
+
+    // Several wired sites sit in the render / caret-metrics paths, where a persistent fault would fire
+    // many times a second. Without this the hook would bury everything else and be unusable there.
+    [Fact]
+    public void Diagnostics_ReportsEachDistinctFaultOnce()
+    {
+        const string damaged = @"{\rtf1\ansi\fs99999999999999999999 x\par}";
+        var faults = CaptureFaults(() =>
+        {
+            RtfDocumentFormatter.Parse(damaged);
+            RtfDocumentFormatter.Parse(damaged);
+            RtfDocumentFormatter.Parse(damaged);
+        });
+        Assert.Single(faults, e => e.File == "RtfDocumentFormatter.cs");
+    }
+
+    [Fact]
+    public void Diagnostics_ResetReArmsReporting()
+    {
+        const string damaged = @"{\rtf1\ansi\fs99999999999999999999 x\par}";
+        var faults = CaptureFaults(() =>
+        {
+            RtfDocumentFormatter.Parse(damaged);
+            RichEditorDiagnostics.Reset();
+            RtfDocumentFormatter.Parse(damaged);
+        });
+        Assert.Equal(2, faults.Count(e => e.File == "RtfDocumentFormatter.cs"));
+    }
+
+    // The fallback has already run by the time the event fires; letting a handler's exception escape
+    // would turn a handled fault into the crash the whole design avoids.
+    [Fact]
+    public void Diagnostics_SurvivesAThrowingHandler()
+    {
+        void Bad(object? _, RichEditorFaultEventArgs e) => throw new System.InvalidOperationException("boom");
+        RichEditorDiagnostics.Reset();
+        RichEditorDiagnostics.Fault += Bad;
+        try
+        {
+            var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
+            Assert.Empty(doc.Blocks); // the fallback still happened
+        }
+        finally { RichEditorDiagnostics.Fault -= Bad; RichEditorDiagnostics.Reset(); }
+    }
+
+    // With nobody listening the call must cost nothing and, above all, not throw.
+    [Fact]
+    public void Diagnostics_IsInertWithoutSubscribers()
+    {
+        RichEditorDiagnostics.Reset();
+        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
+        Assert.Empty(doc.Blocks);
     }
 }

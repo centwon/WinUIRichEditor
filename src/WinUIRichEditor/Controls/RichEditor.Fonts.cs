@@ -37,8 +37,9 @@ public partial class RichEditor
             }
             names.Sort(StringComparer.Create(CultureInfo.CurrentUICulture, ignoreCase: true));
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             names.Clear();
         }
         // Platforms/environments without font enumeration: widely-available fallback families.

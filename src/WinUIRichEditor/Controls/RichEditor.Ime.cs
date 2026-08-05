@@ -45,8 +45,9 @@ public partial class RichEditor
             _editContext.FocusRemoved += (_, _) => { _composing = false; _composRange = null; _imeRangeDelta = 0; };
             _imeEnabled = true;
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             _imeEnabled = false; // fall back to CharacterReceived-only input
         }
     }
@@ -182,8 +183,9 @@ public partial class RichEditor
             AfterEdit();
             args.Result = CoreTextTextUpdatingResult.Succeeded;
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             args.Result = CoreTextTextUpdatingResult.Failed;
         }
         finally { _inTextUpdating = false; }
@@ -235,7 +237,7 @@ public partial class RichEditor
             var top = DocPointToScreen(new Point(dp.X, dp.Y));
             return new Rect(top.X, top.Y, 2 * scale, dp.Height * EffectiveZoom * scale);
         }
-        catch { return default; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return default; }
     }
 
     // ---- shared doc-space <-> physical-screen mapping -----------------------
@@ -313,6 +315,6 @@ public partial class RichEditor
                 ds.DrawLine((float)(px + lb.X), uy, (float)(px + lb.X + lb.Width), uy, CaretColor, 1.5f);
             }
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 }

@@ -649,7 +649,7 @@ public partial class RichEditor
                                 }
                     }
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
             off += InlineLen(inl);
         }
@@ -726,10 +726,10 @@ public partial class RichEditor
                     var (iw, _) = ImageInfo.GetPixelSize(bytes);
                     if (iw > 0) InsertImageBlock(bytes);
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         finally { deferral.Complete(); }
     }
 
@@ -1572,7 +1572,8 @@ public partial class RichEditor
         double innerW = Math.Max(10, cellRect.Width - 2 * CellPad - pl);
         var layout = BuildTextLayout(p, innerW);
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return firstLine ? 0 : GetParagraphLength(p); }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return firstLine ? 0 : GetParagraphLength(p); }
         if (lines.Length == 0) return 0;
         int line = firstLine ? 0 : lines.Length - 1;
         double yTop = 0;
@@ -1587,7 +1588,8 @@ public partial class RichEditor
         double pWidth = Math.Max(10, _layoutWidth - 20 - px - p.MarginRight);
         var layout = BuildTextLayout(p, pWidth);
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return firstLine ? 0 : GetParagraphLength(p); }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return firstLine ? 0 : GetParagraphLength(p); }
         if (lines.Length == 0) return 0;
         int line = firstLine ? 0 : lines.Length - 1;
         double yTop = 0;
@@ -1605,7 +1607,8 @@ public partial class RichEditor
         double pWidth = Math.Max(10, _layoutWidth - 20 - px - p.MarginRight);
         var layout = BuildTextLayout(p, pWidth);
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return false; }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
         if (lines.Length <= 1) return false;
 
         int len = GetParagraphLength(p);
@@ -1774,7 +1777,11 @@ public partial class RichEditor
         var layout = BuildTextLayout(p, ParagraphWrapWidth(p));
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
         try { lines = layout.LineMetrics; }
-        catch { lines = System.Array.Empty<Microsoft.Graphics.Canvas.Text.CanvasLineMetrics>(); }
+        catch (Exception ex)
+        {
+            RichEditorDiagnostics.Report(ex);
+            lines = System.Array.Empty<Microsoft.Graphics.Canvas.Text.CanvasLineMetrics>();
+        }
 
         bool atLineEnd = false;
         if (lines.Length > 1)
@@ -2073,7 +2080,7 @@ public partial class RichEditor
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
             off += InlineLen(inl);
         }
@@ -2113,7 +2120,7 @@ public partial class RichEditor
                 ds.FillRectangle(new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height), SelectionFill);
             }
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     private void DrawCaret(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, double px, double oy)
@@ -2144,7 +2151,7 @@ public partial class RichEditor
         // Off-boundary the two edges coincide, so applying the trailing form there is harmless.
         bool trailing = atLineEnd && offset > 0;
         try { pos = layout.GetCaretPosition(trailing ? offset - 1 : offset, trailing); }
-        catch { pos = new Vector2(0, 0); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); pos = new Vector2(0, 0); }
         yTop = pos.Y;
         // Caret parked at the very end of a paragraph that ends in a soft break ("…\n"): it belongs on
         // the NEW empty visual line, and GetCaretPosition already puts it there. The region probe below
@@ -2198,7 +2205,7 @@ public partial class RichEditor
                     else { h = rb.Height; yTop = rb.Y; } // no metrics: fall back to the line box
                 }
             }
-            catch { }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         }
         // No region probed: the caret IS the line.
         if (double.IsNaN(lineTop)) lineTop = yTop;
@@ -2211,7 +2218,8 @@ public partial class RichEditor
     private static double BaselineOfLineAt(CanvasTextLayout layout, int offset)
     {
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return double.NaN; }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return double.NaN; }
         int acc = 0;
         for (int i = 0; i < lines.Length; i++)
         {

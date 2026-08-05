@@ -128,7 +128,7 @@ public static class HtmlDocumentFormatter
         async System.Threading.Tasks.Task<(string, byte[]?)> Fetch(string url)
         {
             try { return (url, await Http.GetByteArrayAsync(url, cts.Token).ConfigureAwait(false)); }
-            catch { return (url, null); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); return (url, null); }
         }
         foreach (var (url, bytes) in await System.Threading.Tasks.Task.WhenAll(urls.Select(Fetch)).ConfigureAwait(false))
             result[url] = bytes;
@@ -509,7 +509,7 @@ public static class HtmlDocumentFormatter
             double h = (!double.IsNaN(declH) && declH > 0) ? declH : (natH > 0 ? natH : double.NaN);
             return (bytes, w, h, alt);
         }
-        catch { return (null, 0, 0, null); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return (null, 0, 0, null); }
     }
 
     // True when the path resolves under the user's temp directory (clipboard image files live there).
@@ -521,7 +521,7 @@ public static class HtmlDocumentFormatter
                 .TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
             return System.IO.Path.GetFullPath(path).StartsWith(temp, StringComparison.OrdinalIgnoreCase);
         }
-        catch { return false; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
     }
 
     private static double ReadPx(HtmlNode node, string attr, string cssProp)

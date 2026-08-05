@@ -33,7 +33,8 @@ public static class RtfDocumentFormatter
     {
         // CP949 (Korean), Shift-JIS, GB2312 etc. aren't in .NET's default set ??register them so
         // \'hh runs from HWP/Word decode correctly.
-        try { Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); } catch { }
+        try { Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     /// <summary>True if <paramref name="text"/> starts with the RTF signature.</summary>
@@ -70,6 +71,9 @@ public static class RtfDocumentFormatter
         }
         catch (Exception ex)
         {
+            // Also reported to RichEditorDiagnostics: Parse() discards `error`, so without this a paste
+            // that fell back to plain text would be invisible to a host watching only the fault channel.
+            RichEditorDiagnostics.Report(ex);
             document = new FlowDocument();
             error = $"{ex.GetType().Name}: {ex.Message}";
             return false;
@@ -1025,13 +1029,13 @@ internal sealed class RtfParser
         // the catch keeps the old "null on bad input" contract. FromHexString beats the former
         // per-2-chars byte.TryParse loop on multi-megabyte pasted pictures.
         try { return Convert.FromHexString(hex); }
-        catch (FormatException) { return null; }
+        catch (FormatException ex) { RichEditorDiagnostics.Report(ex); return null; }
     }
 
     private static Encoding GetEncoding(int codepage)
     {
         try { return Encoding.GetEncoding(codepage); }
-        catch { return Encoding.Latin1; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return Encoding.Latin1; }
     }
 }
 

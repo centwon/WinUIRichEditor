@@ -232,7 +232,8 @@ public partial class RichEditor
     private void DrawListMarkers(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, string fullText, double px, double oy, ref int orderedIndex)
     {
         CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { lines = Array.Empty<CanvasLineMetrics>(); }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); lines = Array.Empty<CanvasLineMetrics>(); }
 
         int segStart = 0;
         for (int i = 0; i <= fullText.Length; i++)
@@ -286,7 +287,8 @@ public partial class RichEditor
         if (!double.IsNaN(lineBaseline))
         {
             double mlBaseline = 0;
-            try { var mlm = ml.LineMetrics; if (mlm.Length > 0) mlBaseline = mlm[0].Baseline; } catch { }
+            try { var mlm = ml.LineMetrics; if (mlm.Length > 0) mlBaseline = mlm[0].Baseline; }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             if (mlBaseline > 0) y = lineTopY + lineBaseline - mlBaseline;
         }
         ds.DrawTextLayout(ml, (float)(textLeft - gap - mw), (float)y, color);
@@ -354,7 +356,7 @@ public partial class RichEditor
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             off += InlineLen(inl);
         }
     }
@@ -377,7 +379,7 @@ public partial class RichEditor
                         ds.FillRectangle(new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height), bg);
                     }
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
             off += len;
         }
@@ -423,7 +425,7 @@ public partial class RichEditor
                         ds.FillRectangle(new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height), FindMatchFill);
                     }
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
             from = idx + 1;
         }

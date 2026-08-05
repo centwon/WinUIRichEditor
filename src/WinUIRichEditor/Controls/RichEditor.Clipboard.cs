@@ -61,7 +61,9 @@ public partial class RichEditor
 
         string? html = BuildSelectionHtml(selDoc);
         string? rtf = null;
-        try { rtf = RtfDocumentFormatter.Write(selDoc); } catch { /* RTF is best-effort */ }
+        // RTF is best-effort
+        try { rtf = RtfDocumentFormatter.Write(selDoc); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
 
         _internalClipboardDoc = selDoc.Clone();
         _internalClipboardText = plain;
@@ -69,10 +71,13 @@ public partial class RichEditor
         var dp = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
         if (!string.IsNullOrEmpty(plain)) dp.SetText(plain);
         if (!string.IsNullOrEmpty(html))
-            try { dp.SetHtmlFormat(HtmlFormatHelper.CreateHtmlFormat(html)); } catch { }
+            try { dp.SetHtmlFormat(HtmlFormatHelper.CreateHtmlFormat(html)); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         if (!string.IsNullOrEmpty(rtf))
-            try { dp.SetRtf(rtf); } catch { }
-        try { Clipboard.SetContent(dp); } catch { }
+            try { dp.SetRtf(rtf); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+        try { Clipboard.SetContent(dp); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     /// <summary>Cuts the current selection (copy + delete). Also cuts a block-selected object.</summary>
@@ -159,12 +164,14 @@ public partial class RichEditor
     {
         if (IsReadOnly || Document == null || _caret.Paragraph == null) return;
         DataPackageView view;
-        try { view = Clipboard.GetContent(); } catch { return; }
+        try { view = Clipboard.GetContent(); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
 
         string? clipText = null;
         if (view.Contains(StandardDataFormats.Text))
         {
-            try { clipText = await view.GetTextAsync(); } catch { clipText = null; }
+            try { clipText = await view.GetTextAsync(); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); clipText = null; }
         }
 
         // 1) Internal rich snapshot — only when the system clipboard text still matches what we copied.
@@ -208,7 +215,8 @@ public partial class RichEditor
                                     if (HasAnyImage(hd)) chosen = hd;
                                 }
                             }
-                            catch { /* keep the RTF result */ }
+                            // keep the RTF result
+                            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
                         }
                         PushUndo(null);
                         if (HasSelection) DeleteSelection();
@@ -218,7 +226,8 @@ public partial class RichEditor
                     }
                 }
             }
-            catch { /* fall through to HTML/plain */ }
+            // fall through to HTML/plain
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         }
 
         // 3) External HTML.
@@ -240,7 +249,8 @@ public partial class RichEditor
                     return;
                 }
             }
-            catch { /* fall through to image/TSV/plain text */ }
+            // fall through to image/TSV/plain text
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         }
 
         // 4) Bitmap image (e.g. a screenshot or copied picture). An image copied in-app carries our own
@@ -265,7 +275,8 @@ public partial class RichEditor
                     return;
                 }
             }
-            catch { /* fall through to TSV/plain text */ }
+            // fall through to TSV/plain text
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         }
 
         // 5) Tab-separated text (e.g. Excel/HWP cells copied without HTML) -> rebuild as a table.
@@ -340,7 +351,7 @@ public partial class RichEditor
             if (raw is { Length: > 0 }) dp.SetData(ImageBytesFormat, Convert.ToBase64String(raw));
             Clipboard.SetContent(dp);
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     // The application-private original bytes (base64) when present, decoded back to the raw encoded image.
@@ -352,7 +363,7 @@ public partial class RichEditor
             if (await view.GetDataAsync(ImageBytesFormat) is string b64 && b64.Length > 0)
                 return Convert.FromBase64String(b64);
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         return null;
     }
 
@@ -362,7 +373,7 @@ public partial class RichEditor
         if (!view.Contains(ImageMetaFormat)) return null;
         string? meta;
         try { meta = await view.GetDataAsync(ImageMetaFormat) as string; }
-        catch { return null; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return null; }
         if (string.IsNullOrEmpty(meta)) return null;
         var parts = meta.Split(';');
         var inv = System.Globalization.CultureInfo.InvariantCulture;

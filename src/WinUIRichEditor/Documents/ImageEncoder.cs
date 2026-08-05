@@ -15,7 +15,7 @@ internal static class ImageEncoder
     {
         if (bmp == null) return null;
         try { return EncodeAsync(bmp).GetAwaiter().GetResult(); }
-        catch { return null; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return null; }
     }
 
     private static async Task<byte[]> EncodeAsync(CanvasBitmap bmp)

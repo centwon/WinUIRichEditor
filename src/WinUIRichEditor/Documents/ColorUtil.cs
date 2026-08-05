@@ -54,7 +54,7 @@ internal static class ColorUtil
                     return Color.FromArgb(Hex(h, 0), Hex(h, 2), Hex(h, 4), Hex(h, 6));
             }
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         return null;
     }
 

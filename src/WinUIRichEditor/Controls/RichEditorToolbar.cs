@@ -53,7 +53,8 @@ public partial class RichEditorToolbar : UserControl
 
     private static FontFamily SafeFontFamily(string name)
     {
-        try { return new FontFamily(name); } catch { return FontFamily.XamlAutoFontFamily; }
+        try { return new FontFamily(name); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return FontFamily.XamlAutoFontFamily; }
     }
 
     /// <summary>Optional async image-bytes provider (e.g. a file picker). When set, the image button
@@ -445,7 +446,8 @@ public partial class RichEditorToolbar : UserControl
             var bytes = await ImagePicker();
             if (bytes is { Length: > 0 }) Target.InsertImageBlock(bytes);
         }
-        catch { /* host picker failed/cancelled */ }
+        // host picker failed/cancelled
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     // A combo-style list control: a bordered box of [icon (toggles the list) | current marker | ▾ (style

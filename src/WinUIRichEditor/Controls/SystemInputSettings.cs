@@ -37,8 +37,9 @@ internal static class SystemInputSettings
             // canvas 100x a second. The Settings slider's own minimum is well above this.
             return Math.Max(100, ms);
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             return FallbackBlinkMs;
         }
     }
@@ -52,8 +53,9 @@ internal static class SystemInputSettings
             uint ms = GetDoubleClickTime();
             return ms == 0 ? FallbackDoubleClickMs : ms;
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             return FallbackDoubleClickMs;
         }
     }
