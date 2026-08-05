@@ -6,6 +6,30 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — 툴바 폰트 크기·색상 팔레트 커스터마이즈 (2026-08-05, 외부 코드 리뷰)
+
+`RichEditorToolbar.FontSizes`(`double[]`)와 `RichEditorToolbar.Palette`(`string[]`)가 public static
+속성이 됐다. 리뷰가 "배열로 하드코딩돼 외부 설정·확장이 불가능"이라고 지적한 항목 — "불가능"은 과장이고
+확장 지점을 안 열어 뒀던 것뿐이라 열었다.
+
+- 둘 다 **툴바가 스트립/플라이아웃을 만들 때** 읽으므로 툴바 생성 **전에** 할당해야 한다. 이미 만들어진
+  툴바는 무언가 재빌드할 때까지(`Target`/`ToolbarLevel` 할당) 이전 값을 유지한다.
+- `Palette`는 종전 `internal`이었고 에디터의 셀 배경 컨텍스트 메뉴가 같은 배열을 공유한다 — 교체하면
+  모든 색상 피커에 함께 반영된다.
+
+### Fixed — 툴바 파일 열기/내보내기 실패가 흔적 없이 사라짐 (2026-08-05)
+
+`RichEditorToolbar`의 Import/Export 버튼은 `() => _ = ImportAsync()` 형태의 **fire-and-forget** 호출인데,
+`ImportAsync`는 `PickSingleFileAsync()`와 `ReadBufferAsync()`가 **try 블록 밖**에 있었고 `ExportAsync`는
+**try/catch가 아예 없었다.** 따라서 파일 피커가 던지면 예외가 **관측되지 않은 Task**로 소멸했다 —
+대화상자도, 오류도, 로그도 없이. 호스트 입장에서 "버튼을 눌렀는데 아무 일도 안 일어남"과 구분 불가였다.
+
+- 두 메서드 모두 **피커 호출을 포함한 전체 본문**을 가드로 감싸고 `RichEditorDiagnostics`에 보고한다.
+- 위 진단 훅이 **만들어지자마자 잡아낸 결함**이다. 이 훅이 없었다면 추적 자체가 불가능했다
+  (실제로 `COMException 0x80004005`가 `PageFile.cs:275`의 `PickSingleFileAsync()`에서 난다는 것을
+  이 경로로 확인했다).
+- 데모 `ToolbarPage`가 `RichEditorDiagnostics.Fault`를 구독해 캡션에 표시한다 — 새 API의 사용 예시.
+
 ### Added — 삼킨 예외를 볼 수 있는 진단 훅 (2026-08-05, 외부 코드 리뷰)
 
 이 라이브러리는 약 55곳에서 예외를 삼킨다. **그 자체는 옳다** — 디코드 안 되는 폰트, 소스 앱이

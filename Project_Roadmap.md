@@ -67,6 +67,15 @@ estcell`을 버리고 중첩 셀 텍스트를 이어 붙인다.
   유력한 수정 방향은 퍼즈 주석과 아래 퍼즈 절에 있다.
 
 ### 재사용할 검증 레시피
+- ⚠️ **파일 피커로 열 테스트 파일을 `%TEMP%` 밑 스크래치패드에 두지 말 것.** WinRT `StorageFile`이
+  그 경로를 거부해 `PickSingleFileAsync()`가 **`COMException 0x80004005`(E_FAIL)** 로 던진다 — 대화상자가
+  아예 안 뜨므로 "파일이 안 열린다"로 보이고, 원인이 파일 내용에 있는 것처럼 오해하게 된다.
+  픽스처는 **`Documents`** 에 두면 된다(피커 기본 시작 위치이기도 하다). 2026-08-05에 이걸로 왕복 8번을
+  낭비했고, 그 사이 HWND·권한 상승·OneDrive 리디렉션·셸 라이브러리를 전부 헛짚었다.
+- **데모 빌드 순서**: `dotnet build WinUIRichEditor.slnx` **먼저**, 그 다음 데모 csproj. 라이브러리는
+  AnyCPU(`bin/Debug`)와 x64(`bin/x64/Debug`) 양쪽에 나오는데 **데모는 AnyCPU 쪽을 참조**한다. 데모
+  csproj만 빌드하면 "성공"이라 보고하면서 옛 라이브러리를 그대로 들고 간다 — 반드시 데모 출력 폴더의
+  `WinUIRichEditor.dll` **타임스탬프로 확인**할 것.
 - **시스템 입력 타이밍 확인**: 기본값(530/500) 기계에서는 변화가 보이지 않으므로 설정을 바꿔서 본다.
   깜빡임 끄기 = 설정 > 접근성 > 텍스트 커서, 또는 `HKCU\Control Panel\Desktop\CursorBlinkRate`를
   `-1`(끄기) / `1200`(느리게)로. 더블클릭 = `HKCU\Control Panel\Mouse\DoubleClickSpeed`.
