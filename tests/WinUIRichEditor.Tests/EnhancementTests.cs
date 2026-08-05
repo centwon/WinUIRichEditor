@@ -1,5 +1,6 @@
 ﻿using System.Linq;
 using Windows.UI;
+using WinUIRichEditor.Controls;
 using WinUIRichEditor.Documents;
 using WinUIRichEditor.Formatters;
 using Xunit;
@@ -1271,5 +1272,35 @@ public class EnhancementTests
     {
         Assert.True(RtfDocumentFormatter.TryParse(@"{\rtf1\ansi}", out _, out string? error));
         Assert.Null(error);
+    }
+
+    // ---- OS-owned input timings -------------------------------------------
+    //
+    // The caret blink rate and double-click interval used to be constants (530 / 500), which silently
+    // overrode two ACCESSIBILITY settings. What these tests can actually hold is the interop: the OS
+    // value cannot be asserted (it is whatever this machine is set to), but a wrong P/Invoke signature
+    // or an unresolved entry point would show up here as a throw or a nonsense value — and the failure
+    // mode being guarded against is exactly that the call quietly returns garbage and we adopt it.
+
+    [Fact]
+    public void SystemInputSettings_DoubleClickTimeIsPlausible()
+    {
+        double ms = SystemInputSettings.DoubleClickMs();
+        Assert.InRange(ms, 1, 10_000);
+    }
+
+    // null is a legitimate answer (user turned blinking off); any number must have cleared the floor.
+    [Fact]
+    public void SystemInputSettings_CaretBlinkIsPlausibleOrDisabled()
+    {
+        double? ms = SystemInputSettings.CaretBlinkMs();
+        if (ms is { } v) Assert.InRange(v, 100, 60_000);
+    }
+
+    [Fact]
+    public void SystemInputSettings_FallbacksAreTheWindowsDefaults()
+    {
+        Assert.Equal(530, SystemInputSettings.FallbackBlinkMs);
+        Assert.Equal(500, SystemInputSettings.FallbackDoubleClickMs);
     }
 }

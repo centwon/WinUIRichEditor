@@ -38,8 +38,12 @@ public partial class RichEditor
     private DateTime _lastPressTime;
     private Point _lastPressPos;
     private int _clickCount;
-    private const double MultiClickMs = 500;
     private const double MultiClickSlop = 6;
+
+    // OS-owned timings, re-read on focus gain (see RefreshSystemInputTimings). _blinkMs is null when the
+    // user has turned caret blinking off.
+    private double _multiClickMs = SystemInputSettings.FallbackDoubleClickMs;
+    private double? _blinkMs = SystemInputSettings.FallbackBlinkMs;
 
     // SelectionFill / CaretColor are now instance-computed from SelectionBrush / CaretBrush
     // (see RichEditor.Appearance.cs).
@@ -62,7 +66,14 @@ public partial class RichEditor
 
         _canvas.KeyDown += OnEditorKeyDown;
         _canvas.CharacterReceived += OnEditorCharacterReceived;
-        _canvas.GotFocus += (_, _) => { _hasFocus = true; ImeNotifyFocusEnter(); RestartBlink(); InvalidateCanvas(); };
+        _canvas.GotFocus += (_, _) =>
+        {
+            _hasFocus = true;
+            ImeNotifyFocusEnter();
+            RefreshSystemInputTimings(); // the user may have changed them while we were away
+            RestartBlink();
+            InvalidateCanvas();
+        };
         _canvas.LostFocus += (_, _) => { _hasFocus = false; ImeNotifyFocusLeave(); StopBlink(); InvalidateCanvas(); };
 
         // Drag-and-drop of image files onto the editor (inserts each as a block image).
@@ -70,18 +81,40 @@ public partial class RichEditor
         DragOver += OnEditorDragOver;
         Drop += OnEditorDrop;
 
-        _blink = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
+        // Seeded with the fallback so the interval is never TimeSpan.Zero: RefreshSystemInputTimings
+        // leaves it untouched when the user has blinking off (nothing starts the timer then), and a
+        // zero-interval timer that some later path did start would tick the UI thread without pause.
+        _blink = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(SystemInputSettings.FallbackBlinkMs) };
         _blink.Tick += (_, _) => { _caretOn = !_caretOn; InvalidateCanvas(); };
+        RefreshSystemInputTimings(); // sets the blink interval; there is no meaningful built-in default
 
         SetupIme();
         SetupContextMenu();
+    }
+
+    // Re-reads the caret blink rate and double-click interval from the OS. Called at setup and on every
+    // focus gain: this control has no WM_SETTINGCHANGE hook, and focus gain is exactly when the user
+    // comes back — including from the Settings page they just changed.
+    private void RefreshSystemInputTimings()
+    {
+        _blinkMs = SystemInputSettings.CaretBlinkMs();
+        _multiClickMs = SystemInputSettings.DoubleClickMs();
+        if (_blink != null && _blinkMs is { } ms) _blink.Interval = TimeSpan.FromMilliseconds(ms);
     }
 
     // Puts the caret in its "on" phase and restarts blinking. A READ-ONLY editor never runs the timer:
     // when ShowCaretWhenReadOnly is set the viewer's caret is deliberately static (a blinking caret reads
     // as "type here"), and when it isn't set DrawCaret suppresses the caret anyway, so a timer ticking
     // twice a second would only invalidate the canvas for nothing.
-    private void RestartBlink() { _caretOn = true; _blink?.Stop(); if (_hasFocus && !IsReadOnly) _blink?.Start(); }
+    //
+    // _blinkMs == null means the USER turned blinking off. That leaves the caret parked in its "on"
+    // phase — steady, not hidden — which is the same shape as the read-only caret above.
+    private void RestartBlink()
+    {
+        _caretOn = true;
+        _blink?.Stop();
+        if (_hasFocus && !IsReadOnly && _blinkMs != null) _blink?.Start();
+    }
     private void StopBlink() { _blink?.Stop(); _caretOn = false; }
     private void InvalidateCanvas() => _canvas.Invalidate();
 
@@ -265,7 +298,7 @@ public partial class RichEditor
             _pressLink = (roUri, new Point(ptp.X, ptp.Y));
 
         var now = DateTime.UtcNow;
-        bool repeat = (now - _lastPressTime).TotalMilliseconds < MultiClickMs
+        bool repeat = (now - _lastPressTime).TotalMilliseconds < _multiClickMs
             && Math.Abs(ptp.X - _lastPressPos.X) + Math.Abs(ptp.Y - _lastPressPos.Y) < MultiClickSlop;
         _clickCount = repeat ? _clickCount + 1 : 1;
         _lastPressTime = now;
