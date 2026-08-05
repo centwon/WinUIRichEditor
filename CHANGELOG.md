@@ -14,6 +14,13 @@ and follows [Semantic Versioning](https://semver.org/).
 
 - 둘 다 **툴바가 스트립/플라이아웃을 만들 때** 읽으므로 툴바 생성 **전에** 할당해야 한다. 이미 만들어진
   툴바는 무언가 재빌드할 때까지(`Target`/`ToolbarLevel` 할당) 이전 값을 유지한다.
+- ⚠️ 할당 위치는 **`App.OnLaunched`**, `Main`의 `Application.Start` 이전이 아니다. 이 클래스가 static
+  XAML 브러시를 들고 있어서 **아무 멤버나 건드리면 정적 생성자가 돌고**, 그게 WinUI 런타임을 요구한다
+  (없으면 `COMException`). 헤드리스 테스트가 불가능한 이유이기도 하다.
+- 세터가 **null·빈 배열을 거부**한다(`ArgumentNullException`/`ArgumentException`). `FontSizes`는 양의
+  유한수만 받는다 — 검증을 사용 시점이 아니라 할당 시점에 두어, 잘못된 값이 나중에 `Build()` 안에서
+  터지면서 원인 지점을 못 가리키는 일을 막는다. `Palette` 항목의 **형식**은 검증하지 않는다: 파싱
+  실패는 이미 검정으로 대체되고 스와치는 장식이라, 오타는 크래시가 아니라 이상한 색으로 드러난다.
 - `Palette`는 종전 `internal`이었고 에디터의 셀 배경 컨텍스트 메뉴가 같은 배열을 공유한다 — 교체하면
   모든 색상 피커에 함께 반영된다.
 
