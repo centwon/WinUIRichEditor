@@ -1229,4 +1229,47 @@ public class EnhancementTests
         Assert.Contains("real", text, System.StringComparison.Ordinal);
         Assert.DoesNotContain("fallback", text, System.StringComparison.Ordinal);
     }
+
+    // ---- damaged RTF is reportable ----------------------------------------
+    //
+    // Parse() collapses "damaged" and "empty" into the same empty document, so a host loading a FILE
+    // could not tell them apart: a damaged .rtf blanked the open document and the next save wrote that
+    // blank over the original. TryParse separates the two. (LoadRtf's half of this is control-level and
+    // out of reach here — see DocumentFuzzTests on why the model layer is what tests can hold.)
+
+    // A control word's parameter is int.Parse'd; a digit run too long for int overflows mid-parse.
+    [Fact]
+    public void RtfTryParse_ReportsDamagedInput()
+    {
+        Assert.False(RtfDocumentFormatter.TryParse(
+            @"{\rtf1\ansi\fs99999999999999999999 x\par}", out var doc, out string? error));
+        Assert.NotNull(error);
+        Assert.Empty(doc.Blocks); // failure yields an empty document, never a half-read one
+    }
+
+    // The old contract: Parse() still swallows. Paste relies on it (it falls through to HTML/plain on an
+    // empty result), so changing it would reroute a working path.
+    [Fact]
+    public void RtfParse_StillReturnsEmptyOnDamagedInput()
+    {
+        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
+        Assert.Empty(doc.Blocks);
+    }
+
+    [Fact]
+    public void RtfTryParse_SucceedsOnValidInput()
+    {
+        Assert.True(RtfDocumentFormatter.TryParse(@"{\rtf1\ansi hello\par}", out var doc, out string? error));
+        Assert.Null(error);
+        Assert.Contains("hello", PlainText(doc), System.StringComparison.Ordinal);
+    }
+
+    // An RTF that parses cleanly but carries nothing is a SUCCESS — conflating it with damage is the
+    // very confusion this method exists to remove.
+    [Fact]
+    public void RtfTryParse_TreatsAnEmptyDocumentAsSuccess()
+    {
+        Assert.True(RtfDocumentFormatter.TryParse(@"{\rtf1\ansi}", out _, out string? error));
+        Assert.Null(error);
+    }
 }

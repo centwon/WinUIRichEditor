@@ -267,7 +267,16 @@ public partial class RichEditorToolbar
             {
                 string latin1 = System.Text.Encoding.Latin1.GetString(bytes);
                 string utf8 = System.Text.Encoding.UTF8.GetString(bytes);
-                if (RtfDocumentFormatter.LooksLikeRtf(latin1)) Target.LoadRtf(latin1);
+                // RTF is parsed here rather than through LoadRtf so a damaged file reports on the same
+                // channel as every other import fault: LoadRtf deliberately keeps the open document and
+                // stays silent, which on a file-open reads as "nothing happened".
+                if (RtfDocumentFormatter.LooksLikeRtf(latin1))
+                {
+                    if (RtfDocumentFormatter.TryParse(latin1, out var rtfDoc, out var rtfError))
+                        Target.LoadDocument(rtfDoc);
+                    else
+                        System.Diagnostics.Debug.WriteLine($"Import failed: {rtfError}");
+                }
                 else if (utf8.TrimStart().StartsWith("<", StringComparison.Ordinal)) Target.LoadHtml(utf8);
                 else await Target.LoadJsonAsync(utf8);
             }

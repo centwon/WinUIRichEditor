@@ -1,1 +1,1 @@
-﻿
+﻿static WinUIRichEditor.Formatters.RtfDocumentFormatter.TryParse(string! rtf, out WinUIRichEditor.Documents.FlowDocument! document, out string? error) -> bool
