@@ -1,4 +1,4 @@
-﻿static WinUIRichEditor.Formatters.RtfDocumentFormatter.TryParse(string! rtf, out WinUIRichEditor.Documents.FlowDocument! document, out string? error) -> bool
+static WinUIRichEditor.Formatters.RtfDocumentFormatter.TryParse(string! rtf, out WinUIRichEditor.Documents.FlowDocument! document, out string? error) -> bool
 WinUIRichEditor.RichEditorDiagnostics
 static WinUIRichEditor.RichEditorDiagnostics.Fault -> System.EventHandler<WinUIRichEditor.RichEditorFaultEventArgs!>?
 static WinUIRichEditor.RichEditorDiagnostics.Reset() -> void
@@ -8,3 +8,7 @@ WinUIRichEditor.RichEditorFaultEventArgs.File.get -> string!
 WinUIRichEditor.RichEditorFaultEventArgs.Line.get -> int
 WinUIRichEditor.RichEditorFaultEventArgs.Member.get -> string!
 override WinUIRichEditor.RichEditorFaultEventArgs.ToString() -> string!
+static WinUIRichEditor.Controls.RichEditorToolbar.FontSizes.get -> double[]!
+static WinUIRichEditor.Controls.RichEditorToolbar.FontSizes.set -> void
+static WinUIRichEditor.Controls.RichEditorToolbar.Palette.get -> string![]!
+static WinUIRichEditor.Controls.RichEditorToolbar.Palette.set -> void

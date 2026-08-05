@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Threading.Tasks;
@@ -96,7 +96,11 @@ public partial class RichEditorToolbar : UserControl
     private bool _builtReadOnly; // read-only state captured at the last Build (to rebuild the view toolbar on toggle)
     private string? _fontReflected; // family last reflected into the font combo — skips the O(installed fonts) item scan per keystroke
 
-    private static readonly double[] FontSizes = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72 };
+    /// <summary>The available font sizes in the toolbar combo box. Hosts can replace this array to customize the options.
+    /// <para>Read while the strip is being built, so assign it BEFORE creating the toolbar (app startup is
+    /// the natural place). An existing toolbar keeps the sizes it was built with until something rebuilds
+    /// it — assigning <see cref="Target"/> or <see cref="ToolbarLevel"/> does.</para></summary>
+    public static double[] FontSizes { get; set; } = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72 };
     private const double BodySizePt = 10; // the model's default run size, shown when a run has none
 
     // A point-size label ("10 pt", "10.5 pt") — the unit the model, API and serialization all speak.
@@ -107,7 +111,10 @@ public partial class RichEditorToolbar : UserControl
     // The 40-swatch palette (greys + hues in a few shades) shared by the text-color/highlight pickers,
     // matching the original AvaloniaRichEditor toolbar. Internal: the editor's cell-background
     // context-menu palette reuses it so all color pickers offer the same swatches.
-    internal static readonly string[] Palette =
+    /// <summary>The color palette (hex strings) shared by the toolbar's text/highlight pickers and the editor's cell background context menu. Hosts can replace this array.
+    /// <para>Read when a color flyout is built, so assign it before the toolbar is created. Entries are
+    /// parsed as hex; anything unparseable renders as the fallback swatch rather than throwing.</para></summary>
+    public static string[] Palette { get; set; } =
     {
         "#000000","#444444","#666666","#999999","#BBBBBB","#DDDDDD","#EEEEEE","#FFFFFF",
         "#FF0000","#E67E22","#F1C40F","#2ECC71","#1ABC9C","#3498DB","#9B59B6","#E91E63",
