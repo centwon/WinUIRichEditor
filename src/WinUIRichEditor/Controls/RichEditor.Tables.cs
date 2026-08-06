@@ -243,6 +243,19 @@ public partial class RichEditor
                     }
                     else ordCounters.Clear();
 
+                    // The paragraph's own fill and quote bar, which the top-level loop has always drawn
+                    // and this one never did — the same omission the list markers had (see the comment
+                    // below): the model kept the value, every format now round-trips it, and a cell
+                    // rendered it as nothing. Both go down BEFORE the run backgrounds and the text, or
+                    // they paint over them.
+                    double ph = Math.Max(EmptyLineHeight(para), layout.LayoutBounds.Height);
+                    if (para.Background is { } paraBg)
+                        ds.FillRectangle(new Rect(px, blkY, pw, ph), paraBg);
+                    // Clamped to the cell's own left edge: the top-level bar sits 10px into the margin,
+                    // and a cell has no margin to sit in — unclamped it would straddle the cell border.
+                    if (para.IsQuote)
+                        ds.FillRectangle(new Rect(Math.Max(ox, px - 10), blkY, 3, ph), QuoteBarColor);
+
                     DrawRunBackgrounds(ds, para, layout, px, blkY);
                     DrawFindHighlights(ds, para, layout, px, blkY);
                     DrawSelectionHighlight(ds, para, layout, px, blkY);
@@ -258,7 +271,7 @@ public partial class RichEditor
                     DrawCompositionUnderline(ds, para, layout, px, blkY);
                     DrawCaret(ds, para, layout, px, blkY);
                     DrawDropPreview(ds, para, layout, px, blkY);
-                    by += Math.Max(EmptyLineHeight(para), layout.LayoutBounds.Height);
+                    by += ph;
                     break;
                 }
                 case ImageBlock cimg:
