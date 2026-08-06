@@ -206,31 +206,19 @@ public class ControlLevelTests
     public void FocusEditor_SucceedsOnceTheControlIsLoaded()
     {
         RichEditor? editor = null;
-        Window? window = null;
-        var loaded = new ManualResetEventSlim();
 
-        try
+        UiThread.Run(() =>
         {
-            UiThread.Run(() =>
-            {
-                editor = new RichEditor { Document = Doc("hello") };
-                Assert.False(editor.FocusEditor()); // not realized yet
-                editor.Loaded += (_, _) => loaded.Set();
-                window = new Window { Content = editor };
-                window.Activate();
-            });
+            editor = new RichEditor { Document = Doc("hello") };
+            Assert.False(editor.FocusEditor()); // not realized yet
+        });
 
-            Assert.True(loaded.Wait(TimeSpan.FromSeconds(30)), "the hosted editor never raised Loaded");
+        UiThread.Host(editor!);
 
-            UiThread.Run(() =>
-            {
-                Assert.True(editor!.ActualWidth > 0, "the hosted editor never got a size");
-                Assert.True(editor.FocusEditor());
-            });
-        }
-        finally
+        UiThread.Run(() =>
         {
-            if (window != null) UiThread.Run(() => window.Close());
-        }
+            Assert.True(editor!.ActualWidth > 0, "the hosted editor never got a size");
+            Assert.True(editor.FocusEditor());
+        });
     }
 }

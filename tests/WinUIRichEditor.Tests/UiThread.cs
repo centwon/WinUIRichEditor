@@ -101,4 +101,55 @@ internal static class UiThread
         Run(() => { result = body(); });
         return result;
     }
+
+    // ---- the shared host window -------------------------------------------------------------------
+
+    private static Microsoft.UI.Xaml.Window? _host;
+
+    /// <summary>Puts <paramref name="content"/> into the shared host window and waits for it to load, so
+    /// anything needing a real layout pass (caret geometry, hit-testing, anything that builds a
+    /// CanvasTextLayout) can run.
+    /// <para><b>The window is never closed.</b> Closing the last window ends the Application's message
+    /// loop and tears the whole runtime down — the next test then gets a COMException from a plain
+    /// <c>ContentControl</c> constructor, and every test after that is told the dispatcher has shut
+    /// down. One window is created for the run and its Content is swapped instead. (The thread is a
+    /// background thread, so the process still exits cleanly.)</para>
+    /// <para>Measuring or arranging a control OUTSIDE a visual tree is not an alternative: it recurses
+    /// until the process dies of a stack overflow.</para></summary>
+    public static void Host(Microsoft.UI.Xaml.FrameworkElement content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        var loaded = new ManualResetEventSlim();
+
+        Run(() =>
+        {
+            content.Loaded += OnLoaded;
+            if (_host == null)
+            {
+                _host = new Microsoft.UI.Xaml.Window { Content = content };
+                _host.Activate();
+            }
+            else
+            {
+                _host.Content = content;
+            }
+            void OnLoaded(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
+            {
+                content.Loaded -= OnLoaded;
+                loaded.Set();
+            }
+        });
+
+        // Loaded is the signal, not the proof. Swapping the Content of a window that is already up does
+        // not always raise it — the element can be in the tree by the time the handler is attached — and
+        // waiting alone then burns the whole budget on an element that is, in fact, loaded. Poll IsLoaded
+        // as the second opinion.
+        var deadline = DateTime.UtcNow + Budget;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (loaded.Wait(TimeSpan.FromMilliseconds(50))) return;
+            if (Run(() => content.IsLoaded)) return;
+        }
+        throw new TimeoutException("The hosted content never loaded.");
+    }
 }
