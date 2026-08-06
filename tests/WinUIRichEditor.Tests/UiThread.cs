@@ -46,6 +46,14 @@ internal static class UiThread
                 Microsoft.UI.Xaml.Application.Start(_ =>
                 {
                     queue = DispatcherQueue.GetForCurrentThread();
+                    // Install the same SynchronizationContext a real WinUI app runs under. Without it an
+                    // `await` inside a control method captures nothing, so the continuation resumes on a
+                    // THREAD-POOL thread — and the first dependency-property read after it throws a bare
+                    // COMException from the property getter. It is intermittent, because an await that
+                    // completes synchronously (a cached clipboard read, say) never leaves the thread:
+                    // PasteAsync tests passed repeatedly and then failed once the clipboard was contended.
+                    SynchronizationContext.SetSynchronizationContext(
+                        new DispatcherQueueSynchronizationContext(queue));
                     ready.Set();
                 });
             }
@@ -102,9 +110,35 @@ internal static class UiThread
         return result;
     }
 
+    /// <summary>Runs an ASYNC body on the UI thread and waits for it from the calling thread.
+    /// <para>Use this for anything returning a Task — <c>PasteAsync</c>, <c>CopyAsync</c>, the image
+    /// loaders. Do NOT block on those inside <see cref="Run(Action)"/>: their continuations want the UI
+    /// thread, which that call is holding, so the await either deadlocks or resumes somewhere unintended
+    /// and the operation quietly does nothing. (Measured: a paste blocked that way inserted an empty
+    /// block and reported success — it looked exactly like a product defect.) The wait happens here, on
+    /// the test thread, which is free.</para></summary>
+    public static void RunAsync(Func<System.Threading.Tasks.Task> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        var tcs = new System.Threading.Tasks.TaskCompletionSource(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+
+        if (!Queue.Value.TryEnqueue(async () =>
+        {
+            try { await body(); tcs.TrySetResult(); }
+            catch (Exception ex) { tcs.TrySetException(ex); }
+        }))
+            throw new InvalidOperationException("The UI thread refused work (its dispatcher has shut down).");
+
+        if (!tcs.Task.Wait(Budget))
+            throw new TimeoutException($"An async UI-thread body did not finish within {Budget.TotalSeconds:0}s.");
+        tcs.Task.GetAwaiter().GetResult(); // rethrow with the original stack
+    }
+
     // ---- the shared host window -------------------------------------------------------------------
 
     private static Microsoft.UI.Xaml.Window? _host;
+    private static Microsoft.UI.Xaml.Controls.Grid? _hostRoot;
 
     /// <summary>Puts <paramref name="content"/> into the shared host window and waits for it to load, so
     /// anything needing a real layout pass (caret geometry, hit-testing, anything that builds a
@@ -124,15 +158,19 @@ internal static class UiThread
         Run(() =>
         {
             content.Loaded += OnLoaded;
-            if (_host == null)
+            if (_hostRoot == null)
             {
-                _host = new Microsoft.UI.Xaml.Window { Content = content };
+                _hostRoot = new Microsoft.UI.Xaml.Controls.Grid();
+                _host = new Microsoft.UI.Xaml.Window { Content = _hostRoot };
                 _host.Activate();
             }
-            else
-            {
-                _host.Content = content;
-            }
+            // Swap the CHILD of a stable root, never the window's Content. Replacing Content on a live
+            // window races: a swap occasionally never loads, and which test pays for it moves with the
+            // ordering — adding the clipboard suite turned an occasional failure into all seventeen caret
+            // tests failing at once, because they share one lazily hosted editor.
+            _hostRoot.Children.Clear();
+            _hostRoot.Children.Add(content);
+
             void OnLoaded(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
             {
                 content.Loaded -= OnLoaded;

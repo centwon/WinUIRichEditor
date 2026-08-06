@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -20,6 +20,7 @@ namespace WinUIRichEditor.Tests;
 /// fuzz drives its private table commands. The roadmap's plan to extract caret geometry as pure
 /// functions is what eventually replaces this; until then the choice is reflection or no coverage.</para>
 /// </summary>
+[Collection(UiTests.Collection)]
 public class ControlCaretTests
 {
     private const BindingFlags NP = BindingFlags.NonPublic | BindingFlags.Instance;

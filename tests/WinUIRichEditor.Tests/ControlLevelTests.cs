@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -18,6 +18,7 @@ namespace WinUIRichEditor.Tests;
 /// the belief that WinUI's dependency-property static constructors made control tests impossible.</para>
 /// <para>They do require the WinUI runtime; they do not make it unreachable. See <see cref="UiThread"/>.</para>
 /// </summary>
+[Collection(UiTests.Collection)]
 public class ControlLevelTests
 {
     private static Paragraph P(string text)
