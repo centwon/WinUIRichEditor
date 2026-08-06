@@ -709,6 +709,36 @@ public class FormatterRoundTripTests
         Assert.Equal(Red, b2[1].Background);
     }
 
+    // A cell paragraph's own alignment / indent / line spacing, through RTF. The cell writer opened every
+    // cell with `\pard\intbl\itapN\ql` — a HARDCODED left — and never wrote the paragraph's properties, so
+    // a centred or indented paragraph inside a table exported as neither, while the identical paragraph at
+    // the top level exported correctly. Reported from a Word and HWP paste ("문단 정렬이 들어오지 않음");
+    // the attribute matrix had recorded the loss and mis-filed it as an RTF limitation, because comparing
+    // RTF against RTF showed both directions equally lossy and hid that the top level was fine.
+    [Fact]
+    public void Rtf_CellParagraph_KeepsItsOwnAlignmentAndIndent()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(1, 2);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { TextAlignment = TextAlignment.Center, Inlines = { new Run { Text = "가운데" } } });
+        tb.Cells[0][1].Blocks.Clear();
+        tb.Cells[0][1].Blocks.Add(new Paragraph { TextAlignment = TextAlignment.Right, Indent = 40, LineSpacing = 2.0, Inlines = { new Run { Text = "오른쪽" } } });
+        doc.Blocks.Add(tb);
+
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var t = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock));
+        var a = t.Cells[0][0].Blocks.OfType<Paragraph>().First();
+        var b2 = t.Cells[0][1].Blocks.OfType<Paragraph>().First();
+
+        Assert.Equal(TextAlignment.Center, a.TextAlignment);
+        Assert.Equal("가운데", Plain(a));          // and no stray delimiter space became content
+        Assert.Equal(TextAlignment.Right, b2.TextAlignment);
+        Assert.Equal(40, b2.Indent);
+        Assert.Equal(2.0, b2.LineSpacing);
+        Assert.Equal("오른쪽", Plain(b2));
+    }
+
     // A list marker must not become part of the text. RTF has no list element, so the marker went out as
     // BARE TEXT + \tab — and came back as content: a bulleted item reopened as the plain text "•\t항목",
     // the list gone and the glyph now part of what the user typed. Saving as .rtf and reopening grew a

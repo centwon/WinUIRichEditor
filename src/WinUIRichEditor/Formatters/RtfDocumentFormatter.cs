@@ -1218,6 +1218,18 @@ internal sealed class RtfWriter
     private void WriteParagraphProps(Paragraph p)
     {
         _body.Append(@"\pard");
+        WriteParagraphPropsBody(p); // ends with the delimiter space for the last control word
+    }
+
+    // The properties themselves, without the \pard. Split out because a CELL paragraph opens with
+    // `\pard\intbl\itapN` and used to follow it with a hardcoded `\ql` — so a centred, indented or
+    // custom-spaced paragraph inside a table cell exported as none of that, while the same paragraph at
+    // the top level exported correctly. Not a limitation of RTF: the top-level path has always written
+    // these, and the cell path simply never called it. (Reported from a Word/HWP paste: "문단 정렬이
+    // 들어오지 않음". The attribute matrix had recorded the loss and mis-filed it as a format limit,
+    // because it only compared RTF against RTF and both cells looked equally lossy.)
+    private void WriteParagraphPropsBody(Paragraph p)
+    {
         // ALWAYS emit the alignment, including \ql for left. In the spec \pard resets alignment to left,
         // but HWP treats \pard as "back to the current defaults" and keeps a previously seen \qr — so a
         // single right-aligned paragraph turned every following one right-aligned on paste. Being explicit
@@ -1391,13 +1403,13 @@ internal sealed class RtfWriter
                 if (col != ac + cs - 1) continue;
 
                 // \itapN = nesting depth; modern readers use it to tell table paragraphs from body text.
-                _body.Append(@"\pard\intbl\itap").Append(depth).Append(@"\ql ");
+                _body.Append(@"\pard\intbl\itap").Append(depth);
                 // Only the merge anchor carries content; a vertically covered slot emits an empty cell.
                 if (ar == row && WriteCellContent(tb.Cells[row][ac], depth))
                 {
                     // A nested table leaves \itap at ITS depth, so re-declare this cell's own before
                     // closing — otherwise the reader books this cell into the deeper table.
-                    _body.Append(@"\pard\intbl\itap").Append(depth).Append(@"\ql ");
+                    _body.Append(@"\pard\intbl\itap").Append(depth);
                 }
                 _body.Append(depth == 1 ? @"\cell" : @"\nestcell");
             }
@@ -1424,9 +1436,14 @@ internal sealed class RtfWriter
         // A nested table leaves \itap at ITS depth and consumes the paragraph properties. Anything this
         // cell writes afterwards has to re-open the cell's own level first, or Word books that text into
         // the deeper table and drops it (a paragraph after a nested table vanished entirely).
-        void ReopenCell()
+        // `resume` is the paragraph whose remaining inlines continue after the nested table: \pard threw
+        // its properties away, so they have to be restated or the tail of the paragraph loses the
+        // alignment/indent/spacing that its head had. Null when a whole block (not a paragraph) follows,
+        // because the next paragraph states its own.
+        void ReopenCell(Paragraph? resume = null)
         {
-            _body.Append(@"\pard\intbl\itap").Append(depth).Append(@"\ql ");
+            _body.Append(@"\pard\intbl\itap").Append(depth);
+            if (resume != null) WriteParagraphPropsBody(resume); // ends with its own delimiter space
             // A fresh paragraph is now open at this cell's level, so the next block writes straight into
             // it rather than prefixing another \par (which would leave a blank line).
             first = true;
@@ -1445,6 +1462,12 @@ internal sealed class RtfWriter
             {
                 if (!first) _body.Append(@"\par ");
                 first = false;
+                // This paragraph's OWN alignment / indent / line spacing. The cell prelude opens with
+                // `\pard\intbl\itapN` and used to hardcode `\ql`, so every cell paragraph exported as
+                // left-aligned, un-indented and single-spaced no matter what it was — while the identical
+                // paragraph at the top level exported correctly. These are paragraph properties in scope
+                // until the next \par or \pard, so stating them here is all that was missing.
+                WriteParagraphPropsBody(cpara); // ends with its own delimiter space
                 if (cpara.ListType != ListKind.None) WriteListMarker(cpara, 1);
                 bool heading = cpara.HeadingLevel is >= 1 and <= 6;
                 double headingSize = heading ? HeadingSize(cpara.HeadingLevel) : 0;
@@ -1455,7 +1478,7 @@ internal sealed class RtfWriter
                         CloseBeforeNested();
                         WriteTable(it.Table, depth + 1);
                         wroteNested = true;
-                        ReopenCell(); // the rest of this paragraph belongs to THIS cell, not the inner table
+                        ReopenCell(cpara); // the rest of this paragraph belongs to THIS cell, not the inner table
                     }
                     else if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r, heading, headingSize);
                     else if (inline is InlineImage cii && cii.RawBytes != null)
