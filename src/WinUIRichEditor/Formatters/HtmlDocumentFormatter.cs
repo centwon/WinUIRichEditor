@@ -107,8 +107,15 @@ public static class HtmlDocumentFormatter
 
         if (flowDoc.Blocks.Count == 0)
         {
+            // The fallback is for input that was never markup — a caller handing us plain text should
+            // get that text, not an empty document. It must NOT fire for input that WAS markup and
+            // simply had no content: our own export of an empty document is `<p style="…"></p>`, whose
+            // walk yields no block, and dumping the source then put the editor's own tags on screen as
+            // literal body text (save an empty document as HTML, reopen it, and there they were).
+            // An element node anywhere is the discriminator: markup in, empty paragraph out.
+            bool wasMarkup = root.Descendants().Any(n => n.NodeType == HtmlNodeType.Element);
             var p = new Paragraph();
-            p.Inlines.Add(new Run { Text = HtmlEntity.DeEntitize(html) });
+            if (!wasMarkup) p.Inlines.Add(new Run { Text = HtmlEntity.DeEntitize(html) });
             flowDoc.Blocks.Add(p);
         }
         return flowDoc;
@@ -128,7 +135,7 @@ public static class HtmlDocumentFormatter
         async System.Threading.Tasks.Task<(string, byte[]?)> Fetch(string url)
         {
             try { return (url, await Http.GetByteArrayAsync(url, cts.Token).ConfigureAwait(false)); }
-            catch { return (url, null); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); return (url, null); }
         }
         foreach (var (url, bytes) in await System.Threading.Tasks.Task.WhenAll(urls.Select(Fetch)).ConfigureAwait(false))
             result[url] = bytes;
@@ -140,10 +147,34 @@ public static class HtmlDocumentFormatter
     private static void WalkBlocks(HtmlNode node, FlowDocument flow, string? linkUri = null)
     {
         Paragraph? current = null;
+
+        // A whitespace-only #text between inline siblings is a WORD SEPARATOR, not layout padding:
+        // `<span>a</span> <span>b</span>` reads "a b" everywhere, and dropping it merged them ("ab").
+        // MergeCells joins a covered cell's text with exactly that space, which is how a merged cell
+        // lost a word boundary on the second HTML round trip.
+        //
+        // It is DEFERRED rather than appended on sight, and that distinction is the whole design: the
+        // same whitespace before `</p>` is padding, which a browser drops — appending eagerly grew a
+        // trailing space on every cycle, the "separator becomes content and accumulates" failure this
+        // codebase has now hit four times. A separator is only real once more inline content follows it.
+        bool pendingSpace = false;
         void Flush()
         {
             if (current != null && current.Inlines.Count > 0) flow.Blocks.Add(current);
             current = null;
+            pendingSpace = false; // never carries across a block boundary
+        }
+
+        // Call immediately before adding inline content, once that content is certain.
+        void TakeSpace()
+        {
+            if (!pendingSpace) return;
+            pendingSpace = false;
+            if (current is { } p && p.Inlines.Count > 0 && p.Inlines[^1] is Run prev
+                && !string.IsNullOrEmpty(prev.Text)
+                && !prev.Text.EndsWith(" ", StringComparison.Ordinal)
+                && !prev.Text.EndsWith("\n", StringComparison.Ordinal))
+                p.Inlines.Add(new Run { Text = " " });
         }
 
         foreach (var child in node.ChildNodes)
@@ -174,21 +205,17 @@ public static class HtmlDocumentFormatter
                     // paragraphs and swallows it — and "a paragraph holding nothing but the table" is the
                     // ordinary shape of an inline table, so this is the common case.
                     bool opensParagraph = child.GetAttributeValue("data-are-opens", "") == "1";
-                    if (current != null) current.Inlines.Add(it);
-                    else if (!opensParagraph && flow.Blocks.Count > 0 && flow.Blocks[^1] is Paragraph lastPara)
+                    if (current == null && !opensParagraph && flow.Blocks.Count > 0 && flow.Blocks[^1] is Paragraph lastPara)
                     {
                         // Reopen that paragraph as the pending one (Flush re-adds it): HTML parsers close
                         // a <p> when a <table> starts, so the text that followed the table arrives as a
                         // later sibling and has to land back on the same line.
-                        lastPara.Inlines.Add(it);
                         flow.Blocks.RemoveAt(flow.Blocks.Count - 1);
                         current = lastPara;
                     }
-                    else
-                    {
-                        current = new Paragraph();
-                        current.Inlines.Add(it);
-                    }
+                    current ??= new Paragraph();
+                    TakeSpace();
+                    current.Inlines.Add(it);
                     continue;
                 }
                 Flush();
@@ -204,9 +231,16 @@ public static class HtmlDocumentFormatter
                         // Small icon/logo -> keep on a text line rather than its own block.
                         var icon = new InlineImage { Width = w, Height = h, AltText = alt };
                         icon.SetImageData(bytes, ImageMime.Detect(bytes));
+                        TakeSpace();
+                        // Same rule as an inline table: `data-are-opens` says the image began its own
+                        // paragraph. A <p> holding nothing but an image is walked as a block (an <img> is
+                        // block-or-media), so `current` is null by the time we get here, and rejoining the
+                        // PRECEDING paragraph swallowed the image's line — on every second round trip a
+                        // picture on its own line jumped up into the paragraph above it.
+                        bool imgOpens = child.GetAttributeValue("data-are-opens", "") == "1";
                         if (current != null)
                             current.Inlines.Add(icon);
-                        else if (flow.Blocks.Count > 0 && flow.Blocks[flow.Blocks.Count - 1] is Paragraph lastP)
+                        else if (!imgOpens && flow.Blocks.Count > 0 && flow.Blocks[flow.Blocks.Count - 1] is Paragraph lastP)
                             lastP.Inlines.Add(icon);
                         else
                         {
@@ -235,14 +269,19 @@ public static class HtmlDocumentFormatter
             }
             else if (name == "br")
             {
+                // A bare space before a <br/> is padding: it renders at the end of a line, invisibly.
+                // A space this library MEANT to keep there is written as &nbsp; (see EmitInline), so it
+                // arrives as content and never reaches this branch.
+                pendingSpace = false;
                 current ??= new Paragraph();
                 current.Inlines.Add(new Run { Text = "\n" });
             }
             else if (name == "#text")
             {
                 string t = HtmlEntity.DeEntitize(child.InnerText);
-                if (!string.IsNullOrWhiteSpace(t))
+                if (!IsCollapsibleWhitespace(t))
                 {
+                    TakeSpace();
                     current ??= new Paragraph();
                     current.Inlines.Add(new Run
                     {
@@ -250,6 +289,12 @@ public static class HtmlDocumentFormatter
                         NavigateUri = linkUri,
                         Foreground = hasLink ? Colors.Blue : (Color?)null
                     });
+                }
+                else if (current is { Inlines.Count: > 0 })
+                {
+                    // Only between inline siblings: after a Flush() there is no pending paragraph, so
+                    // the newlines a pretty-printer puts BETWEEN blocks stay ignored as before.
+                    pendingSpace = true;
                 }
             }
             else if (name == "#comment" || name == "script" || name == "style" || name == "head" || name == "meta" || name == "link")
@@ -277,15 +322,26 @@ public static class HtmlDocumentFormatter
                 double size = HeadingSize(name, out var headingWeight);
                 ParseInlines(child, p, headingWeight, FontStyle.Normal, null, childLink, size, hasLink,
                     pre: name == "pre"); // <pre> keeps its whitespace/newlines verbatim
-                if (p.Inlines.Count > 0) flow.Blocks.Add(p);
+                // Empty elements are dropped — foreign HTML uses them for spacing — unless this export
+                // marked one as a blank line the author actually typed (see data-are-empty).
+                if (p.Inlines.Count > 0 || child.GetAttributeValue("data-are-empty", "") == "1")
+                    flow.Blocks.Add(p);
             }
             else
             {
                 current ??= new Paragraph();
+                // Unlike the branches above, this one may contribute NOTHING (an empty or ignorable
+                // element), and a separator with no content after it is the trailing space again — so
+                // take it back if nothing followed.
+                int before = current.Inlines.Count;
+                TakeSpace();
+                int afterSpace = current.Inlines.Count;
                 // The node itself (not just its children) goes through the inline path, so a bare
                 // formatted element with no block wrapper keeps its own tag/style formatting.
                 // Parent link context is passed; the node's own <a>/style is read inside.
                 ParseInlineNode(child, current, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
+                if (afterSpace > before && current.Inlines.Count == afterSpace)
+                    current.Inlines.RemoveAt(afterSpace - 1);
             }
         }
 
@@ -296,27 +352,40 @@ public static class HtmlDocumentFormatter
     {
         var marker = ListMarkerFromCss(ReadStyleValue(listNode, "list-style-type"));
 
-        // A sublist that is a DIRECT child of this list, with no <li> wrapping it. Our own export makes
-        // exactly that shape for an item whose ListLevel has no shallower item above it (indent the only
-        // list item in a document and you get <ol><ol><li>…), and only-<li> iteration never reached it:
-        // the items vanished, and when they were the whole document the parse produced zero blocks and
-        // the raw-text fallback dumped the entire file as literal markup.
-        foreach (var sub in listNode.ChildNodes)
+        // ONE pass, in document order. Two things live side by side here and the order between them is
+        // the content's order, not a category order:
+        //   <li>            — an item at this level.
+        //   <ul>/<ol>       — a sublist that is a DIRECT child, with no <li> wrapping it. Our own export
+        //                     makes exactly that shape whenever the deeper item follows a shallower one
+        //                     (A / B-indented / C emits <ul><li>A</li><ul><li>B</li></ul><li>C</li></ul>),
+        //                     and also for an item with no shallower item above it at all (indent the
+        //                     only list item in a document and you get <ol><ol><li>…).
+        // Handling these in two separate passes — sublists first, then items — is what a previous fix for
+        // the second shape did, and it silently REORDERED the first: every nested item was emitted ahead
+        // of the item it belongs under, so an ordinary sub-bullet moved above its parent on every HTML
+        // round trip. Walk the children once and the order takes care of itself.
+        foreach (var child in listNode.ChildNodes)
         {
-            if (!sub.Name.Equals("ul", StringComparison.OrdinalIgnoreCase)
-                && !sub.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)) continue;
-            ParseList(sub, flow, sub.Name.Equals("ol", StringComparison.OrdinalIgnoreCase) ? ListKind.Ordered : ListKind.Bullet,
-                      level + 1, linkUri);
-        }
+            bool isSub = child.Name.Equals("ul", StringComparison.OrdinalIgnoreCase)
+                      || child.Name.Equals("ol", StringComparison.OrdinalIgnoreCase);
+            if (isSub)
+            {
+                ParseList(child, flow, child.Name.Equals("ol", StringComparison.OrdinalIgnoreCase) ? ListKind.Ordered : ListKind.Bullet,
+                          level + 1, linkUri);
+                continue;
+            }
+            if (!child.Name.Equals("li", StringComparison.OrdinalIgnoreCase)) continue;
 
-        foreach (var li in listNode.ChildNodes.Where(n => n.Name.Equals("li", StringComparison.OrdinalIgnoreCase)))
-        {
             var p = new Paragraph { ListType = kind, ListLevel = level, ListMarker = marker };
-            ApplyLineHeightStyle(li, p);
-            ParseInlines(li, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
+            // An <li> that was also a heading (see the export's data-are-h): HTML has no tag for both.
+            int liHeading = child.GetAttributeValue("data-are-h", 0);
+            if (liHeading >= 1 && liHeading <= 6) p.HeadingLevel = liHeading;
+            ApplyLineHeightStyle(child, p);
+            ParseInlines(child, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
             if (p.Inlines.Count > 0) flow.Blocks.Add(p);
 
-            foreach (var nested in li.ChildNodes.Where(n => n.Name.Equals("ul", StringComparison.OrdinalIgnoreCase) || n.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)))
+            // A sublist nested INSIDE the item (the shape most other producers emit) still follows it.
+            foreach (var nested in child.ChildNodes.Where(n => n.Name.Equals("ul", StringComparison.OrdinalIgnoreCase) || n.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)))
                 ParseList(nested, flow, nested.Name.Equals("ol", StringComparison.OrdinalIgnoreCase) ? ListKind.Ordered : ListKind.Bullet, level + 1, linkUri);
         }
     }
@@ -365,9 +434,29 @@ public static class HtmlDocumentFormatter
         return result;
     }
 
+    // HTML collapses runs of COLLAPSIBLE whitespace to one space. A non-breaking space is not
+    // collapsible — that is the whole point of it, and the export relies on it to carry the editor's
+    // consecutive spaces (see PreserveRunsOfSpaces). Regex `\s` matches U+00A0 (Unicode class Zs), so
+    // the old `\s+` folded exactly the character that was there to survive folding.
+    //
+    // The model has no non-breaking space of its own, so an nbsp becomes a plain space AFTER the fold.
+    // Foreign HTML gains from this too: Word and HWP pad with runs of &nbsp;, which used to arrive as a
+    // single space and now keep their width.
     private static string CollapseWhitespace(string s)
     {
-        return System.Text.RegularExpressions.Regex.Replace(s, "\\s+", " ");
+        s = System.Text.RegularExpressions.Regex.Replace(s, "[ \t\r\n\f\v]+", " ");
+        return s.Replace(' ', ' ');
+    }
+
+    // Whitespace that HTML would collapse away, i.e. what makes a text node pure layout rather than
+    // content. A node of nothing but &nbsp; is CONTENT and must not be mistaken for a separator, which
+    // is why this is not string.IsNullOrWhiteSpace (that counts U+00A0 as whitespace).
+    private static bool IsCollapsibleWhitespace(string s)
+    {
+        if (s.Length == 0) return true;
+        foreach (char ch in s)
+            if (ch is not (' ' or '\t' or '\r' or '\n' or '\f' or '\v')) return false;
+        return true;
     }
 
     // Ceiling on the column count an imported table may claim. Foreign HTML controls colspan, and the
@@ -509,7 +598,7 @@ public static class HtmlDocumentFormatter
             double h = (!double.IsNaN(declH) && declH > 0) ? declH : (natH > 0 ? natH : double.NaN);
             return (bytes, w, h, alt);
         }
-        catch { return (null, 0, 0, null); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return (null, 0, 0, null); }
     }
 
     // True when the path resolves under the user's temp directory (clipboard image files live there).
@@ -521,7 +610,7 @@ public static class HtmlDocumentFormatter
                 .TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
             return System.IO.Path.GetFullPath(path).StartsWith(temp, StringComparison.OrdinalIgnoreCase);
         }
-        catch { return false; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
     }
 
     private static double ReadPx(HtmlNode node, string attr, string cssProp)
@@ -543,10 +632,10 @@ public static class HtmlDocumentFormatter
         return double.NaN;
     }
 
-    private static void ParseInlines(HtmlNode node, Paragraph p, FontWeight weight = default, FontStyle style = FontStyle.Normal, Color? color = null, string? uri = null, double baseSize = 10, bool inLink = false, Color? background = null, string? family = null, bool underline = false, bool strike = false, bool pre = false)
+    private static void ParseInlines(HtmlNode node, Paragraph p, FontWeight weight = default, FontStyle style = FontStyle.Normal, Color? color = null, string? uri = null, double baseSize = 10, bool inLink = false, Color? background = null, string? family = null, bool underline = false, bool strike = false, bool pre = false, bool ownColor = false)
     {
         foreach (var child in node.ChildNodes)
-            ParseInlineNode(child, p, weight, style, color, uri, baseSize, inLink, background, family, underline, strike, pre);
+            ParseInlineNode(child, p, weight, style, color, uri, baseSize, inLink, background, family, underline, strike, pre, ownColor);
     }
 
     // Parses ONE node as inline content, applying the node's OWN tag/style formatting before descending
@@ -554,7 +643,10 @@ public static class HtmlDocumentFormatter
     // has no block wrapper (a bare <span style=…>/<b> directly under body — the shape CF_HTML fragments
     // take for small copies) through the same path; handing such an element to ParseInlines directly
     // dropped its own formatting, since ParseInlines only reads formatting off the nodes it descends INTO.
-    private static void ParseInlineNode(HtmlNode child, Paragraph p, FontWeight weight = default, FontStyle style = FontStyle.Normal, Color? color = null, string? uri = null, double baseSize = 10, bool inLink = false, Color? background = null, string? family = null, bool underline = false, bool strike = false, bool pre = false)
+    // `ownColor` is set once a `data-are-fg` span has been entered: the colour in scope is the document's
+    // own, so the link-blue rule below must leave it alone. It is INHERITED rather than re-read per node,
+    // because the marker sits on the span while the text it colours is a child of that span.
+    private static void ParseInlineNode(HtmlNode child, Paragraph p, FontWeight weight = default, FontStyle style = FontStyle.Normal, Color? color = null, string? uri = null, double baseSize = 10, bool inLink = false, Color? background = null, string? family = null, bool underline = false, bool strike = false, bool pre = false, bool ownColor = false)
     {
         {
             var cw = weight;
@@ -587,10 +679,15 @@ public static class HtmlDocumentFormatter
                 if (!string.IsNullOrEmpty(href)) cu = href;
             }
 
+            bool childOwnColor = ownColor || child.GetAttributeValue("data-are-fg", "") == "1";
+
             ApplyInlineStyle(child.GetAttributeValue("style", ""), ref cw, ref cs, ref cc, ref sz, ref cbg, ref cfam, ref cunder, ref cstrike);
 
-            // Links stay visually distinct (blue) regardless of the site's own inline color.
-            if (childInLink) cc = Colors.Blue;
+            // Links stay visually distinct (blue) regardless of the SITE'S own inline color — foreign
+            // pages style anchors dark, or white for button text, and either disappears in this editor.
+            // A colour this library wrote is not a site's styling, and overriding it lost the user's own
+            // choice of link colour on every HTML save/load; `data-are-fg` marks that case.
+            if (childInLink && !childOwnColor) cc = Colors.Blue;
 
             if (name == "#text")
             {
@@ -603,7 +700,7 @@ public static class HtmlDocumentFormatter
                         p.Inlines.Add(new Run { Text = text.Replace("\r\n", "\n").Replace('\r', '\n'), FontWeight = NormalizeWeight(cw), FontStyle = cs, Foreground = cc, FontSize = sz, NavigateUri = cu, Background = cbg, FontFamily = cfam ?? "Consolas", TextDecorations = MakeDecorations(cunder, cstrike) });
                     return;
                 }
-                if (string.IsNullOrWhiteSpace(text))
+                if (IsCollapsibleWhitespace(text))
                 {
                     if (p.Inlines.Count > 0 && p.Inlines[^1] is Run last && last.Text != null &&
                         !last.Text.EndsWith(" ") && !last.Text.EndsWith("\n"))
@@ -624,7 +721,7 @@ public static class HtmlDocumentFormatter
             }
             else
             {
-                ParseInlines(child, p, cw, cs, cc, cu, sz, childInLink, cbg, cfam, cunder, cstrike, pre);
+                ParseInlines(child, p, cw, cs, cc, cu, sz, childInLink, cbg, cfam, cunder, cstrike, pre, childOwnColor);
             }
         }
     }
@@ -812,12 +909,22 @@ public static class HtmlDocumentFormatter
                     pStyle += $"line-height:{(p.LineSpacing * 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}%;";
                 else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
                     pStyle += $"line-height:{p.LineHeight.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}px;";
-                sb.Append($"<{tag} style=\"{pStyle}\">");
+                // A paragraph can be a list item AND a heading, but the tag can only be one of <li>/<h1..6>,
+                // and <li> wins because the list structure is what HTML cannot otherwise express. The
+                // heading level would then be dropped outright, so it rides along as a marker.
+                string extraAttr = p.IsListItem && p.HeadingLevel >= 1 && p.HeadingLevel <= 6
+                    ? $" data-are-h=\"{p.HeadingLevel}\"" : "";
+                // An empty paragraph is a blank LINE the author put there. The importer drops elements
+                // that produce no inline, and it has to: foreign HTML is full of empty <p>/<div> used for
+                // spacing, and keeping those adds a blank line to every web paste. The marker separates
+                // "this document's blank line" from "that page's layout scaffolding".
+                if (p.Inlines.Count == 0) extraAttr += " data-are-empty=\"1\"";
+                sb.Append($"<{tag}{extraAttr} style=\"{pStyle}\">");
                 // `first` tells an inline table it OPENS this paragraph: an HTML parser closes the <p>
                 // when the <table> starts, so on import there is no pending paragraph and the marker's
                 // reattachment would otherwise grab whatever paragraph precedes it.
-                bool firstInline = true;
-                foreach (var inline in p.Inlines) { EmitInline(sb, inline, firstInline); firstInline = false; }
+                for (int i = 0; i < p.Inlines.Count; i++)
+                    EmitInline(sb, p.Inlines[i], i == 0, i == p.Inlines.Count - 1);
                 sb.Append($"</{tag}>\n");
             }
             else if (block is DividerBlock)
@@ -901,7 +1008,10 @@ public static class HtmlDocumentFormatter
                     {
                         if (prevWasParagraph) sb.Append("<br>");
                         prevWasParagraph = true;
-                        foreach (var inline in cpara.Inlines) EmitInline(sb, inline);
+                        // Same boundary rule as a top-level paragraph: a <td>'s content is parsed as
+                        // inline, so a space at either end of it is dropped unless it goes out non-breaking.
+                        for (int i = 0; i < cpara.Inlines.Count; i++)
+                            EmitInline(sb, cpara.Inlines[i], i == 0, i == cpara.Inlines.Count - 1);
                     }
                     else if (cblk is ImageBlock cib && (cib.RawBytes != null || cib.Image != null))
                     { sb.Append(ImgTag(cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText)); prevWasParagraph = false; }
@@ -923,11 +1033,14 @@ public static class HtmlDocumentFormatter
         sb.Append(asInline ? "</table>" : "</table>\n");
     }
 
-    private static void EmitInline(StringBuilder sb, Inline inline, bool opensParagraph = false)
+    // `opensParagraph`/`closesParagraph` mark the first and last inline of their paragraph. The first
+    // drives the inline-table marker; the last gates the trailing-space encoding below, because HTML
+    // drops whitespace at the end of a block and a space there would not come back.
+    private static void EmitInline(StringBuilder sb, Inline inline, bool opensParagraph = false, bool closesParagraph = false)
     {
         if (inline is InlineImage im && (im.RawBytes != null || im.Image != null))
         {
-            sb.Append(ImgTag(im.RawBytes, im.MimeType, im.RawBytes == null ? im.Image : null, im.Width, im.Height, im.AltText));
+            sb.Append(ImgTag(im.RawBytes, im.MimeType, im.RawBytes == null ? im.Image : null, im.Width, im.Height, im.AltText, opensParagraph));
             return;
         }
         if (inline is InlineTable itbl)
@@ -938,6 +1051,8 @@ public static class HtmlDocumentFormatter
         if (inline is not Run r || r.Text == null) return;
 
         string t = HtmlEntity.Entitize(r.Text);
+        t = PreserveRunsOfSpaces(t);
+        t = PreserveDroppableSpaces(t, closesParagraph);
         // Soft line breaks (Shift+Enter, stored as '\n' in run text) must survive as <br/> — a literal
         // newline collapses to a space in HTML, silently losing the break on export/copy. The parser's
         // inverse (ParseInlines) already turns <br> back into a "\n" run, so this closes the round-trip.
@@ -950,7 +1065,14 @@ public static class HtmlDocumentFormatter
         if (r.Foreground is { } fg) styles.Add($"color:{ColorUtil.ToCss(fg)}");
         if (r.Background is { } bg) styles.Add($"background-color:{ColorUtil.ToCss(bg)}");
 
-        if (styles.Count > 0) t = $"<span style=\"{string.Join(";", styles)}\">{t}</span>";
+        // `data-are-fg` says the colour on this span is the DOCUMENT'S, not a site's styling. The reader
+        // paints links blue on top of whatever colour the source declared (a deliberate rule: foreign
+        // pages give anchors dark or white button text that would vanish here), and that rule used to
+        // eat the user's own choice of link colour on every save/load. The marker is what tells the two
+        // apart — same idiom as data-are-inline for inline tables. Emitted only where it can matter.
+        bool markOwnColor = r.Foreground is not null && !string.IsNullOrEmpty(r.NavigateUri);
+        if (styles.Count > 0)
+            t = $"<span{(markOwnColor ? " data-are-fg=\"1\"" : "")} style=\"{string.Join(";", styles)}\">{t}</span>";
         // Underline/strikethrough as <u>/<s> TAGS, not CSS text-decoration: clipboard importers
         // (Word/HWP) reliably honour the tags but routinely drop CSS text-decoration.
         if (r.TextDecorations.HasFlag(TextDecorationFlags.Underline)) t = $"<u>{t}</u>";
@@ -961,12 +1083,81 @@ public static class HtmlDocumentFormatter
         sb.Append(t);
     }
 
+    // HTML collapses a run of whitespace to ONE space, so `a  b` came back as `a b` — the editor's own
+    // double space, gone on the first save/load. Encode every space that FOLLOWS a space as &nbsp;,
+    // which is what Word emits and what every browser renders identically.
+    //
+    // Why alternate instead of making them all non-breaking: a solid run of &nbsp; is unbreakable, so a
+    // line padded with spaces would refuse to wrap and push the layout wide. Keeping the first space of
+    // each run collapsible leaves a legal wrap point exactly where one belongs.
+    //
+    // Only runs of two or more are touched, so ordinary prose exports byte-for-byte as before.
+    private static string PreserveRunsOfSpaces(string s)
+    {
+        if (s.Length < 2 || !s.Contains("  ", StringComparison.Ordinal)) return s;
+        var sb = new StringBuilder(s.Length + 16);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] == ' ' && i > 0 && s[i - 1] == ' ') sb.Append("&nbsp;");
+            else sb.Append(s[i]);
+        }
+        return sb.ToString();
+    }
+
+    // Spaces that land where HTML throws whitespace away, made non-breaking so they come back. Two
+    // positions, and both were found by the fuzz rather than by reading:
+    //
+    // · Before a soft break. `t.Replace("\n", "<br/>")` splits the run's text, so `" \n셀"` leaves a
+    //   whitespace-ONLY text node in front of the <br/>; when that node opens the paragraph there is no
+    //   previous inline to hang a separator on and the space is simply gone (seeds 6239, 14651).
+    // · At the very end of a block, which HTML drops outright. A paragraph ending in a plain `" "` run
+    //   — what MergeCells leaves when it joins a covered cell — lost it on every other round trip.
+    //
+    // · A run of NOTHING BUT SPACES, wherever it sits. It goes out as a whitespace-only text node, and
+    //   the reader cannot tell that from a pretty-printer's indentation, so its separator logic decides
+    //   the fate of authored content: at the start of a paragraph there is no previous inline to attach
+    //   to (seed 14651), and after a run that already ends in a space the de-duplication guard drops it
+    //   (seed 11639). A run made only of spaces is authored by construction — it exists as its own run —
+    //   so it is written as content and the question never arises. MergeCells' join separator is exactly
+    //   this shape, which is why merged-cell text kept losing word boundaries in the first place.
+    //   Cost, accepted: that one space is non-breaking, so a line cannot wrap at it.
+    //
+    // Deliberately NOT every boundary space, for two separate reasons.
+    // · Scope: making every run-boundary space non-breaking would weld words together and stop the line
+    //   wrapping between them, which is the one thing &nbsp; must not be used for.
+    // · Measured: encoding the leading spaces of any opening run was tried and reverted — it turned one
+    //   leading space into two on the next cycle in 71 of 3000 seeds. A leading space with content
+    //   behind it in the same run already survives, so encoding it only added one; hence "the whole run
+    //   is spaces" below rather than "the run starts with a space".
+    private static string PreserveDroppableSpaces(string s, bool atEnd)
+    {
+        if (s.Length == 0) return s;
+        if (s.AsSpan().TrimStart(' ').Length == 0)
+            return string.Concat(Enumerable.Repeat("&nbsp;", s.Length));
+        if (s.Contains(" \n", StringComparison.Ordinal))
+        {
+            var sb = new StringBuilder(s.Length + 16);
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] == ' ' && i + 1 < s.Length && s[i + 1] == '\n') sb.Append("&nbsp;");
+                else sb.Append(s[i]);
+            }
+            s = sb.ToString();
+        }
+        if (!atEnd || s.Length == 0 || s[^1] != ' ') return s;
+        int j = s.Length;
+        while (j > 0 && s[j - 1] == ' ') j--;
+        return s[..j] + string.Concat(Enumerable.Repeat("&nbsp;", s.Length - j));
+    }
+
     private static string AttrEscape(string s) =>
         s.Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     // Emits a data: URI <img>. RawBytes (with their MIME type) are used verbatim when present;
     // a bitmap set without bytes is PNG-encoded. `alt` round-trips the accessibility description.
-    private static string ImgTag(byte[]? raw, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp, double w, double h, string? alt = null)
+    // `opensParagraph` carries the same meaning as it does for an inline table: this image was the FIRST
+    // thing in its paragraph, so on import there is no earlier paragraph of its own to rejoin.
+    private static string ImgTag(byte[]? raw, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp, double w, double h, string? alt = null, bool opensParagraph = false)
     {
         string b64, m;
         if (raw != null)
@@ -986,6 +1177,7 @@ public static class HtmlDocumentFormatter
         if (!double.IsNaN(w) && w > 0) size += $" width=\"{(int)w}\"";
         if (!double.IsNaN(h) && h > 0) size += $" height=\"{(int)h}\"";
         if (!string.IsNullOrEmpty(alt)) size += $" alt=\"{AttrEscape(alt)}\"";
+        if (opensParagraph) size += " data-are-opens=\"1\"";
         return $"<img src=\"data:{m};base64,{b64}\"{size}/>";
     }
 }

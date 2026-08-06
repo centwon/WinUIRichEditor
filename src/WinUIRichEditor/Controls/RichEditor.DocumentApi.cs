@@ -46,11 +46,27 @@ public partial class RichEditor
     /// and HWP.</summary>
     public string ToRtf() => Document != null ? RtfDocumentFormatter.Write(Document) : "";
 
-    /// <summary>Replaces the document with one parsed from RTF (empty document if null/empty or not RTF).</summary>
+    /// <summary>Replaces the document with one parsed from RTF (empty document if null/empty or not RTF).
+    /// <para>DAMAGED RTF leaves the open document ALONE — the same reasoning as <see cref="LoadJson"/>,
+    /// which reports rather than blanking: replacing open content with an empty document means the next
+    /// save writes that blank over the original file. Unlike <c>LoadJson</c> this stays silent rather
+    /// than throwing, because <c>LoadRtf</c> shipped in 1.0 as <c>void</c> and a new exception out of it
+    /// would kill hosts that have no handler. Hosts that need the failure — a file-open path, which must
+    /// tell the user why nothing happened — should call
+    /// <see cref="RtfDocumentFormatter.TryParse"/> and load the result themselves.</para></summary>
     public void LoadRtf(string? rtf)
-        => LoadDocument(string.IsNullOrEmpty(rtf) || !RtfDocumentFormatter.LooksLikeRtf(rtf)
-            ? new FlowDocument()
-            : RtfDocumentFormatter.Parse(rtf));
+    {
+        if (string.IsNullOrEmpty(rtf) || !RtfDocumentFormatter.LooksLikeRtf(rtf))
+        {
+            LoadDocument(new FlowDocument());
+            return;
+        }
+        // Keep the open document on failure — but only when there IS one. With no document loaded there
+        // is nothing to protect, and bailing would leave the editor inert (null Document, no caret), so
+        // an empty document is the better landing spot.
+        if (RtfDocumentFormatter.TryParse(rtf, out var parsed, out _)) LoadDocument(parsed);
+        else if (Document == null) LoadDocument(new FlowDocument());
+    }
 
     /// <summary>Serializes the document to the library's JSON format.</summary>
     public string ToJson() => Document != null ? DocumentSerializer.Serialize(Document) : "";
@@ -142,7 +158,11 @@ public partial class RichEditor
     // Swaps in a new document and resets caret/selection/undo to a clean state. Shared by Load*/Clear.
     // Setting the Document DP fires OnDocumentChanged → OnDocumentAssigned (wires parents, normalizes
     // blocks, resets caret to the first paragraph) and RelayoutToViewport.
-    private void LoadDocument(FlowDocument doc)
+    //
+    // internal, not private, so the toolbar's file-open path can load an already-parsed document: it has
+    // to parse first to report WHY a damaged file was rejected, and assigning the Document DP directly
+    // would skip the undo reset and leave the previous file's history undoable into the new one.
+    internal void LoadDocument(FlowDocument doc)
     {
         Document = doc;
         _undo.Clear();

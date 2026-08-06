@@ -250,7 +250,8 @@ public partial class RichEditor
                 if (pos > end) break;
             }
         }
-        catch { /* partial rects are still useful to assistive tech */ }
+        // partial rects are still useful to assistive tech
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         return result.ToArray();
     }
 
@@ -263,7 +264,7 @@ public partial class RichEditor
                 && GetPositionFromPoint(ViewToDoc(view)) is { Paragraph: not null } tp)
                 return System.Math.Max(0, AutomationOffsetOf(tp));
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         return 0;
     }
 

@@ -104,7 +104,8 @@ public partial class RichEditor
         if (url is not { Length: > 0 }) return;
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            try { await Windows.System.Launcher.LaunchUriAsync(uri); } catch { }
+            try { await Windows.System.Launcher.LaunchUriAsync(uri); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         }
     }
 }

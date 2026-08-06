@@ -251,6 +251,376 @@ public class FormatterRoundTripTests
         Assert.Contains(runs, r => string.IsNullOrEmpty(r.NavigateUri) && (r.Text ?? "").Contains("end"));
     }
 
+    // A sub-bullet must stay UNDER the item it belongs to. Our writer emits a deeper level as a <ul>
+    // that is a SIBLING of the previous <li>, not a child of it, so the reader has to keep <li> and
+    // <ul> in document order — reading all sublists first (which a fix for a different shape once did)
+    // lifts every nested item above its parent, and an ordinary two-level list comes back scrambled.
+    [Fact]
+    public void Html_RoundTrips_NestedListItems_InDocumentOrder()
+    {
+        static Paragraph Bullet(string text, int level)
+        {
+            var p = new Paragraph { ListType = ListKind.Bullet, ListLevel = level };
+            p.Inlines.Add(new Run { Text = text });
+            return p;
+        }
+
+        var doc = new FlowDocument();
+        doc.Blocks.Add(Bullet("A", 0));
+        doc.Blocks.Add(Bullet("B", 1));
+        doc.Blocks.Add(Bullet("C", 0));
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var items = back.Blocks.OfType<Paragraph>().ToList();
+
+        Assert.Equal(new[] { "A", "B", "C" }, items.Select(Plain));
+        Assert.Equal(new[] { 0, 1, 0 }, items.Select(p => p.ListLevel));
+    }
+
+    // The shape that motivated the two-pass version: a document whose ONLY list item is indented, so
+    // the export nests <ul><ul><li> with no <li> at the outer level. Its items must still arrive (they
+    // used to vanish, and a document made only of them fell through to the raw-markup fallback).
+    [Fact]
+    public void Html_RoundTrips_ListWhoseOnlyItemIsIndented()
+    {
+        var doc = new FlowDocument();
+        var only = new Paragraph { ListType = ListKind.Bullet, ListLevel = 2 };
+        only.Inlines.Add(new Run { Text = "deep" });
+        doc.Blocks.Add(only);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var item = Assert.Single(back.Blocks.OfType<Paragraph>());
+        Assert.Equal("deep", Plain(item));
+        Assert.Equal(2, item.ListLevel);
+        Assert.Equal(ListKind.Bullet, item.ListType);
+    }
+
+    // Whitespace BETWEEN inline siblings is a word separator and has to survive; the same whitespace
+    // before the closing tag is padding and must NOT turn into content. Both directions in one test,
+    // because fixing either one alone is what broke the other twice.
+    // These are the BLOCK walk (bare inline content with no <p> wrapper) — the path a table cell's
+    // contents take, and the one the merged-cell space was lost on. Content inside a <p> takes the
+    // inline path instead, which has always kept a trailing space; that is bounded (it never adds a
+    // second) and is left as it is, because <p> whitespace is tuned against browser copy and Word paste.
+    [Theory]
+    [InlineData("<span>a</span> <span>b</span>", "a b")]
+    [InlineData("<span>a</span>\n<span>b</span>", "a b")]
+    [InlineData("<span>a</span>   <span>b</span>", "a b")]  // collapses to one
+    [InlineData("<span>a</span> ", "a")]                     // trailing: padding, not content
+    [InlineData("<span>a</span> <span></span>", "a")]        // separator with nothing after it
+    [InlineData("<span>a</span> <br/>", "a\n")]              // bare space before a break is padding
+    [InlineData("<span>a</span>&nbsp;<br/>", "a \n")]        // one we meant to keep is written &nbsp;
+    public void Html_WhitespaceBetweenInlineSiblings_IsASeparatorButNeverTrailingContent(string html, string expected)
+    {
+        var back = HtmlDocumentFormatter.ParseHtml(html);
+        Assert.Equal(expected, string.Concat(back.Blocks.OfType<Paragraph>().Select(Plain)));
+    }
+
+    // The defect that motivated the separator: MergeCells joins the covered cell's text with a space,
+    // the writer emits that as whitespace between two <span>s, and the block walk used to drop it — so
+    // a merged cell lost the word boundary on the SECOND round trip (the first still had one run).
+    [Fact]
+    public void Html_RoundTrips_MergedCellText_KeepsItsWordBoundary()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(1, 2);
+        foreach (var (r, c, cell) in tb.LogicalCells())
+            ((Run)cell.Para.Inlines[0]).Text = $"c{r}{c}";
+        tb.MergeCells(0, 0, 0, 1);
+        doc.Blocks.Add(tb);
+
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+
+        static string CellText(FlowDocument d) => string.Concat(
+            d.Blocks.OfType<TableBlock>().SelectMany(t => t.LogicalCells())
+             .SelectMany(x => x.cell.Blocks.OfType<Paragraph>()).Select(Plain));
+
+        Assert.Equal("c00 c01", CellText(once));
+        Assert.Equal(CellText(once), CellText(twice)); // and it does not grow either
+    }
+
+    // Saving an empty document as HTML and reopening it used to put the editor's own tags on screen as
+    // body text: the export is `<p style="…"></p>`, the walk yields no block, and the "input was not
+    // markup" fallback dumped the source. Plain text must still come through that fallback.
+    [Fact]
+    public void Html_EmptyDocument_RoundTripsEmpty_NotAsItsOwnMarkup()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { HeadingLevel = 4, Indent = 40 });
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        string text = string.Concat(back.Blocks.OfType<Paragraph>().Select(Plain));
+        Assert.DoesNotContain("<", text);
+        Assert.Equal("", text);
+    }
+
+    [Fact]
+    public void Html_PlainTextInput_StillBecomesItsText()
+    {
+        var back = HtmlDocumentFormatter.ParseHtml("just some text");
+        Assert.Equal("just some text", string.Concat(back.Blocks.OfType<Paragraph>().Select(Plain)));
+    }
+
+    // HTML folds a run of whitespace to one space, so the editor's own consecutive spaces used to be
+    // gone on the FIRST save/load. They ride out as alternating space/&nbsp; (what Word emits); the
+    // first space of each run stays collapsible so the line can still wrap there.
+    [Theory]
+    [InlineData("a  b")]
+    [InlineData("a   b")]
+    [InlineData("a     b")]
+    [InlineData("  leading")]
+    [InlineData("trailing  ")]
+    [InlineData("a  b  c")]
+    public void Html_RoundTrips_ConsecutiveSpaces(string text)
+    {
+        var doc = new FlowDocument();
+        var p = new Paragraph();
+        p.Inlines.Add(new Run { Text = text });
+        doc.Blocks.Add(p);
+
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        Assert.Equal(text, string.Concat(once.Blocks.OfType<Paragraph>().Select(Plain)));
+
+        // And it must not grow on the way back out either.
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+        Assert.Equal(text, string.Concat(twice.Blocks.OfType<Paragraph>().Select(Plain)));
+    }
+
+    // A run made only of spaces is authored content — MergeCells' join separator is exactly this shape.
+    // It used to be indistinguishable from a pretty-printer's indentation once written, so the reader's
+    // separator logic ate it: at a paragraph's start there was no previous inline to attach it to, and
+    // after a run already ending in a space the de-duplication guard dropped it.
+    [Theory]
+    [InlineData(true)]   // the space run OPENS the paragraph
+    [InlineData(false)]  // it follows a run that already ends in a space
+    public void Html_RoundTrips_ARunOfNothingButSpaces(bool atStart)
+    {
+        var doc = new FlowDocument();
+        var p = new Paragraph();
+        if (!atStart) p.Inlines.Add(new Run { Text = "before " });
+        p.Inlines.Add(new Run { Text = " " });
+        p.Inlines.Add(new Run { Text = "after", Foreground = Red });
+        doc.Blocks.Add(p);
+
+        string expected = (atStart ? "" : "before ") + " after";
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        Assert.Equal(expected, string.Concat(once.Blocks.OfType<Paragraph>().Select(Plain)));
+
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+        Assert.Equal(expected, string.Concat(twice.Blocks.OfType<Paragraph>().Select(Plain)));
+    }
+
+    [Fact]
+    public void Html_ForeignNbsp_IsContent_NotACollapsibleSeparator()
+    {
+        // A text node of nothing but &nbsp; is content: it must not be mistaken for layout whitespace.
+        var back = HtmlDocumentFormatter.ParseHtml("<p>a<span>&nbsp;&nbsp;</span>b</p>");
+        Assert.Equal("a  b", string.Concat(back.Blocks.OfType<Paragraph>().Select(Plain)));
+    }
+
+    // A link keeps the colour the DOCUMENT gave it; a foreign page's anchor colour still yields to the
+    // blue rule, because that rule exists to stop dark/white site anchors disappearing in this editor.
+    [Fact]
+    public void Html_RoundTrips_HyperlinkColour_ButStillOverridesForeignAnchors()
+    {
+        var orange = new Color { A = 255, R = 0xEE, G = 0x80, B = 0x6B };
+        var doc = new FlowDocument();
+        var p = new Paragraph();
+        p.Inlines.Add(new Run { Text = "link", NavigateUri = "https://example.com/1", Foreground = orange });
+        doc.Blocks.Add(p);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var run = back.Blocks.OfType<Paragraph>().SelectMany(x => x.Inlines.OfType<Run>()).First(r => r.Text == "link");
+        Assert.Equal(orange, run.Foreground);
+        Assert.Equal("https://example.com/1", run.NavigateUri);
+
+        var foreign = HtmlDocumentFormatter.ParseHtml(
+            "<p><a href=\"https://example.com/2\"><span style=\"color:#FFFFFF\">btn</span></a></p>");
+        var fr = foreign.Blocks.OfType<Paragraph>().SelectMany(x => x.Inlines.OfType<Run>()).First(r => r.Text == "btn");
+        Assert.Equal(Microsoft.UI.Colors.Blue, fr.Foreground);
+    }
+
+    // A paragraph can be a list item AND a heading; <li> wins the tag, so the level rides a marker.
+    [Fact]
+    public void Html_RoundTrips_HeadingLevel_OnAListItem()
+    {
+        var doc = new FlowDocument();
+        var p = new Paragraph { ListType = ListKind.Bullet, ListLevel = 1, HeadingLevel = 2 };
+        p.Inlines.Add(new Run { Text = "heading item" });
+        doc.Blocks.Add(p);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var item = Assert.Single(back.Blocks.OfType<Paragraph>());
+        Assert.Equal(2, item.HeadingLevel);
+        Assert.Equal(1, item.ListLevel);
+        Assert.Equal(ListKind.Bullet, item.ListType);
+        Assert.Equal("heading item", Plain(item));
+    }
+
+    // ---- images and dividers -----------------------------------------------------------------
+    // The fuzz never generated either until 2026-08-06, so this whole axis went unexercised; every
+    // test below pins something that was actually broken when it first ran.
+
+    private static readonly byte[] TinyPng = System.Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8//8/AzJgYkAD5AsAAP//A+8DTgn2rL0AAAAASUVORK5CYII=");
+
+    private static ImageBlock Img(double w = 120, double h = 80)
+    {
+        var ib = new ImageBlock { Width = w, Height = h };
+        ib.SetImageData(TinyPng, "image/png");
+        return ib;
+    }
+
+    private static string Shape(FlowDocument d)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var b in d.Blocks)
+            switch (b)
+            {
+                case Paragraph p:
+                    sb.Append("P[").Append(string.Concat(p.Inlines.Select(i => i is Run r ? r.Text : "<IMG>"))).Append(']');
+                    break;
+                case ImageBlock: sb.Append("IMGBLK"); break;
+                case DividerBlock: sb.Append("HR"); break;
+                case TableBlock t: sb.Append($"T{t.Rows}x{t.Columns}"); break;
+            }
+        return sb.ToString();
+    }
+
+    // RTF spells a block picture as `\pard <pict>\par`. Reading that \par as content added a blank
+    // paragraph under every image — and another on the next cycle, so a document saved and reopened a
+    // few times grew a widening gap under each picture.
+    [Fact]
+    public void Rtf_BlockImage_DoesNotGrowABlankParagraph()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "a" } } });
+        doc.Blocks.Add(Img());
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "b" } } });
+
+        var once = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var twice = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(once));
+        Assert.Equal("P[a]IMGBLKP[b]", Shape(once));
+        Assert.Equal("P[a]IMGBLKP[b]", Shape(twice));
+    }
+
+    // A blank line the author typed still has to survive next to an image, so the \par that TERMINATES
+    // the picture must not eat it: the writer gives the blank paragraph its own \pard\par.
+    [Fact]
+    public void Rtf_BlankLineAfterAnImage_Survives()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(Img());
+        doc.Blocks.Add(new Paragraph());
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "b" } } });
+
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        Assert.Equal("IMGBLKP[]P[b]", Shape(back));
+    }
+
+    // A table is only pending rows until FinalizeTable runs, so a picture after `\row` was appended
+    // first and jumped ahead of the table it followed.
+    [Fact]
+    public void Rtf_ImageAfterATable_StaysAfterIt()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new TableBlock(1, 1));
+        doc.Blocks.Add(Img());
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "b" } } });
+
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        Assert.Equal("T1x1IMGBLKP[b]", Shape(back));
+    }
+
+    // RTF has no rule control word; Word (and this writer) spell one as an empty paragraph with a
+    // bottom border. Only the writing half existed, so every divider came back as a blank line.
+    [Fact]
+    public void Rtf_RoundTrips_Dividers()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "a" } } });
+        doc.Blocks.Add(new DividerBlock());
+        doc.Blocks.Add(new DividerBlock());
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "b" } } });
+
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        Assert.Equal("P[a]HRHRP[b]", Shape(back));
+    }
+
+    // A blank line is content; a foreign page's empty <p>/<div> is layout scaffolding. The marker is
+    // what separates them — without it, keeping one means adding blank lines to every web paste.
+    [Fact]
+    public void Html_RoundTrips_BlankParagraph_ButStillDropsForeignEmptyElements()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "a" } } });
+        doc.Blocks.Add(new Paragraph());
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "b" } } });
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        Assert.Equal("P[a]P[]P[b]", Shape(back));
+
+        var foreign = HtmlDocumentFormatter.ParseHtml("<p>a</p><p></p><div>  </div><p>b</p>");
+        Assert.Equal("P[a]P[b]", Shape(foreign));
+    }
+
+    // A <p> holding nothing but an image is walked as a block (an <img> is block-or-media), so there is
+    // no pending paragraph on import and the image used to rejoin the PRECEDING one — a picture on its
+    // own line jumped up into the paragraph above it on every second round trip.
+    [Fact]
+    public void Html_ImageAloneInItsParagraph_KeepsItsOwnLine()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "above" } } });
+        var p = new Paragraph();
+        var im = new InlineImage { Width = 20, Height = 20 };
+        im.SetImageData(TinyPng, "image/png");
+        p.Inlines.Add(im);
+        doc.Blocks.Add(p);
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "below" } } });
+
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+        Assert.Equal("P[above]P[<IMG>]P[below]", Shape(once));
+        Assert.Equal("P[above]P[<IMG>]P[below]", Shape(twice));
+    }
+
+    // Truncation is the common damage — a half-copied file, a download cut short — and it does not
+    // throw: the reader runs out of input and finalizes what it has, which looked like a clean parse of
+    // a SHORTER document. TryParse is the entry point that must not let that replace an open one.
+    [Theory]
+    [InlineData(@"{\rtf1\ansi {\*\broken")]              // truncated inside a nested group
+    [InlineData(@"{\rtf1\ansi hello there")]             // truncated after readable text
+    [InlineData(@"{\rtf1\ansi\trowd\cellx1000 a\cell")]  // truncated mid-table
+    [InlineData(@"{\rtf1\ansi\b bold text\par")]         // no closing brace at all
+    public void Rtf_TryParse_ReportsTruncatedInput(string truncated)
+    {
+        Assert.False(RtfDocumentFormatter.TryParse(truncated, out var doc, out string? error));
+        Assert.NotNull(error);
+        Assert.Contains("truncated", error);
+        Assert.Empty(doc.Blocks);
+    }
+
+    [Theory]
+    [InlineData(@"{\rtf1\ansi hello\par}")]  // ordinary
+    [InlineData(@"{\rtf1\ansi}")]            // genuinely empty is a SUCCESS, not damage
+    [InlineData(@"{\rtf1\ansi hi\par}}}}")]  // trailing junk braces: tolerated, as before
+    public void Rtf_TryParse_AcceptsWellFormedInput(string rtf)
+    {
+        Assert.True(RtfDocumentFormatter.TryParse(rtf, out _, out string? error));
+        Assert.Null(error);
+    }
+
+    // Parse() is the PASTE path and stays lenient on purpose: for a clipboard fragment, whatever was
+    // readable beats nothing. Only TryParse — which guards an open document — is strict.
+    [Fact]
+    public void Rtf_Parse_StaysLenient_OnTruncatedInput()
+    {
+        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi hello there");
+        Assert.Contains("hello there", string.Concat(doc.Blocks.OfType<Paragraph>().Select(Plain)));
+    }
+
     [Fact]
     public void Html_Pre_PreservesWhitespaceAndNewlines()
     {

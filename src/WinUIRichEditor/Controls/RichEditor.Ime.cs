@@ -45,8 +45,9 @@ public partial class RichEditor
             _editContext.FocusRemoved += (_, _) => { _composing = false; _composRange = null; _imeRangeDelta = 0; };
             _imeEnabled = true;
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             _imeEnabled = false; // fall back to CharacterReceived-only input
         }
     }
@@ -120,6 +121,28 @@ public partial class RichEditor
     private void OnImeSelectionRequested(CoreTextEditContext sender, CoreTextSelectionRequestedEventArgs args)
         => args.Request.Selection = CaretSelectionRange();
 
+    // The offset arithmetic of a composition update, split out of OnImeTextUpdating because that handler
+    // needs a CoreTextTextUpdatingEventArgs — a WinRT type with no public constructor — while this is
+    // where the mistakes that reach users live: composed text landing at the wrong offset, or a range
+    // that runs past the paragraph it belongs to.
+    //
+    // `delta` is the shift applied after a cross-paragraph selection was deleted at composition start:
+    // the IME was told about a collapsed caret at the OLD offset (CaretSelectionRange cannot express a
+    // multi-paragraph selection), so every range it reports afterwards is off by how far the deletion
+    // moved the caret.
+    /// The span of the caret paragraph a composition update replaces. Clamped into the paragraph, and
+    /// the end is never before the start — an inverted or out-of-range span would delete the wrong text.
+    internal static (int start, int end) MapImeRange(int reportedStart, int reportedEnd, int delta, int paragraphLength)
+    {
+        int s = Math.Clamp(reportedStart + delta, 0, paragraphLength);
+        int e = Math.Clamp(reportedEnd + delta, s, paragraphLength);
+        return (s, e);
+    }
+
+    /// Where the caret lands after a composition update, in the same coordinates.
+    internal static int MapImeCaret(int reportedCaret, int delta, int paragraphLength)
+        => Math.Clamp(reportedCaret + delta, 0, paragraphLength);
+
     private void OnImeTextUpdating(CoreTextEditContext sender, CoreTextTextUpdatingEventArgs args)
     {
         if (Document == null || IsReadOnly || _caret.Paragraph == null) { args.Result = CoreTextTextUpdatingResult.Failed; return; }
@@ -144,8 +167,7 @@ public partial class RichEditor
 
             int len = GetParagraphLength(p);
             var r = args.Range;
-            int s = Math.Clamp(r.StartCaretPosition + _imeRangeDelta, 0, len);
-            int e = Math.Clamp(r.EndCaretPosition + _imeRangeDelta, s, len);
+            var (s, e) = MapImeRange(r.StartCaretPosition, r.EndCaretPosition, _imeRangeDelta, len);
             string newText = args.Text ?? "";
 
             // Snapshot before the edit so a composition is undoable. The "ime" coalesce key collapses the
@@ -164,7 +186,7 @@ public partial class RichEditor
                 ApplyPendingStyles(p, s, newText.Length, clear: !_composing);
             }
 
-            int caret = Math.Clamp(args.NewSelection.EndCaretPosition + _imeRangeDelta, 0, GetParagraphLength(p));
+            int caret = MapImeCaret(args.NewSelection.EndCaretPosition, _imeRangeDelta, GetParagraphLength(p));
             _caret = new TextPointer(p, caret);
             CollapseSelectionToCaret();
             _imeBufferLen = GetParagraphLength(p);
@@ -182,8 +204,9 @@ public partial class RichEditor
             AfterEdit();
             args.Result = CoreTextTextUpdatingResult.Succeeded;
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             args.Result = CoreTextTextUpdatingResult.Failed;
         }
         finally { _inTextUpdating = false; }
@@ -235,7 +258,7 @@ public partial class RichEditor
             var top = DocPointToScreen(new Point(dp.X, dp.Y));
             return new Rect(top.X, top.Y, 2 * scale, dp.Height * EffectiveZoom * scale);
         }
-        catch { return default; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return default; }
     }
 
     // ---- shared doc-space <-> physical-screen mapping -----------------------
@@ -313,6 +336,6 @@ public partial class RichEditor
                 ds.DrawLine((float)(px + lb.X), uy, (float)(px + lb.X + lb.Width), uy, CaretColor, 1.5f);
             }
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 }

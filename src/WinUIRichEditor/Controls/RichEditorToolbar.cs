@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Threading.Tasks;
@@ -53,7 +53,8 @@ public partial class RichEditorToolbar : UserControl
 
     private static FontFamily SafeFontFamily(string name)
     {
-        try { return new FontFamily(name); } catch { return FontFamily.XamlAutoFontFamily; }
+        try { return new FontFamily(name); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return FontFamily.XamlAutoFontFamily; }
     }
 
     /// <summary>Optional async image-bytes provider (e.g. a file picker). When set, the image button
@@ -72,10 +73,21 @@ public partial class RichEditorToolbar : UserControl
     // "Active" (toggled-on) face: a soft tint, not the system accent. WinUI's ToggleButton Checked
     // state paints the accent colour with a white glyph, which shouts next to the flat icon strip —
     // ApplyToggleCheckedStyle overrides the template's checked brushes with these.
-    private static readonly SolidColorBrush ActiveBrush = new(Color.FromArgb(255, 0xDD, 0xE7, 0xF3));
-    private static readonly SolidColorBrush ActiveHoverBrush = new(Color.FromArgb(255, 0xCB, 0xDA, 0xEC));
-    private static readonly SolidColorBrush ClearBrush = new(Colors.Transparent);
-    private static readonly SolidColorBrush BlackInk = new(Colors.Black); // shared: Sync runs per keystroke
+    //
+    // Created LAZILY, not in field initializers. A SolidColorBrush is a XAML object whose construction
+    // needs the WinUI runtime, and a static field initializer runs on FIRST TOUCH OF ANY STATIC MEMBER —
+    // so `RichEditorToolbar.FontSizes = ...` from a plain unit test (or from Main before
+    // Application.Start) used to die with a COMException from the class initializer, nowhere near the
+    // line that caused it. Deferring to first USE moves the runtime requirement to where a brush is
+    // actually painted, which is always inside a built toolbar.
+    //
+    // `??=` is not synchronized: these are only ever touched while building/syncing a toolbar, which is
+    // UI-thread work. A torn race would cost an extra brush, not correctness.
+    private static SolidColorBrush? _activeBrush, _activeHoverBrush, _clearBrush, _blackInk;
+    private static SolidColorBrush ActiveBrush => _activeBrush ??= new(Color.FromArgb(255, 0xDD, 0xE7, 0xF3));
+    private static SolidColorBrush ActiveHoverBrush => _activeHoverBrush ??= new(Color.FromArgb(255, 0xCB, 0xDA, 0xEC));
+    private static SolidColorBrush ClearBrush => _clearBrush ??= new(Colors.Transparent);
+    private static SolidColorBrush BlackInk => _blackInk ??= new(Colors.Black); // shared: Sync runs per keystroke
 
     // Variation Selector-15: forces text (monochrome) presentation of an emoji that has no symbol-font
     // glyph, so the leftover emoji fallbacks don't render as colour and clash with the FontIcon set.
@@ -86,7 +98,8 @@ public partial class RichEditorToolbar : UserControl
     private ToggleButton? _bold, _italic, _underline, _strike, _painter;
     private Button? _bullet, _number;                 // list-box icon buttons (toggle the list)
     private TextBlock? _bulletPreview, _numberPreview; // current list marker shown in the list boxes
-    private static readonly SolidColorBrush DimInk = new(Color.FromArgb(255, 0xBF, 0xC3, 0xC7)); // inactive marker
+    private static SolidColorBrush? _dimInk;
+    private static SolidColorBrush DimInk => _dimInk ??= new(Color.FromArgb(255, 0xBF, 0xC3, 0xC7)); // inactive marker
     private ComboBox? _font, _size, _heading, _align;
     private TextBox? _spacingBox; // editable line-spacing %, reflects/sets the caret paragraph
     private Button? _undo, _redo;
@@ -95,7 +108,34 @@ public partial class RichEditorToolbar : UserControl
     private bool _builtReadOnly; // read-only state captured at the last Build (to rebuild the view toolbar on toggle)
     private string? _fontReflected; // family last reflected into the font combo — skips the O(installed fonts) item scan per keystroke
 
-    private static readonly double[] FontSizes = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72 };
+    private static double[] _fontSizes = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72 };
+
+    /// <summary>The available font sizes in the toolbar combo box. Hosts can replace this array to customize the options.
+    /// <para>Read while the strip is being built, so assign it BEFORE creating the toolbar. Any point
+    /// works, including <c>Main</c> before <c>Application.Start</c> — the toolbar's static brushes are
+    /// created lazily precisely so that touching this property does not drag in the WinUI runtime. An
+    /// existing toolbar keeps the sizes it was built with until something rebuilds it — assigning
+    /// <see cref="Target"/> or <see cref="ToolbarLevel"/> does.</para></summary>
+    /// <exception cref="ArgumentNullException"><paramref name="value"/> is null.</exception>
+    /// <exception cref="ArgumentException">The array is empty, or holds a size that is not a positive
+    /// finite number.</exception>
+    public static double[] FontSizes
+    {
+        get => _fontSizes;
+        // Validated here rather than at the point of use: the array is consumed while the toolbar builds
+        // itself, so a bad value would otherwise surface as a crash inside Build() with nothing pointing
+        // back at the assignment that caused it. A non-positive or NaN size reaches CanvasTextFormat.
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (value.Length == 0)
+                throw new ArgumentException("At least one font size is required.", nameof(value));
+            foreach (double pt in value)
+                if (!double.IsFinite(pt) || pt <= 0)
+                    throw new ArgumentException($"Font size must be a positive finite number, was {pt}.", nameof(value));
+            _fontSizes = value;
+        }
+    }
     private const double BodySizePt = 10; // the model's default run size, shown when a run has none
 
     // A point-size label ("10 pt", "10.5 pt") — the unit the model, API and serialization all speak.
@@ -106,7 +146,29 @@ public partial class RichEditorToolbar : UserControl
     // The 40-swatch palette (greys + hues in a few shades) shared by the text-color/highlight pickers,
     // matching the original AvaloniaRichEditor toolbar. Internal: the editor's cell-background
     // context-menu palette reuses it so all color pickers offer the same swatches.
-    internal static readonly string[] Palette =
+    /// <summary>The color palette (hex strings) shared by the toolbar's text/highlight pickers and the editor's cell background context menu. Hosts can replace this array.
+    /// <para>Read when a color flyout is built, so assign it before the toolbar is created (see
+    /// <see cref="FontSizes"/> — any point works). Entries are parsed as <c>#RRGGBB</c> or
+    /// <c>#AARRGGBB</c>; an entry that does not parse renders as BLACK rather than throwing, so a typo
+    /// shows up as an unexpected swatch, not a crash.</para></summary>
+    /// <exception cref="ArgumentNullException"><paramref name="value"/> is null.</exception>
+    /// <exception cref="ArgumentException">The array is empty.</exception>
+    public static string[] Palette
+    {
+        get => _palette;
+        // Entry FORMAT is deliberately not validated — ParseHex already falls back to black, and the
+        // swatch grid is cosmetic. Null/empty is different: it produces an empty color picker, which
+        // reads as a broken toolbar rather than a wrong colour.
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (value.Length == 0)
+                throw new ArgumentException("At least one palette entry is required.", nameof(value));
+            _palette = value;
+        }
+    }
+
+    private static string[] _palette =
     {
         "#000000","#444444","#666666","#999999","#BBBBBB","#DDDDDD","#EEEEEE","#FFFFFF",
         "#FF0000","#E67E22","#F1C40F","#2ECC71","#1ABC9C","#3498DB","#9B59B6","#E91E63",
@@ -115,7 +177,8 @@ public partial class RichEditorToolbar : UserControl
         "#FFCDD2","#FFE0B2","#FFF9C4","#C8E6C9","#B2DFDB","#BBDEFB","#E1BEE7","#F8BBD0",
     };
 
-    private static readonly SolidColorBrush NoColorBrush = new(Color.FromArgb(255, 0xDD, 0xDD, 0xDD)); // "no highlight" face
+    private static SolidColorBrush? _noColorBrush;
+    private static SolidColorBrush NoColorBrush => _noColorBrush ??= new(Color.FromArgb(255, 0xDD, 0xDD, 0xDD)); // "no highlight" face
     private Border? _colorSwatch, _highlightSwatch; // current-colour bars under the picker glyphs
 
     // Uniform strip metrics: every control renders in a 32px-tall box (the WinUI ComboBox default
@@ -445,7 +508,8 @@ public partial class RichEditorToolbar : UserControl
             var bytes = await ImagePicker();
             if (bytes is { Length: > 0 }) Target.InsertImageBlock(bytes);
         }
-        catch { /* host picker failed/cancelled */ }
+        // host picker failed/cancelled
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     // A combo-style list control: a bordered box of [icon (toggles the list) | current marker | ▾ (style

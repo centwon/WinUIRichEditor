@@ -41,7 +41,8 @@ public static class RichEditorPrintHelper
     public static async Task<bool> ShowPrintUIAsync(RichEditor editor, nint windowHandle, string jobTitle = "Document", double dpi = 150)
     {
         if (editor.Document == null || windowHandle == 0) return false;
-        try { if (!PrintManager.IsSupported()) return false; } catch { return false; }
+        try { if (!PrintManager.IsSupported()) return false; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
 
         // Bail out before anything is shown when the host has dynamic code disabled — Native AOT, or any
         // build with PublishAot set, which bakes IsDynamicCodeSupported=false into runtimeconfig.json.
@@ -65,7 +66,7 @@ public static class RichEditorPrintHelper
             pages = new List<BitmapImage>(pageCount);
             for (int i = 0; i < pageCount; i++) pages.Add(await RenderPageAsync(editor, i, dpi));
         }
-        catch { return false; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
 
         Release();   // drop any previous job's references
 
@@ -104,8 +105,9 @@ public static class RichEditorPrintHelper
             if (!shown && !taskRequested) Release();
             return shown || taskRequested;
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             Release();
             return false;
         }

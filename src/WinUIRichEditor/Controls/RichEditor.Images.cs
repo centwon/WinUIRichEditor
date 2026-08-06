@@ -98,7 +98,8 @@ public partial class RichEditor
     {
         if (ImageReplacePicker == null) return;
         byte[]? bytes;
-        try { bytes = await ImageReplacePicker(); } catch { return; }
+        try { bytes = await ImageReplacePicker(); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
         if (bytes is not { Length: > 0 }) return;
         PushUndo(null);
         var mime = ImageMime.Detect(bytes);
@@ -176,7 +177,9 @@ public partial class RichEditor
     private async Task SaveImageBytesAsync(byte[]? raw, string? mime)
     {
         if (ImageSaveHandler == null || raw is not { Length: > 0 }) return;
-        try { await ImageSaveHandler(raw, mime); } catch { /* host save failed/cancelled */ }
+        // host save failed/cancelled
+        try { await ImageSaveHandler(raw, mime); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     // An inline image's host paragraph layout depends on the (unchanged-size) bitmap, but a replaced

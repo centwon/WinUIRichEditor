@@ -35,7 +35,28 @@ public sealed partial class ToolbarPage : Page
         };
         ToolbarHost.Child = toolbar;
 
+        // How a host consumes RichEditorDiagnostics: the library handles these faults itself and carries
+        // on, so this changes nothing about behaviour — it just makes the handling visible. Worth having
+        // in the sample because the alternative is indistinguishable from success: a file-open that threw
+        // inside the picker looks exactly like one the user cancelled. (That is not hypothetical — it is
+        // how the fire-and-forget hole in Import/ExportAsync was found.)
+        WinUIRichEditor.RichEditorDiagnostics.Fault += OnEditorFault;
+
         Editor.Document = DemoContent.Sample();
+    }
+
+    private void OnEditorFault(object? sender, WinUIRichEditor.RichEditorFaultEventArgs e)
+    {
+        // HResult, not just Message: a COMException usually has an empty message and the code is the
+        // only identifying part.
+        string detail = $"{e.File}:{e.Line} {e.Member} — {e.Exception.GetType().Name} "
+            + $"0x{e.Exception.HResult:X8} {e.Exception.Message}";
+        // Faults can arrive on a background thread (image decode / document parsing).
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            Caption.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Firebrick);
+            Caption.Text = "진단: " + detail;
+        });
     }
 
     private static async Task<byte[]?> PickImageBytesAsync()

@@ -120,81 +120,103 @@ public partial class RichEditor
 
     // Begins a block-image interaction at the press point: a drag on the selected image's corner handle
     // starts a resize; a click inside any block image selects it. Returns true when it consumed the press.
+    // What a pointer press on the canvas lands on. Split out of TryBeginImageInteraction because that
+    // method needs a PointerRoutedEventArgs — a WinRT type with no public constructor — while the ORDER
+    // of these tests is a contract that has already cost a defect once.
+    internal enum PointerTarget { None, SelectedBlockImageHandle, SelectedInlineImageHandle, CellImage, InlineImage, BlockImage }
+
+    /// <summary>Priority order for a pointer press, and the reasons it is this order:
+    /// <list type="bullet">
+    /// <item>EVERY resize-handle test runs before EVERY selection click. A handle's grab band extends
+    /// OUTSIDE its own rect, so it can land inside a neighbouring object; if selection went first the
+    /// neighbour would swallow the grab and the handle would be unusable.</item>
+    /// <item>Handles only exist while editing, so read-only skips straight to selection.</item>
+    /// <item>A cell-hosted image is tested before a top-level one: it is drawn inside a table that also
+    /// covers the point, so the innermost target has to win.</item>
+    /// <item>An inline image beats a block image — it sits within text, where the block hit-test is
+    /// coarser.</item>
+    /// </list></summary>
+    internal static PointerTarget ChoosePointerTarget(
+        bool isReadOnly,
+        bool onSelectedBlockImageHandle, bool onSelectedInlineImageHandle,
+        bool inCellImage, bool inInlineImage, bool inBlockImage)
+    {
+        if (!isReadOnly && onSelectedBlockImageHandle) return PointerTarget.SelectedBlockImageHandle;
+        if (!isReadOnly && onSelectedInlineImageHandle) return PointerTarget.SelectedInlineImageHandle;
+        if (inCellImage) return PointerTarget.CellImage;
+        if (inInlineImage) return PointerTarget.InlineImage;
+        if (inBlockImage) return PointerTarget.BlockImage;
+        return PointerTarget.None;
+    }
+
     private bool TryBeginImageInteraction(Point pt, PointerRoutedEventArgs e)
     {
-        // Resize handle of the already-selected BLOCK image (edit only). The drag is seeded from the
+        // Hit-test everything first, then let ChoosePointerTarget decide. The drag is seeded from the
         // rect the handle was DRAWN at, for both registries — see _cellImageRects for why.
-        if (!IsReadOnly && _selectedBlock is ImageBlock selB)
+        Rect? blockHandleRect = null;
+        if (_selectedBlock is ImageBlock selB)
             foreach (var rect in BlockImageHandleRects(selB))
-                if (OnResizeHandle(rect, pt))
-                {
-                    _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
-                    _resizingImage = selB;
-                    _imageAspect = rect.Height > 0 ? rect.Width / rect.Height : 1;
-                    _resizeStartX = pt.X;
-                    _resizeStartW = rect.Width;
-                    _canvas.CapturePointer(e.Pointer);
-                    return true;
-                }
+                if (OnResizeHandle(rect, pt)) { blockHandleRect = rect; break; }
 
-        // Resize handle of the already-selected INLINE image (edit only).
-        if (!IsReadOnly && _selectedInline is { } selI
+        (Paragraph p, InlineImage img)? selInline = null;
+        Rect inlineHandleRect = default;
+        if (_selectedInline is { } selI
             && _inlineImageRects.TryGetValue(selI.img, out var selRect) && OnResizeHandle(selRect.rect, pt))
+        { selInline = selI; inlineHandleRect = selRect.rect; }
+
+        ImageBlock? cellImage = null;
+        foreach (var (img, rect) in _cellImageRects)
+            if (rect.Contains(pt)) { cellImage = img; break; }
+
+        (Paragraph p, InlineImage img)? inlineImage = null;
+        foreach (var (img, v) in _inlineImageRects)
+            if (v.rect.Contains(pt)) { inlineImage = (v.p, img); break; }
+
+        ImageBlock? blockImage = null;
+        foreach (var (img, rect) in BlockImageRects())
+            if (rect.Contains(pt)) { blockImage = img; break; }
+
+        void SelectObject(ImageBlock? block, (Paragraph p, InlineImage img)? inline)
         {
-            _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
-            _resizingInline = selI.img;
-            _imageAspect = selI.img.Height > 0 ? selI.img.Width / selI.img.Height : 1;
-            _resizeStartX = pt.X;
-            _resizeStartW = selI.img.Width > 0 ? selI.img.Width : selRect.rect.Width;
-            _canvas.CapturePointer(e.Pointer);
-            return true;
+            _selectedBlock = block;
+            _selectedInline = inline;
+            _isSelecting = false;
+            CollapseSelectionToCaret();
+            RestartBlink();
+            InvalidateCanvas();
+            RaiseStatusChanged();
         }
 
-        // --- selection clicks. Every resize-handle test above runs first: a handle's grab band extends
-        // outside its own rect, so it can land inside a neighbouring object and must win. ---
-
-        // A click inside a cell-hosted block image selects it (top-level images are handled below).
-        foreach (var (img, rect) in _cellImageRects)
-            if (rect.Contains(pt))
+        switch (ChoosePointerTarget(IsReadOnly, blockHandleRect != null, selInline != null,
+                                    cellImage != null, inlineImage != null, blockImage != null))
+        {
+            case PointerTarget.SelectedBlockImageHandle:
             {
-                _selectedBlock = img;
-                _selectedInline = null;
-                _isSelecting = false;
-                CollapseSelectionToCaret();
-                RestartBlink();
-                InvalidateCanvas();
-                RaiseStatusChanged();
+                var rect = blockHandleRect!.Value;
+                _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
+                _resizingImage = (ImageBlock)_selectedBlock!;
+                _imageAspect = rect.Height > 0 ? rect.Width / rect.Height : 1;
+                _resizeStartX = pt.X;
+                _resizeStartW = rect.Width;
+                _canvas.CapturePointer(e.Pointer);
                 return true;
             }
-
-        // A click on an INLINE image selects it (checked before block — inline images sit within text).
-        foreach (var (img, v) in _inlineImageRects)
-            if (v.rect.Contains(pt))
+            case PointerTarget.SelectedInlineImageHandle:
             {
-                _selectedInline = (v.p, img);
-                _selectedBlock = null;
-                _isSelecting = false;
-                CollapseSelectionToCaret();
-                RestartBlink();
-                InvalidateCanvas();
-                RaiseStatusChanged();
+                var img = selInline!.Value.img;
+                _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
+                _resizingInline = img;
+                _imageAspect = img.Height > 0 ? img.Width / img.Height : 1;
+                _resizeStartX = pt.X;
+                _resizeStartW = img.Width > 0 ? img.Width : inlineHandleRect.Width;
+                _canvas.CapturePointer(e.Pointer);
                 return true;
             }
-
-        // A click inside a BLOCK image selects it.
-        foreach (var (img, rect) in BlockImageRects())
-            if (rect.Contains(pt))
-            {
-                _selectedBlock = img;
-                _selectedInline = null;
-                _isSelecting = false;
-                CollapseSelectionToCaret();
-                RestartBlink();
-                InvalidateCanvas();
-                RaiseStatusChanged();
-                return true;
-            }
-        return false;
+            case PointerTarget.CellImage:  SelectObject(cellImage, null); return true;
+            case PointerTarget.InlineImage: SelectObject(null, inlineImage); return true;
+            case PointerTarget.BlockImage: SelectObject(blockImage, null); return true;
+            default: return false;
+        }
     }
 
     // Live image resize during a pointer drag (aspect-locked). Returns true while a resize is active.

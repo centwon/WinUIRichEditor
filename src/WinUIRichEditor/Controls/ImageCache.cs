@@ -70,7 +70,8 @@ internal sealed class ImageCache
             stream.Seek(0);
             result = await CanvasBitmap.LoadAsync(device, stream);
         }
-        catch { result = null; } // undecodable: cache the failure so we don't retry every frame
+        // undecodable: cache the failure so we don't retry every frame
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); result = null; }
         // If the key was invalidated/cleared/pruned while decoding, don't resurrect a stale entry —
         // dispose the freshly decoded bitmap instead of publishing it.
         if (!_inflight.Remove(key)) { result?.Dispose(); return; }

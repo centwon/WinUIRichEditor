@@ -20,8 +20,9 @@ internal static class SystemFontInfo
             string name = ncm.lfMessageFont.lfFaceName;
             return string.IsNullOrWhiteSpace(name) ? null : name;
         }
-        catch
+        catch (Exception ex)
         {
+            RichEditorDiagnostics.Report(ex);
             return null;
         }
     }

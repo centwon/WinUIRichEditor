@@ -1,5 +1,7 @@
-﻿using System.Linq;
+﻿using System.Collections.Generic;
+using System.Linq;
 using Windows.UI;
+using WinUIRichEditor.Controls;
 using WinUIRichEditor.Documents;
 using WinUIRichEditor.Formatters;
 using Xunit;
@@ -1228,5 +1230,159 @@ public class EnhancementTests
         string text = PlainText(doc);
         Assert.Contains("real", text, System.StringComparison.Ordinal);
         Assert.DoesNotContain("fallback", text, System.StringComparison.Ordinal);
+    }
+
+    // ---- damaged RTF is reportable ----------------------------------------
+    //
+    // Parse() collapses "damaged" and "empty" into the same empty document, so a host loading a FILE
+    // could not tell them apart: a damaged .rtf blanked the open document and the next save wrote that
+    // blank over the original. TryParse separates the two. (LoadRtf's half of this is control-level and
+    // out of reach here — see DocumentFuzzTests on why the model layer is what tests can hold.)
+
+    // A control word's parameter is int.Parse'd; a digit run too long for int overflows mid-parse.
+    [Fact]
+    public void RtfTryParse_ReportsDamagedInput()
+    {
+        Assert.False(RtfDocumentFormatter.TryParse(
+            @"{\rtf1\ansi\fs99999999999999999999 x\par}", out var doc, out string? error));
+        Assert.NotNull(error);
+        Assert.Empty(doc.Blocks); // failure yields an empty document, never a half-read one
+    }
+
+    // The old contract: Parse() still swallows. Paste relies on it (it falls through to HTML/plain on an
+    // empty result), so changing it would reroute a working path.
+    [Fact]
+    public void RtfParse_StillReturnsEmptyOnDamagedInput()
+    {
+        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
+        Assert.Empty(doc.Blocks);
+    }
+
+    [Fact]
+    public void RtfTryParse_SucceedsOnValidInput()
+    {
+        Assert.True(RtfDocumentFormatter.TryParse(@"{\rtf1\ansi hello\par}", out var doc, out string? error));
+        Assert.Null(error);
+        Assert.Contains("hello", PlainText(doc), System.StringComparison.Ordinal);
+    }
+
+    // An RTF that parses cleanly but carries nothing is a SUCCESS — conflating it with damage is the
+    // very confusion this method exists to remove.
+    [Fact]
+    public void RtfTryParse_TreatsAnEmptyDocumentAsSuccess()
+    {
+        Assert.True(RtfDocumentFormatter.TryParse(@"{\rtf1\ansi}", out _, out string? error));
+        Assert.Null(error);
+    }
+
+    // ---- OS-owned input timings -------------------------------------------
+    //
+    // The caret blink rate and double-click interval used to be constants (530 / 500), which silently
+    // overrode two ACCESSIBILITY settings. What these tests can actually hold is the interop: the OS
+    // value cannot be asserted (it is whatever this machine is set to), but a wrong P/Invoke signature
+    // or an unresolved entry point would show up here as a throw or a nonsense value — and the failure
+    // mode being guarded against is exactly that the call quietly returns garbage and we adopt it.
+
+    [Fact]
+    public void SystemInputSettings_DoubleClickTimeIsPlausible()
+    {
+        double ms = SystemInputSettings.DoubleClickMs();
+        Assert.InRange(ms, 1, 10_000);
+    }
+
+    // null is a legitimate answer (user turned blinking off); any number must have cleared the floor.
+    [Fact]
+    public void SystemInputSettings_CaretBlinkIsPlausibleOrDisabled()
+    {
+        double? ms = SystemInputSettings.CaretBlinkMs();
+        if (ms is { } v) Assert.InRange(v, 100, 60_000);
+    }
+
+    [Fact]
+    public void SystemInputSettings_FallbacksAreTheWindowsDefaults()
+    {
+        Assert.Equal(530, SystemInputSettings.FallbackBlinkMs);
+        Assert.Equal(500, SystemInputSettings.FallbackDoubleClickMs);
+    }
+
+    // ---- swallowed-fault diagnostics --------------------------------------
+    //
+    // These live in THIS class deliberately: RichEditorDiagnostics is process-global state, xUnit runs
+    // test CLASSES in parallel, and the damaged-RTF parses above are the other things that raise faults.
+    // Keeping them in one class makes them sequential; the per-site filtering below covers the rest.
+
+    private static List<RichEditorFaultEventArgs> CaptureFaults(System.Action body)
+    {
+        var seen = new List<RichEditorFaultEventArgs>();
+        void Handler(object? _, RichEditorFaultEventArgs e) { lock (seen) seen.Add(e); }
+        RichEditorDiagnostics.Reset();
+        RichEditorDiagnostics.Fault += Handler;
+        try { body(); }
+        finally { RichEditorDiagnostics.Fault -= Handler; RichEditorDiagnostics.Reset(); }
+        return seen;
+    }
+
+    [Fact]
+    public void Diagnostics_ReportsASwallowedFault()
+    {
+        var faults = CaptureFaults(() => RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}"));
+        var f = Assert.Single(faults, e => e.File == "RtfDocumentFormatter.cs");
+        Assert.NotNull(f.Exception);
+        Assert.True(f.Line > 0);
+        Assert.NotEmpty(f.Member);
+        Assert.Contains(f.Exception.GetType().Name, f.ToString(), System.StringComparison.Ordinal);
+    }
+
+    // Several wired sites sit in the render / caret-metrics paths, where a persistent fault would fire
+    // many times a second. Without this the hook would bury everything else and be unusable there.
+    [Fact]
+    public void Diagnostics_ReportsEachDistinctFaultOnce()
+    {
+        const string damaged = @"{\rtf1\ansi\fs99999999999999999999 x\par}";
+        var faults = CaptureFaults(() =>
+        {
+            RtfDocumentFormatter.Parse(damaged);
+            RtfDocumentFormatter.Parse(damaged);
+            RtfDocumentFormatter.Parse(damaged);
+        });
+        Assert.Single(faults, e => e.File == "RtfDocumentFormatter.cs");
+    }
+
+    [Fact]
+    public void Diagnostics_ResetReArmsReporting()
+    {
+        const string damaged = @"{\rtf1\ansi\fs99999999999999999999 x\par}";
+        var faults = CaptureFaults(() =>
+        {
+            RtfDocumentFormatter.Parse(damaged);
+            RichEditorDiagnostics.Reset();
+            RtfDocumentFormatter.Parse(damaged);
+        });
+        Assert.Equal(2, faults.Count(e => e.File == "RtfDocumentFormatter.cs"));
+    }
+
+    // The fallback has already run by the time the event fires; letting a handler's exception escape
+    // would turn a handled fault into the crash the whole design avoids.
+    [Fact]
+    public void Diagnostics_SurvivesAThrowingHandler()
+    {
+        void Bad(object? _, RichEditorFaultEventArgs e) => throw new System.InvalidOperationException("boom");
+        RichEditorDiagnostics.Reset();
+        RichEditorDiagnostics.Fault += Bad;
+        try
+        {
+            var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
+            Assert.Empty(doc.Blocks); // the fallback still happened
+        }
+        finally { RichEditorDiagnostics.Fault -= Bad; RichEditorDiagnostics.Reset(); }
+    }
+
+    // With nobody listening the call must cost nothing and, above all, not throw.
+    [Fact]
+    public void Diagnostics_IsInertWithoutSubscribers()
+    {
+        RichEditorDiagnostics.Reset();
+        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
+        Assert.Empty(doc.Blocks);
     }
 }

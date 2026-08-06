@@ -38,8 +38,12 @@ public partial class RichEditor
     private DateTime _lastPressTime;
     private Point _lastPressPos;
     private int _clickCount;
-    private const double MultiClickMs = 500;
     private const double MultiClickSlop = 6;
+
+    // OS-owned timings, re-read on focus gain (see RefreshSystemInputTimings). _blinkMs is null when the
+    // user has turned caret blinking off.
+    private double _multiClickMs = SystemInputSettings.FallbackDoubleClickMs;
+    private double? _blinkMs = SystemInputSettings.FallbackBlinkMs;
 
     // SelectionFill / CaretColor are now instance-computed from SelectionBrush / CaretBrush
     // (see RichEditor.Appearance.cs).
@@ -62,7 +66,14 @@ public partial class RichEditor
 
         _canvas.KeyDown += OnEditorKeyDown;
         _canvas.CharacterReceived += OnEditorCharacterReceived;
-        _canvas.GotFocus += (_, _) => { _hasFocus = true; ImeNotifyFocusEnter(); RestartBlink(); InvalidateCanvas(); };
+        _canvas.GotFocus += (_, _) =>
+        {
+            _hasFocus = true;
+            ImeNotifyFocusEnter();
+            RefreshSystemInputTimings(); // the user may have changed them while we were away
+            RestartBlink();
+            InvalidateCanvas();
+        };
         _canvas.LostFocus += (_, _) => { _hasFocus = false; ImeNotifyFocusLeave(); StopBlink(); InvalidateCanvas(); };
 
         // Drag-and-drop of image files onto the editor (inserts each as a block image).
@@ -70,18 +81,40 @@ public partial class RichEditor
         DragOver += OnEditorDragOver;
         Drop += OnEditorDrop;
 
-        _blink = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
+        // Seeded with the fallback so the interval is never TimeSpan.Zero: RefreshSystemInputTimings
+        // leaves it untouched when the user has blinking off (nothing starts the timer then), and a
+        // zero-interval timer that some later path did start would tick the UI thread without pause.
+        _blink = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(SystemInputSettings.FallbackBlinkMs) };
         _blink.Tick += (_, _) => { _caretOn = !_caretOn; InvalidateCanvas(); };
+        RefreshSystemInputTimings(); // sets the blink interval; there is no meaningful built-in default
 
         SetupIme();
         SetupContextMenu();
+    }
+
+    // Re-reads the caret blink rate and double-click interval from the OS. Called at setup and on every
+    // focus gain: this control has no WM_SETTINGCHANGE hook, and focus gain is exactly when the user
+    // comes back — including from the Settings page they just changed.
+    private void RefreshSystemInputTimings()
+    {
+        _blinkMs = SystemInputSettings.CaretBlinkMs();
+        _multiClickMs = SystemInputSettings.DoubleClickMs();
+        if (_blink != null && _blinkMs is { } ms) _blink.Interval = TimeSpan.FromMilliseconds(ms);
     }
 
     // Puts the caret in its "on" phase and restarts blinking. A READ-ONLY editor never runs the timer:
     // when ShowCaretWhenReadOnly is set the viewer's caret is deliberately static (a blinking caret reads
     // as "type here"), and when it isn't set DrawCaret suppresses the caret anyway, so a timer ticking
     // twice a second would only invalidate the canvas for nothing.
-    private void RestartBlink() { _caretOn = true; _blink?.Stop(); if (_hasFocus && !IsReadOnly) _blink?.Start(); }
+    //
+    // _blinkMs == null means the USER turned blinking off. That leaves the caret parked in its "on"
+    // phase — steady, not hidden — which is the same shape as the read-only caret above.
+    private void RestartBlink()
+    {
+        _caretOn = true;
+        _blink?.Stop();
+        if (_hasFocus && !IsReadOnly && _blinkMs != null) _blink?.Start();
+    }
     private void StopBlink() { _blink?.Stop(); _caretOn = false; }
     private void InvalidateCanvas() => _canvas.Invalidate();
 
@@ -265,7 +298,7 @@ public partial class RichEditor
             _pressLink = (roUri, new Point(ptp.X, ptp.Y));
 
         var now = DateTime.UtcNow;
-        bool repeat = (now - _lastPressTime).TotalMilliseconds < MultiClickMs
+        bool repeat = (now - _lastPressTime).TotalMilliseconds < _multiClickMs
             && Math.Abs(ptp.X - _lastPressPos.X) + Math.Abs(ptp.Y - _lastPressPos.Y) < MultiClickSlop;
         _clickCount = repeat ? _clickCount + 1 : 1;
         _lastPressTime = now;
@@ -616,7 +649,7 @@ public partial class RichEditor
                                 }
                     }
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
             off += InlineLen(inl);
         }
@@ -693,10 +726,10 @@ public partial class RichEditor
                     var (iw, _) = ImageInfo.GetPixelSize(bytes);
                     if (iw > 0) InsertImageBlock(bytes);
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         finally { deferral.Complete(); }
     }
 
@@ -1539,7 +1572,8 @@ public partial class RichEditor
         double innerW = Math.Max(10, cellRect.Width - 2 * CellPad - pl);
         var layout = BuildTextLayout(p, innerW);
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return firstLine ? 0 : GetParagraphLength(p); }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return firstLine ? 0 : GetParagraphLength(p); }
         if (lines.Length == 0) return 0;
         int line = firstLine ? 0 : lines.Length - 1;
         double yTop = 0;
@@ -1554,7 +1588,8 @@ public partial class RichEditor
         double pWidth = Math.Max(10, _layoutWidth - 20 - px - p.MarginRight);
         var layout = BuildTextLayout(p, pWidth);
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return firstLine ? 0 : GetParagraphLength(p); }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return firstLine ? 0 : GetParagraphLength(p); }
         if (lines.Length == 0) return 0;
         int line = firstLine ? 0 : lines.Length - 1;
         double yTop = 0;
@@ -1572,7 +1607,8 @@ public partial class RichEditor
         double pWidth = Math.Max(10, _layoutWidth - 20 - px - p.MarginRight);
         var layout = BuildTextLayout(p, pWidth);
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return false; }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
         if (lines.Length <= 1) return false;
 
         int len = GetParagraphLength(p);
@@ -1741,7 +1777,11 @@ public partial class RichEditor
         var layout = BuildTextLayout(p, ParagraphWrapWidth(p));
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
         try { lines = layout.LineMetrics; }
-        catch { lines = System.Array.Empty<Microsoft.Graphics.Canvas.Text.CanvasLineMetrics>(); }
+        catch (Exception ex)
+        {
+            RichEditorDiagnostics.Report(ex);
+            lines = System.Array.Empty<Microsoft.Graphics.Canvas.Text.CanvasLineMetrics>();
+        }
 
         bool atLineEnd = false;
         if (lines.Length > 1)
@@ -2040,7 +2080,7 @@ public partial class RichEditor
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
             }
             off += InlineLen(inl);
         }
@@ -2080,7 +2120,7 @@ public partial class RichEditor
                 ds.FillRectangle(new Rect(px + lb.X, oy + lb.Y, lb.Width, lb.Height), SelectionFill);
             }
         }
-        catch { }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     private void DrawCaret(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, double px, double oy)
@@ -2111,7 +2151,7 @@ public partial class RichEditor
         // Off-boundary the two edges coincide, so applying the trailing form there is harmless.
         bool trailing = atLineEnd && offset > 0;
         try { pos = layout.GetCaretPosition(trailing ? offset - 1 : offset, trailing); }
-        catch { pos = new Vector2(0, 0); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); pos = new Vector2(0, 0); }
         yTop = pos.Y;
         // Caret parked at the very end of a paragraph that ends in a soft break ("…\n"): it belongs on
         // the NEW empty visual line, and GetCaretPosition already puts it there. The region probe below
@@ -2165,7 +2205,7 @@ public partial class RichEditor
                     else { h = rb.Height; yTop = rb.Y; } // no metrics: fall back to the line box
                 }
             }
-            catch { }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         }
         // No region probed: the caret IS the line.
         if (double.IsNaN(lineTop)) lineTop = yTop;
@@ -2178,7 +2218,8 @@ public partial class RichEditor
     private static double BaselineOfLineAt(CanvasTextLayout layout, int offset)
     {
         Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; } catch { return double.NaN; }
+        try { lines = layout.LineMetrics; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return double.NaN; }
         int acc = 0;
         for (int i = 0; i < lines.Length; i++)
         {

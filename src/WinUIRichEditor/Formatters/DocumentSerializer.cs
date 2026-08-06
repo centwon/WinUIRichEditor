@@ -445,7 +445,7 @@ public static class DocumentSerializer
     {
         if (string.IsNullOrEmpty(value)) return null;
         try { return Convert.FromBase64String(value); }
-        catch { return null; }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return null; }
     }
 }
 
