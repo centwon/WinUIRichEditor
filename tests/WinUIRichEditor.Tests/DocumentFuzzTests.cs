@@ -534,18 +534,46 @@ public class DocumentFuzzTests
         {
             case Paragraph p:
                 sb.Append("P").Append(ParaFmt(p)).Append('[');
-                foreach (var inl in p.Inlines)
-                {
-                    if (inl is Run r) { sb.Append(r.Text); sb.Append(RunFmt(r)); }
-                    else if (inl is InlineTable it) { sb.Append("<IT"); ShapeTable(sb, it.Table); sb.Append('>'); }
-                    else if (inl is InlineImage im) sb.Append("<IMG").Append(ImgFmt(im.Width, im.Height, im.AltText)).Append('>');
-                }
+                ShapeInlines(sb, p);
                 sb.Append(']');
                 break;
             case TableBlock tb: sb.Append("T"); ShapeTable(sb, tb); break;
             case ImageBlock ib: sb.Append("IMGBLK").Append(ImgFmt(ib.Width, ib.Height, ib.AltText)); break;
             case DividerBlock: sb.Append("HR"); break;
         }
+    }
+
+    // A paragraph's inlines, canonical with respect to RUN BOUNDARIES. Where one run ends and the next
+    // begins is not part of the document's content when both carry the same formatting, and the loaders
+    // coalesce such neighbours on purpose (RunNormalizer exists to do it). A signature that recorded the
+    // boundaries reported every one of those as a difference — 12 of them on the first wide run — which
+    // is exactly how a real finding gets buried. Empty runs are skipped for the same reason: they carry
+    // no content, and a loader is free to drop them.
+    private static void ShapeInlines(StringBuilder sb, Paragraph p)
+    {
+        string text = "", fmt = "";
+        bool pending = false;
+        void Flush()
+        {
+            if (!pending) return;
+            sb.Append(text).Append(fmt);
+            pending = false; text = "";
+        }
+
+        foreach (var inl in p.Inlines)
+        {
+            if (inl is Run r)
+            {
+                if (string.IsNullOrEmpty(r.Text)) continue;
+                string f = RunFmt(r);
+                if (pending && f == fmt) { text += r.Text; continue; }
+                Flush();
+                text = r.Text!; fmt = f; pending = true;
+            }
+            else if (inl is InlineTable it) { Flush(); sb.Append("<IT"); ShapeTable(sb, it.Table); sb.Append('>'); }
+            else if (inl is InlineImage im) { Flush(); sb.Append("<IMG").Append(ImgFmt(im.Width, im.Height, im.AltText)).Append('>'); }
+        }
+        Flush();
     }
 
     // ---- formatting signatures -----------------------------------------------------------------

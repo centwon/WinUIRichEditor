@@ -669,6 +669,141 @@ public class FormatterRoundTripTests
         Assert.Contains('\n', all);
     }
 
+    // Paragraph-level formatting inside a table cell, out through HTML and back. The writer used to emit
+    // a cell's paragraphs as BARE INLINES separated by <br>, and bare inlines can carry nothing
+    // paragraph-level — so a bulleted, centred, indented, shaded or heading cell paragraph lost all of it
+    // on export, including into the clipboard's HTML flavour (a bulleted cell pasted into Word as plain
+    // lines). The READER could always do it: foreign Word tables with bulleted cells parse correctly, so
+    // this was the writer alone.
+    [Fact]
+    public void Html_RoundTrips_ParagraphFormatting_InsideACell()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(1, 2);
+        var c0 = tb.Cells[0][0];
+        c0.Blocks.Clear();
+        c0.Blocks.Add(new Paragraph { ListType = ListKind.Bullet, ListMarker = ListMarkerStyle.Square, Inlines = { new Run { Text = "one" } } });
+        c0.Blocks.Add(new Paragraph { ListType = ListKind.Bullet, ListMarker = ListMarkerStyle.Square, ListLevel = 1, Inlines = { new Run { Text = "two" } } });
+        var c1 = tb.Cells[0][1];
+        c1.Blocks.Clear();
+        c1.Blocks.Add(new Paragraph { HeadingLevel = 2, TextAlignment = TextAlignment.Center, Inlines = { new Run { Text = "head" } } });
+        c1.Blocks.Add(new Paragraph { Indent = 40, LineSpacing = 2.0, Background = Red, Inlines = { new Run { Text = "body" } } });
+        doc.Blocks.Add(tb);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var t = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock));
+
+        var a = t.Cells[0][0].Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, a.Count);
+        Assert.All(a, p => Assert.Equal(ListKind.Bullet, p.ListType));
+        Assert.All(a, p => Assert.Equal(ListMarkerStyle.Square, p.ListMarker));
+        Assert.Equal(0, a[0].ListLevel);
+        Assert.Equal(1, a[1].ListLevel);
+
+        var b2 = t.Cells[0][1].Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, b2.Count);
+        Assert.Equal(2, b2[0].HeadingLevel);
+        Assert.Equal(TextAlignment.Center, b2[0].TextAlignment);
+        Assert.Equal(40, b2[1].Indent);
+        Assert.Equal(2.0, b2[1].LineSpacing);
+        Assert.Equal(Red, b2[1].Background);
+    }
+
+    // Two paragraphs in a cell stay two. They were joined with <br>, which the reader has never read as a
+    // paragraph boundary — it comes back as a newline inside ONE paragraph — so every HTML cycle collapsed
+    // a multi-paragraph cell. The round-trip fuzz could not see it: once collapsed it stays collapsed, so
+    // cycle 2 matches cycle 1 and the loss is perfectly idempotent.
+    [Fact]
+    public void Html_RoundTrips_TwoParagraphsInACell_AsTwo()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(1, 1);
+        var cell = tb.Cells[0][0];
+        cell.Blocks.Clear();
+        cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "first" } } });
+        cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "second" } } });
+        doc.Blocks.Add(tb);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var cellBack = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock)).Cells[0][0];
+        var ps = cellBack.Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, ps.Count);
+        Assert.Equal("first", Plain(ps[0]));
+        Assert.Equal("second", Plain(ps[1]));
+        // A soft break inside ONE cell paragraph is still a newline, not a split — the two must not be
+        // confused now that <br> no longer separates paragraphs here.
+        Assert.DoesNotContain('\n', Plain(ps[0]));
+    }
+
+    // A nested block table inside a cell must not leave a space glued to the text after it. This is a
+    // GUARD, not proof of a fix: it passes with or without EmitTable honouring `tight`, because the
+    // reader ignores that whitespace while no paragraph is pending. It pins the property the writer's
+    // cell handling now depends on.
+    [Fact]
+    public void Html_NestedTableInACell_DoesNotGrowASpaceAfterIt()
+    {
+        var doc = new FlowDocument();
+        var outer = new TableBlock(1, 1);
+        var cell = outer.Cells[0][0];
+        cell.Blocks.Clear();
+        var inner = new TableBlock(1, 1);
+        ((Run)inner.Cells[0][0].Para.Inlines[0]).Text = "inner";
+        cell.Blocks.Add(inner);
+        cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "after" } } });
+        doc.Blocks.Add(outer);
+
+        // Two cycles: this is the accumulating class, so one cycle is not the test.
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+        foreach (var d in new[] { once, twice })
+        {
+            var c = Assert.IsType<TableBlock>(d.Blocks.Single(b => b is TableBlock)).Cells[0][0];
+            var text = string.Concat(c.Blocks.OfType<Paragraph>().Select(Plain));
+            Assert.Equal("after", text);
+        }
+    }
+
+    // A paragraph that holds a PICTURE keeps its own formatting on import. The walker's
+    // "recurse into anything containing block-or-media" branch ran before the one that reads a
+    // paragraph element's style, so an <img> anywhere in the paragraph turned <p style="…"> into a mere
+    // container and every paragraph-level value was dropped — a captioned picture lost its centring on
+    // every HTML load, at the top level as much as in a cell.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Html_ParagraphHoldingAnImage_KeepsItsOwnFormatting(bool inCell)
+    {
+        // 20x20 is below the icon threshold, so it lands as an inline image on a text line.
+        const string img = "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8//8/AzJgYkAD5AsAAP//A+8DTgn2rL0AAAAASUVORK5CYII=\" width=\"20\" height=\"20\"/>";
+        const string para = "<p style=\"text-align:center;margin-left:40px;line-height:200%;\">caption" + img + "</p>";
+        string html = inCell ? $"<table><tr><td>{para}</td></tr></table>" : para;
+
+        var doc = HtmlDocumentFormatter.ParseHtml(html);
+        var p = inCell
+            ? Assert.IsType<TableBlock>(doc.Blocks.Single(b => b is TableBlock)).Cells[0][0].Blocks.OfType<Paragraph>().First()
+            : doc.Blocks.OfType<Paragraph>().First();
+
+        Assert.Equal(TextAlignment.Center, p.TextAlignment);
+        Assert.Equal(40, p.Indent);
+        Assert.Equal(2.0, p.LineSpacing);
+        Assert.Contains(p.Inlines, i => i is InlineImage); // the picture is still there
+        Assert.Contains("caption", string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
+    // The narrowing that keeps the fix from changing foreign HTML: a <div> that wraps real block
+    // children is still walked as a container, and its styling does NOT descend onto them. Only an
+    // element whose sole block-or-media content is media counts as "a paragraph holding a picture".
+    [Fact]
+    public void Html_ContainerWrappingBlocks_DoesNotPushItsStyleOntoThem()
+    {
+        var doc = HtmlDocumentFormatter.ParseHtml(
+            "<div style=\"text-align:center;margin-left:60px\"><p>a</p><p>b</p></div>");
+        var ps = doc.Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, ps.Count);
+        Assert.All(ps, p => Assert.Equal(TextAlignment.Left, p.TextAlignment));
+        Assert.All(ps, p => Assert.Equal(0, p.Indent));
+    }
+
     // A paragraph fill inside a table cell, through the two NATIVE save formats — which have to be
     // lossless. The legacy one-paragraph cell encoding shares a single Background field between the
     // cell's fill and the paragraph's, and the cell's assignment came last: with no cell fill the
