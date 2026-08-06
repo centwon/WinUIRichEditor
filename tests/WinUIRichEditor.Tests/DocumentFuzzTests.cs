@@ -118,6 +118,39 @@ public class DocumentFuzzTests
                 (failures.Count > 12 ? $"\n\n… and {failures.Count - 12} more" : ""));
     }
 
+    // The two NATIVE formats must be lossless, and idempotency cannot tell you whether they are: a
+    // format that every cycle drops equally is idempotent and gone. JSON and .flow are this editor's own
+    // save formats — a document saved and reopened has to come back identical, formatting included — so
+    // here the comparison is against the ORIGINAL rather than against the previous cycle. (HTML and RTF
+    // are excluded on purpose: they are interchange formats with documented losses, so only the
+    // idempotency test above applies to them.)
+    [Fact]
+    public void RandomDocuments_SurviveTheNativeFormatsWithoutLoss()
+    {
+        var failures = new List<string>();
+        for (int seed = 0; seed < Seeds; seed++)
+        {
+            var rng = new Random(seed);
+            var doc = SeedDocument(rng);
+            for (int step = 0; step < 40; step++) ApplyRandomOp(doc, rng);
+            string before = Shape(doc);
+
+            foreach (var (name, round) in RoundTrips())
+            {
+                if (name is not ("json" or "flow")) continue;
+                string after;
+                try { after = Shape(round(doc)); }
+                catch (Exception ex) { failures.Add($"seed {seed} / {name} threw: {ex}"); continue; }
+                if (before != after)
+                    failures.Add($"seed {seed} / {name} lost or changed something.\n" + Diff(before, after));
+            }
+        }
+        if (failures.Count > 0)
+            throw new Xunit.Sdk.XunitException(
+                $"{failures.Count} failure(s) over {Seeds} seeds:\n\n" + string.Join("\n\n", failures.Take(12)) +
+                (failures.Count > 12 ? $"\n\n… and {failures.Count - 12} more" : ""));
+    }
+
     private static (string, Func<FlowDocument, FlowDocument>)[] RoundTrips() => new (string, Func<FlowDocument, FlowDocument>)[]
     {
         ("json", d => DocumentSerializer.Deserialize(DocumentSerializer.Serialize(d))),
@@ -179,7 +212,9 @@ public class DocumentFuzzTests
         var paras = AllParagraphs(doc).ToList();
         var tables = AllTables(doc).ToList();
 
-        switch (rng.Next(22))
+        // 23 ops, and `default` is still one of them (RunNormalizer.Compact) — a new case must WIDEN this
+        // bound, not take the last number, or the default branch silently stops running.
+        switch (rng.Next(23))
         {
             case 18:
                 doc.Blocks.Insert(rng.Next(doc.Blocks.Count + 1), new DividerBlock());
@@ -228,6 +263,14 @@ public class DocumentFuzzTests
                     if (rng.Next(3) == 0) r.Foreground = Color.FromArgb(255, (byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
                     if (rng.Next(4) == 0) r.Background = Color.FromArgb(255, (byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
                     if (rng.Next(4) == 0) r.NavigateUri = "https://example.com/" + rng.Next(100);
+                    // The rest of the character format. Italic, the decorations and an explicit family/size
+                    // were never generated, so nothing downstream of them was fuzzed at all — and a
+                    // fractional size is the one that has bitten this codebase before (10.5pt never
+                    // matched the toolbar's combo because an int round-tripped where a double was meant).
+                    if (rng.Next(3) == 0) r.FontStyle = Windows.UI.Text.FontStyle.Italic;
+                    if (rng.Next(3) == 0) r.TextDecorations |= (TextDecorationFlags)(1 + rng.Next(3));
+                    if (rng.Next(4) == 0) r.FontFamily = rng.Next(2) == 0 ? "Segoe UI" : "맑은 고딕";
+                    if (rng.Next(4) == 0) r.FontSize = 8 + rng.Next(20) + (rng.Next(2) == 0 ? 0.5 : 0);
                 }
                 return "style runs";
             }
@@ -240,7 +283,26 @@ public class DocumentFuzzTests
                 p.ListType = (ListKind)rng.Next(3);
                 p.ListLevel = rng.Next(3);
                 if (rng.Next(3) == 0) p.LineSpacing = 1.0 + rng.Next(4) * 0.5; // 1.0 … 2.5
+                // Also never generated: alignment, the marker style that refines ListType, the paragraph
+                // fill, the right margin and an absolute line height. Each has its own writer/reader pair
+                // in all four formats.
+                if (rng.Next(3) == 0) p.TextAlignment = (Microsoft.UI.Xaml.TextAlignment)rng.Next(4);
+                if (rng.Next(3) == 0) p.ListMarker = (ListMarkerStyle)rng.Next(10);
+                if (rng.Next(4) == 0) p.Background = Color.FromArgb(255, (byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
+                if (rng.Next(5) == 0) p.MarginRight = rng.Next(3) * 15;
+                if (rng.Next(6) == 0) p.LineHeight = 12 + rng.Next(20);
                 return "paragraph format";
+            }
+            case 22:
+            {
+                // Alt text — the accessibility description, which round-trips through JSON/.flow and HTML
+                // and has no RTF spelling at all. Never generated before this audit.
+                var imgs = AllImages(doc).ToList();
+                if (imgs.Count == 0) return "alt text (skipped)";
+                var target = imgs[rng.Next(imgs.Count)];
+                string alt = "설명 " + rng.Next(50);
+                if (target is ImageBlock ib2) ib2.AltText = alt; else ((InlineImage)target).AltText = alt;
+                return "alt text";
             }
             case 5:
             {
@@ -471,19 +533,81 @@ public class DocumentFuzzTests
         switch (b)
         {
             case Paragraph p:
-                sb.Append("P[");
+                sb.Append("P").Append(ParaFmt(p)).Append('[');
                 foreach (var inl in p.Inlines)
                 {
-                    if (inl is Run r) sb.Append(r.Text);
+                    if (inl is Run r) { sb.Append(r.Text); sb.Append(RunFmt(r)); }
                     else if (inl is InlineTable it) { sb.Append("<IT"); ShapeTable(sb, it.Table); sb.Append('>'); }
-                    else if (inl is InlineImage) sb.Append("<IMG>");
+                    else if (inl is InlineImage im) sb.Append("<IMG").Append(ImgFmt(im.Width, im.Height, im.AltText)).Append('>');
                 }
                 sb.Append(']');
                 break;
             case TableBlock tb: sb.Append("T"); ShapeTable(sb, tb); break;
-            case ImageBlock: sb.Append("IMGBLK"); break;
+            case ImageBlock ib: sb.Append("IMGBLK").Append(ImgFmt(ib.Width, ib.Height, ib.AltText)); break;
             case DividerBlock: sb.Append("HR"); break;
         }
+    }
+
+    // ---- formatting signatures -----------------------------------------------------------------
+    //
+    // The fuzz has been STYLING documents since it was written (case 3 sets weight, colours and link
+    // targets; case 4 sets heading/quote/indent/list/spacing; case 12 sets cell fills and alignment) and
+    // then comparing shapes that recorded NONE of it. That is the same hole the 2026-08-06 image/divider
+    // round found from the other side — generation without observation is silently 0% coverage — so these
+    // signatures close the pair: what the ops produce is now what the comparison reads.
+    //
+    // Only non-defaults are emitted, so an unstyled document's signature is empty and the shapes stay
+    // readable. Doubles are rounded, because a format that legitimately quantizes (RTF half-points,
+    // twips) settles in cycle 1 and this test compares cycle 1 against cycle 2 — the failures it reports
+    // are formats that keep MOVING, not formats a writer cannot express.
+    private static string Num(double d) => double.IsNaN(d) ? "nan" : Math.Round(d, 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string Col(Color? c) => c is { } k ? $"#{k.A:X2}{k.R:X2}{k.G:X2}{k.B:X2}" : "";
+
+    private static string Wrap(List<string> parts) => parts.Count == 0 ? "" : "{" + string.Join(",", parts) + "}";
+
+    private static string RunFmt(Run r)
+    {
+        var parts = new List<string>();
+        if (r.FontWeight.Weight != 400) parts.Add("w" + r.FontWeight.Weight);
+        if (r.FontStyle != Windows.UI.Text.FontStyle.Normal) parts.Add("i" + r.FontStyle);
+        if (r.TextDecorations != TextDecorationFlags.None) parts.Add("d" + r.TextDecorations);
+        if (r.Foreground != null) parts.Add("fg" + Col(r.Foreground));
+        if (r.Background != null) parts.Add("bg" + Col(r.Background));
+        if (r.FontFamily != null) parts.Add("ff" + r.FontFamily);
+        if (Math.Abs(r.FontSize - 10) > 0.005) parts.Add("fs" + Num(r.FontSize));
+        if (!string.IsNullOrEmpty(r.NavigateUri)) parts.Add("a" + r.NavigateUri);
+        return Wrap(parts);
+    }
+
+    private static string ParaFmt(Paragraph p)
+    {
+        var parts = new List<string>();
+        if (p.HeadingLevel != 0) parts.Add("h" + p.HeadingLevel);
+        if (p.IsQuote) parts.Add("q");
+        if (p.ListType != ListKind.None) parts.Add("l" + p.ListType + "/" + p.ListLevel + "/" + p.ListMarker);
+        if (p.TextAlignment != Microsoft.UI.Xaml.TextAlignment.Left) parts.Add("al" + p.TextAlignment);
+        if (p.Background != null) parts.Add("bg" + Col(p.Background));
+        if (p.Indent != 0) parts.Add("in" + Num(p.Indent));
+        if (p.MarginRight != 0) parts.Add("mr" + Num(p.MarginRight));
+        if (!double.IsNaN(p.LineSpacing)) parts.Add("ls" + Num(p.LineSpacing));
+        if (!double.IsNaN(p.LineHeight)) parts.Add("lh" + Num(p.LineHeight));
+        return Wrap(parts);
+    }
+
+    private static string CellFmt(TableCell cell)
+    {
+        var parts = new List<string>();
+        if (cell.Background != null) parts.Add("bg" + Col(cell.Background));
+        if (cell.VerticalAlignment != CellVerticalAlignment.Top) parts.Add("va" + cell.VerticalAlignment);
+        return Wrap(parts);
+    }
+
+    private static string ImgFmt(double w, double h, string? alt)
+    {
+        var parts = new List<string> { Num(w) + "x" + Num(h) };
+        if (!string.IsNullOrEmpty(alt)) parts.Add("alt" + alt);
+        return Wrap(parts);
     }
 
     private static void ShapeTable(StringBuilder sb, TableBlock tb)
@@ -494,7 +618,7 @@ public class DocumentFuzzTests
             var (cs, rs) = tb.SpanOf(r, c);
             sb.Append('|').Append(r).Append(',').Append(c);
             if (cs > 1 || rs > 1) sb.Append('s').Append(cs).Append('x').Append(rs);
-            sb.Append(':');
+            sb.Append(CellFmt(cell)).Append(':');
             foreach (var cb in cell.Blocks) ShapeBlock(sb, cb);
         }
         sb.Append(')');
@@ -534,6 +658,31 @@ public class DocumentFuzzTests
             else if (b is TableBlock tb)
                 foreach (var (_, _, cell) in tb.LogicalCells())
                     foreach (var q in ParasIn(cell.Blocks)) yield return q;
+        }
+    }
+
+    // Every picture in the document, block or inline, at any nesting depth — returned as the base
+    // TextElement because the two types share no image interface.
+    private static IEnumerable<TextElement> AllImages(FlowDocument doc) => ImagesIn(doc.Blocks);
+
+    private static IEnumerable<TextElement> ImagesIn(IEnumerable<Block> blocks)
+    {
+        foreach (var b in blocks)
+        {
+            if (b is ImageBlock ib) yield return ib;
+            else if (b is Paragraph p)
+            {
+                foreach (var inl in p.Inlines)
+                {
+                    if (inl is InlineImage im) yield return im;
+                    else if (inl is InlineTable it)
+                        foreach (var (_, _, cell) in it.Table.LogicalCells())
+                            foreach (var x in ImagesIn(cell.Blocks)) yield return x;
+                }
+            }
+            else if (b is TableBlock tb)
+                foreach (var (_, _, cell) in tb.LogicalCells())
+                    foreach (var x in ImagesIn(cell.Blocks)) yield return x;
         }
     }
 

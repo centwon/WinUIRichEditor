@@ -668,4 +668,44 @@ public class FormatterRoundTripTests
         Assert.Contains("two", all);
         Assert.Contains('\n', all);
     }
+
+    // A paragraph fill inside a table cell, through the two NATIVE save formats — which have to be
+    // lossless. The legacy one-paragraph cell encoding shares a single Background field between the
+    // cell's fill and the paragraph's, and the cell's assignment came last: with no cell fill the
+    // paragraph's was overwritten with null and gone. Both cases are pinned, because the second (fills
+    // on both) is the one that still reads as "the cell kept its colour" while the paragraph's is lost.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NativeFormats_KeepAParagraphFillInsideACell(bool cellFilledToo)
+    {
+        var cellFill = new Color { A = 255, R = 0, G = 0, B = 255 };
+        FlowDocument Build()
+        {
+            var doc = new FlowDocument();
+            var tb = new TableBlock(1, 1);
+            var cell = tb.Cells[0][0];
+            cell.Blocks.Clear();
+            cell.Blocks.Add(new Paragraph { Background = Red, Inlines = { new Run { Text = "filled" } } });
+            if (cellFilledToo) cell.Background = cellFill;
+            doc.Blocks.Add(tb);
+            return doc;
+        }
+
+        static Paragraph FirstCellParagraph(FlowDocument d)
+            => Assert.IsType<Paragraph>(Assert.IsType<TableBlock>(d.Blocks[0]).Cells[0][0].Blocks[0]);
+
+        var viaJson = DocumentSerializer.Deserialize(DocumentSerializer.Serialize(Build()));
+        Assert.Equal(Red, FirstCellParagraph(viaJson).Background);
+
+        using var ms = new MemoryStream();
+        DocumentPackage.Save(Build(), ms);
+        ms.Position = 0;
+        var viaFlow = DocumentPackage.Load(ms);
+        Assert.Equal(Red, FirstCellParagraph(viaFlow).Background);
+
+        // The cell's own fill still round-trips — the two are separate values, not one.
+        var cellAfter = Assert.IsType<TableBlock>(viaFlow.Blocks[0]).Cells[0][0];
+        Assert.Equal(cellFilledToo ? cellFill : (Color?)null, cellAfter.Background);
+    }
 }
