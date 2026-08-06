@@ -44,6 +44,10 @@ public partial class RichEditor
                 // this callback, leaving a stale region outside the new bounds — CreateDrawingSession
                 // then throws E_INVALIDARG. Skip it: the resize already queued a fresh invalidation for
                 // the new size. Left unhandled this is app-fatal (a stowed 0xc000027b XAML crash).
+                // Reported like every other swallow: a host debugging "the canvas went blank" otherwise
+                // has no way to tell a skipped region from a document that drew nothing. Diagnostics
+                // dedupes per site, so a persistent fault cannot flood the render path.
+                RichEditorDiagnostics.Report(ex);
             }
         }
     }
