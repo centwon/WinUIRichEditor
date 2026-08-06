@@ -25,20 +25,23 @@ namespace WinUIRichEditor.Tests;
 // RunNormalizer, and all four formatters — which is where structural corruption would land anyway.
 public class DocumentFuzzTests
 {
-    // 24 seeds is the CI budget (a second or so). Widening it is the point of a fuzz, and doing so is
-    // how the defects below were found — so widen it deliberately when touching the formatters.
-    // KNOWN, currently reproducible at Seeds >= 27: HTML loses a single space inside a MERGED cell on
-    // the SECOND round trip. MergeCells joins the covered cell's text space-separated; when that space
-    // ends up as its own whitespace-only #text node between two <span>s, the block walk drops it
-    // (see the `#text` branch in WalkBlocks). Deliberately not fixed at 1.0 — HTML whitespace handling
-    // is separately tuned for browser copy, Word paste and <pre>, and a cosmetic space on cycle two did
-    // not justify that risk on release day. Tracked in Project_Roadmap.md.
-    private const int Seeds = 24;
+    // 400 seeds is the CI budget — about three seconds, and the reason it is not 24 any more: EVERY
+    // defect the 2026-08-06 audit found lived past seed 24 (nested list items came back reordered at
+    // 53, a table could be left with no reachable cells at 1559). Seeds are cheap; the old budget was
+    // the binding constraint on what this fuzz could see.
+    //
+    // Widen further with RICHEDITOR_FUZZ_SEEDS, so an audit run needs no source edit (an
+    // edit-and-revert dance is how a widened run silently becomes the committed default).
+    //
+    // Clean to 20000 seeds as of 2026-08-06. Nothing is known-failing; a failure here is a new defect.
+    private static readonly int Seeds =
+        int.TryParse(Environment.GetEnvironmentVariable("RICHEDITOR_FUZZ_SEEDS"), out int s) && s > 0 ? s : 400;
     private const int StepsPerSeed = 300;
 
     [Fact]
     public void RandomEditSequences_KeepTheDocumentStructurallyValid()
     {
+        var failures = new List<string>();
         for (int seed = 0; seed < Seeds; seed++)
         {
             var rng = new Random(seed);
@@ -55,10 +58,14 @@ public class DocumentFuzzTests
             }
             catch (Exception ex)
             {
-                throw new Xunit.Sdk.XunitException(
+                failures.Add(
                     $"seed {seed} broke after '{lastOp}': {ex.GetType().Name}: {ex.Message}\n{Dump(doc)}\n--- origin ---\n{ex.StackTrace}");
             }
         }
+        if (failures.Count > 0)
+            throw new Xunit.Sdk.XunitException(
+                $"{failures.Count} failure(s) over {Seeds} seeds:\n\n" + string.Join("\n\n", failures.Take(6)) +
+                (failures.Count > 6 ? $"\n\n… and {failures.Count - 6} more" : ""));
     }
 
     // The same sequences, then through every export format twice. A single round trip hides anything
@@ -67,6 +74,10 @@ public class DocumentFuzzTests
     [Fact]
     public void RandomDocuments_RoundTripIdempotentlyThroughEveryFormat()
     {
+        // Collect instead of throwing on the first seed. A widened audit run exists to survey the space,
+        // and stopping at seed 26 hid whatever seeds 27..399 had to say — the failure detail below is
+        // still the first one's, but the tally tells you whether you are looking at one defect or five.
+        var failures = new List<string>();
         for (int seed = 0; seed < Seeds; seed++)
         {
             var rng = new Random(seed);
@@ -83,16 +94,28 @@ public class DocumentFuzzTests
                 }
                 catch (Exception ex)
                 {
-                    throw new Xunit.Sdk.XunitException($"seed {seed} / {name} threw: {ex}\n{Dump(doc)}");
+                    failures.Add($"seed {seed} / {name} threw: {ex}\n{Dump(doc)}");
+                    continue;
                 }
-                CheckInvariants(once);
-                CheckInvariants(twice);
+                try
+                {
+                    CheckInvariants(once);
+                    CheckInvariants(twice);
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"seed {seed} / {name} broke an invariant: {ex.Message}");
+                    continue;
+                }
                 string a = Shape(once), b = Shape(twice);
                 if (a != b)
-                    throw new Xunit.Sdk.XunitException(
-                        $"seed {seed} / {name} is not idempotent — cycle 2 differs from cycle 1.\n" + Diff(a, b));
+                    failures.Add($"seed {seed} / {name} is not idempotent — cycle 2 differs from cycle 1.\n" + Diff(a, b));
             }
         }
+        if (failures.Count > 0)
+            throw new Xunit.Sdk.XunitException(
+                $"{failures.Count} failure(s) over {Seeds} seeds:\n\n" + string.Join("\n\n", failures.Take(12)) +
+                (failures.Count > 12 ? $"\n\n… and {failures.Count - 12} more" : ""));
     }
 
     private static (string, Func<FlowDocument, FlowDocument>)[] RoundTrips() => new (string, Func<FlowDocument, FlowDocument>)[]
@@ -128,6 +151,19 @@ public class DocumentFuzzTests
         return p;
     }
 
+    // A 2×2 PNG. Real bytes, because every format carries images differently (base64 in JSON/.flow, a
+    // data: URI in HTML, hex \pict in RTF) and a placeholder would exercise none of it. Kept tiny so
+    // widening the seed count stays affordable.
+    private static readonly byte[] TinyPng = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8//8/AzJgYkAD5AsAAP//A+8DTgn2rL0AAAAASUVORK5CYII=");
+
+    private static ImageBlock CellImage(Random rng)
+    {
+        var ib = new ImageBlock { Width = 20 + rng.Next(40), Height = 20 + rng.Next(40) };
+        ib.SetImageData(TinyPng, "image/png");
+        return ib;
+    }
+
     private static TableBlock NewTable(Random rng)
     {
         var tb = new TableBlock(rng.Next(1, 4), rng.Next(1, 4));
@@ -143,8 +179,34 @@ public class DocumentFuzzTests
         var paras = AllParagraphs(doc).ToList();
         var tables = AllTables(doc).ToList();
 
-        switch (rng.Next(18))
+        switch (rng.Next(22))
         {
+            case 18:
+                doc.Blocks.Insert(rng.Next(doc.Blocks.Count + 1), new DividerBlock());
+                return "insert divider";
+            case 19:
+                // An EMPTY paragraph is a blank line the author typed, and it is a different shape from
+                // a paragraph with text: HTML drops elements that produce no inline, so it needed a
+                // marker to survive at all.
+                doc.Blocks.Insert(rng.Next(doc.Blocks.Count + 1), new Paragraph());
+                return "insert blank paragraph";
+            case 20:
+            {
+                // A block image. RTF spells one as `\pard <pict>\par`, and reading that \par as content
+                // grew a blank paragraph under every picture on every cycle.
+                var ib = new ImageBlock { Width = 80 + rng.Next(60), Height = 40 + rng.Next(60) };
+                ib.SetImageData(TinyPng, "image/png");
+                doc.Blocks.Insert(rng.Next(doc.Blocks.Count + 1), ib);
+                return "insert block image";
+            }
+            case 21:
+            {
+                var p = Pick(paras, rng); if (p == null) return "inline image (skipped)";
+                var im = new InlineImage { Width = 12 + rng.Next(20), Height = 12 + rng.Next(20) };
+                im.SetImageData(TinyPng, "image/png");
+                p.Inlines.Insert(rng.Next(p.Inlines.Count + 1), im);
+                return "insert inline image";
+            }
             case 0:
                 doc.Blocks.Insert(rng.Next(doc.Blocks.Count + 1), Para("새 문단"));
                 return "insert paragraph";
@@ -221,8 +283,20 @@ public class DocumentFuzzTests
             case 11:
             {
                 var tb = Pick(tables, rng); if (tb == null) return "cell block (skipped)";
-                var cell = tb.LogicalCells().Select(x => x.cell).ElementAt(rng.Next(tb.LogicalCells().Count()));
-                cell.Blocks.Add(rng.Next(2) == 0 ? Para("셀 문단") : NewTable(rng)); // a nested table
+                // Materialize once. Counting one enumeration and indexing another turned "this table has
+                // no reachable cells" into an ArgumentOutOfRangeException from inside LINQ, which reads
+                // like a harness bug and buries the real finding; CheckTable now asserts that condition
+                // directly, and this just stays out of its way.
+                var cells = tb.LogicalCells().Select(x => x.cell).ToList();
+                if (cells.Count == 0) return "add block to cell (skipped)";
+                var cell = cells[rng.Next(cells.Count)];
+                cell.Blocks.Add(rng.Next(4) switch
+                {
+                    0 => Para("셀 문단"),
+                    1 => NewTable(rng),          // a nested table
+                    2 => new DividerBlock(),
+                    _ => CellImage(rng),
+                });
                 return "add block to cell";
             }
             case 12:
@@ -338,6 +412,22 @@ public class DocumentFuzzTests
                 {
                     if (cs != 0 || rs != 0)
                         throw new InvalidOperationException($"covered slot {r},{c} reports span ({cs},{rs}), expected (0,0)");
+                    // A covered slot must be covered BY SOMETHING. Skipping this (the earlier version
+                    // just continued here) let an ORPHANED cell pass every check: still flagged covered
+                    // after its anchor was deleted or shrunk away, so LogicalCells never yields it, its
+                    // content is unreachable from every command, and a whole table could end up with no
+                    // logical cells at all. The other direction — an anchor's reach — is checked below.
+                    var (car, cac) = tb.AnchorOf(r, c);
+                    if (car < 0 || cac < 0 || car >= tb.Rows || cac >= tb.Columns)
+                        throw new InvalidOperationException($"covered slot {r},{c} has off-grid anchor ({car},{cac})");
+                    if (car == r && cac == c)
+                        throw new InvalidOperationException($"covered slot {r},{c} is its own anchor");
+                    if (tb.IsCovered(car, cac))
+                        throw new InvalidOperationException($"covered slot {r},{c} resolves to ({car},{cac}), which is itself covered");
+                    var (acs, ars) = tb.SpanOf(car, cac);
+                    if (r < car || r >= car + ars || c < cac || c >= cac + acs)
+                        throw new InvalidOperationException(
+                            $"covered slot {r},{c} claims anchor ({car},{cac}), whose span ({acs},{ars}) does not reach it");
                     continue;
                 }
                 if (cs < 1 || rs < 1) throw new InvalidOperationException($"anchor {r},{c} reports span ({cs},{rs})");
