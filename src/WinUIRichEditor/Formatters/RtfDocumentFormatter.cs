@@ -311,8 +311,13 @@ internal sealed class RtfParser
                 _para.TextAlignment = TextAlignment.Left; _para.Indent = 0;
                 _para.LineSpacing = double.NaN; _para.LineHeight = double.NaN;
                 _slTwips = 0; _slMult = false;
+                _paraBottomBorder = false; // a border is paragraph formatting, so the reset clears it
                 SetItap(1); // \itap is a paragraph property, so a reset drops back to the body level
                 break;
+            // A horizontal rule has no control word of its own in RTF; Word — and our writer — spell it
+            // as an empty paragraph carrying a bottom border. Only the writer's half of that existed, so
+            // every divider came back as a blank line and was gone for good after one save/load.
+            case "brdrb": if (_st.Dest == Dest.Normal && _curRow == null) _paraBottomBorder = true; break;
             case "ql": _para.TextAlignment = TextAlignment.Left; break;
             case "qc": _para.TextAlignment = TextAlignment.Center; break;
             case "qr": _para.TextAlignment = TextAlignment.Right; break;
@@ -601,9 +606,35 @@ internal sealed class RtfParser
         }
         FlushRun();
         FinalizeTable();
+        // RTF has no block picture: our writer emits one as `\pard <pict>\par`, so that \par TERMINATES
+        // the image's own paragraph rather than starting a new one. Reading it as content added a blank
+        // paragraph after every image — and another on the next cycle, and the next, so a document saved
+        // and reopened a few times grew a gap under each picture. Same rule as the \par before a nested
+        // table: a \par at a structural boundary is structure, not a blank line.
+        //
+        // A blank line the author really did put under an image still survives: the writer emits it as
+        // its OWN `\pard\par`, so the first \par is consumed here and the second one lands as usual.
+        bool structural = _imageOwnsNextPar && _para.Inlines.Count == 0;
+        _imageOwnsNextPar = false;
+        if (structural) return;
+
+        // An empty paragraph with a bottom border is a horizontal rule (see the \brdrb case above).
+        if (_paraBottomBorder && _para.Inlines.Count == 0)
+        {
+            _paraBottomBorder = false;
+            _doc.Blocks.Add(new DividerBlock());
+            _para = new Paragraph();
+            return;
+        }
+        _paraBottomBorder = false;
         _doc.Blocks.Add(_para);
         _para = new Paragraph();
     }
+
+    // True immediately after a block picture was added, while its terminating \par is still pending.
+    private bool _imageOwnsNextPar;
+    // True while the paragraph being read carries a bottom border (\brdrb) — see EndParagraph.
+    private bool _paraBottomBorder;
 
     // ---- tables ----
 
@@ -994,10 +1025,16 @@ internal sealed class RtfParser
         }
         else
         {
+            // A table is not appended to the document until FinalizeTable runs, and until then it is
+            // only pending rows — so a picture that follows `\row` would be added FIRST and end up
+            // ahead of the table it came after. Every other block append goes through EndParagraph,
+            // which finalizes; this one has to do the same.
+            FinalizeTable();
             if (_para.Inlines.Count > 0) { _doc.Blocks.Add(_para); _para = new Paragraph(); }
             var ib = new ImageBlock { Width = w, Height = h };
             ib.SetImageData(bytes, mime);
             _doc.Blocks.Add(ib);
+            _imageOwnsNextPar = true;
         }
     }
 
