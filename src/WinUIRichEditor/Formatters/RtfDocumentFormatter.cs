@@ -29,6 +29,36 @@ namespace WinUIRichEditor.Formatters;
 /// </summary>
 public static class RtfDocumentFormatter
 {
+    // Marker style <-> wire code, spelled out in BOTH directions on purpose: a cast would tie the RTF we
+    // write to the enum's declaration order, so inserting a style would silently change the format.
+    internal static int MarkerCode(ListMarkerStyle s) => s switch
+    {
+        ListMarkerStyle.Disc => 1,
+        ListMarkerStyle.Circle => 2,
+        ListMarkerStyle.Square => 3,
+        ListMarkerStyle.Dash => 4,
+        ListMarkerStyle.Decimal => 5,
+        ListMarkerStyle.DecimalParen => 6,
+        ListMarkerStyle.LowerAlpha => 7,
+        ListMarkerStyle.UpperAlpha => 8,
+        ListMarkerStyle.LowerRoman => 9,
+        _ => 0,
+    };
+
+    internal static ListMarkerStyle MarkerFromCode(int c) => c switch
+    {
+        1 => ListMarkerStyle.Disc,
+        2 => ListMarkerStyle.Circle,
+        3 => ListMarkerStyle.Square,
+        4 => ListMarkerStyle.Dash,
+        5 => ListMarkerStyle.Decimal,
+        6 => ListMarkerStyle.DecimalParen,
+        7 => ListMarkerStyle.LowerAlpha,
+        8 => ListMarkerStyle.UpperAlpha,
+        9 => ListMarkerStyle.LowerRoman,
+        _ => ListMarkerStyle.Default,
+    };
+
     static RtfDocumentFormatter()
     {
         // CP949 (Korean), Shift-JIS, GB2312 etc. aren't in .NET's default set ??register them so
@@ -419,6 +449,24 @@ internal sealed class RtfParser
             case "emspace": AppendChar(' '); break;
             case "enspace": AppendChar(' '); break;
             case "qmspace": AppendChar(' '); break;
+
+            // {\*\pn …} — the legacy list definition (see WriteListMarker). `\*` has already set this
+            // group to Skip, which is what keeps {\pntxtb •} out of the text; the control words inside
+            // still reach here, because Apply runs for every one of them regardless of destination. That
+            // is what makes reading the definition possible without also reading its fallback text.
+            //
+            // Applied to _para directly: the definition precedes the paragraph's text, and \pard (which
+            // resets paragraph formatting) precedes the definition, so nothing later clears it.
+            case "pn": _para.ListType = ListKind.Bullet; _para.ListMarker = ListMarkerStyle.Default; break;
+            case "pnlvlblt": _para.ListType = ListKind.Bullet; break;
+            case "pnlvlbody": _para.ListType = ListKind.Ordered; break;
+            case "pndec": _para.ListMarker = ListMarkerStyle.Default; break;
+            case "pnlcltr": _para.ListMarker = ListMarkerStyle.LowerAlpha; break;
+            case "pnucltr": _para.ListMarker = ListMarkerStyle.UpperAlpha; break;
+            case "pnlcrm": _para.ListMarker = ListMarkerStyle.LowerRoman; break;
+            // Ours, and it comes after {\*\pn} in the stream, so the exact style wins over the number
+            // format {\*\pn} could express.
+            case "armarker": if (p is { } mc) _para.ListMarker = RtfDocumentFormatter.MarkerFromCode(mc); break;
 
             case "colortbl": _st.Dest = Dest.ColorTable; _colors.Clear(); _ctR = _ctG = _ctB = 0; _ctHasColor = false; break;
             case "fonttbl": _st.Dest = Dest.FontTable; _ftblIndex = -1; _ftblName.Clear(); _ftblBytes.Clear(); break;
@@ -1191,6 +1239,57 @@ internal sealed class RtfWriter
         _body.Append(' ');
     }
 
+    // A list item's marker, in the legacy RTF list representation Word itself writes: the literal
+    // fallback text inside {\pntext …}, plus a {\*\pn …} definition of the list.
+    //
+    // It used to be written as BARE TEXT followed by \tab, and that injected the glyph into the document's
+    // content on the way back in — a bulleted item reopened as the plain text "•\t항목", list gone, bullet
+    // now part of what the user typed. Save as .rtf and reopen and every list item had grown a "•<tab>"
+    // prefix. No round-trip fuzz could see it, because the result is PERFECTLY IDEMPOTENT: cycle 2 reads
+    // back exactly what cycle 1 produced, and the marker is only written for a paragraph that still has a
+    // ListType — which this one no longer has. (Found by a human pasting into HWP and noticing a stray ■.)
+    //
+    // Both groups are ones our reader already drops: `pntext` is in its skip list, and `{\*\pn}` is an
+    // ignorable destination. So the fallback text stays available to other readers and stays out of our
+    // content, which is exactly the split the bare form could not express.
+    private void WriteListMarker(Paragraph p, int ordered)
+    {
+        string marker = ListMarkers.Text(p.ListType, p.ListMarker, ordered);
+        _body.Append(@"{\pntext ");
+        WriteEscaped(marker);
+        _body.Append(@"\tab}");
+        _body.Append(@"{\*\pn");
+        if (p.ListType == ListKind.Bullet)
+        {
+            _body.Append(@"\pnlvlblt\pnindent0{\pntxtb ");
+            WriteEscaped(marker);
+            _body.Append('}');
+        }
+        else
+        {
+            _body.Append(@"\pnlvlbody\pnindent0\pnstart1");
+            _body.Append(p.ListMarker switch
+            {
+                ListMarkerStyle.LowerAlpha => @"\pnlcltr",
+                ListMarkerStyle.UpperAlpha => @"\pnucltr",
+                ListMarkerStyle.LowerRoman => @"\pnlcrm",
+                _ => @"\pndec",
+            });
+            // The punctuation belongs to the marker, not to the number: \pntxta is what follows it.
+            _body.Append(p.ListMarker == ListMarkerStyle.DecimalParen ? @"{\pntxta )}" : @"{\pntxta .}");
+        }
+        _body.Append('}');
+        // Our own marker for the exact style. {\*\pn} can only say NUMBER FORMAT, so "1)" versus "1." and
+        // a square versus a round bullet are outside what it expresses — and the fallback text that does
+        // carry them is skipped by design, so without this they came back as Default. Same idiom as
+        // {\*\arinline} for an inline table: every other reader drops an ignorable group, and only ours
+        // restores the exact style. It rides as a control-word PARAMETER rather than as group text,
+        // because text inside an ignorable group is exactly what a reader is supposed to skip.
+        if (p.ListMarker != ListMarkerStyle.Default)
+            _body.Append(@"{\*\armarker").Append(RtfDocumentFormatter.MarkerCode(p.ListMarker)).Append('}');
+    }
+
+
     private void WriteParagraph(Paragraph p, int ordered)
     {
         WriteParagraphProps(p);
@@ -1204,8 +1303,7 @@ internal sealed class RtfWriter
 
         if (p.ListType != ListKind.None)
         {
-            WriteEscaped(ListMarkers.Text(p.ListType, p.ListMarker, ordered));
-            _body.Append(@"\tab ");
+            WriteListMarker(p, ordered);
             wrote = true;
         }
 
@@ -1347,11 +1445,7 @@ internal sealed class RtfWriter
             {
                 if (!first) _body.Append(@"\par ");
                 first = false;
-                if (cpara.ListType != ListKind.None)
-                {
-                    WriteEscaped(ListMarkers.Text(cpara.ListType, cpara.ListMarker, 1));
-                    _body.Append(@"\tab ");
-                }
+                if (cpara.ListType != ListKind.None) WriteListMarker(cpara, 1);
                 bool heading = cpara.HeadingLevel is >= 1 and <= 6;
                 double headingSize = heading ? HeadingSize(cpara.HeadingLevel) : 0;
                 foreach (var inline in cpara.Inlines)

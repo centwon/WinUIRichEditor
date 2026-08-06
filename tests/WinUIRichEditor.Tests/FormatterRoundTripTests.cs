@@ -709,6 +709,55 @@ public class FormatterRoundTripTests
         Assert.Equal(Red, b2[1].Background);
     }
 
+    // A list marker must not become part of the text. RTF has no list element, so the marker went out as
+    // BARE TEXT + \tab — and came back as content: a bulleted item reopened as the plain text "•\t항목",
+    // the list gone and the glyph now part of what the user typed. Saving as .rtf and reopening grew a
+    // "•<tab>" prefix on every list item.
+    //
+    // No round-trip fuzz could see it, and the reason is the point: the result is PERFECTLY IDEMPOTENT.
+    // Cycle 2 reads back exactly what cycle 1 wrote, because the marker is only emitted for a paragraph
+    // that still has a ListType and this one no longer does. Three cycles here for the same reason — the
+    // corruption to guard against is stable, not accumulating.
+    [Theory]
+    [InlineData(ListKind.Bullet, ListMarkerStyle.Default)]
+    [InlineData(ListKind.Bullet, ListMarkerStyle.Square)]
+    [InlineData(ListKind.Ordered, ListMarkerStyle.Default)]
+    [InlineData(ListKind.Ordered, ListMarkerStyle.LowerRoman)]
+    [InlineData(ListKind.Ordered, ListMarkerStyle.DecimalParen)]
+    public void Rtf_ListMarker_IsStructure_NotText(ListKind kind, ListMarkerStyle marker)
+    {
+        FlowDocument doc = new();
+        doc.Blocks.Add(new Paragraph { ListType = kind, ListMarker = marker, Inlines = { new Run { Text = "항목" } } });
+        // The same shape inside a cell, which the writer emits through its own path.
+        var tb = new TableBlock(1, 1);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { ListType = kind, ListMarker = marker, Inlines = { new Run { Text = "셀 항목" } } });
+        doc.Blocks.Add(tb);
+
+        var cur = doc;
+        for (int cycle = 1; cycle <= 3; cycle++)
+        {
+            cur = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(cur));
+
+            var top = cur.Blocks.OfType<Paragraph>().First(p => Plain(p).Contains("항목"));
+            var cell = Assert.IsType<TableBlock>(cur.Blocks.Single(b => b is TableBlock)).Cells[0][0]
+                          .Blocks.OfType<Paragraph>().First();
+
+            foreach (var (p, want) in new[] { (top, "항목"), (cell, "셀 항목") })
+            {
+                // The text is the text: no glyph, no tab.
+                Assert.Equal(want, Plain(p));
+                // And the list is still a list, which is what the marker was standing in for.
+                Assert.Equal(kind, p.ListType);
+            }
+            // An ordered list's number format rides along in the {\*\pn} definition. A bullet's specific
+            // glyph does not: it lives only in the skipped fallback text, so it comes back as Default —
+            // a real remaining loss, pinned here so it is not mistaken for a regression.
+            if (kind == ListKind.Ordered)
+                Assert.Equal(marker, top.ListMarker);
+        }
+    }
+
     // Paragraph spacing survives HTML, and only from this library's own marker. The context menu's margin
     // submenu sets all three values and the export carried none of them, so every HTML save reset a
     // paragraph's spacing to the defaults. Foreign CSS margins stay unread on purpose — reading them would
