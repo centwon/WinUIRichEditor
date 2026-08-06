@@ -709,6 +709,38 @@ public class FormatterRoundTripTests
         Assert.Equal(Red, b2[1].Background);
     }
 
+    // Paragraph spacing survives HTML, and only from this library's own marker. The context menu's margin
+    // submenu sets all three values and the export carried none of them, so every HTML save reset a
+    // paragraph's spacing to the defaults. Foreign CSS margins stay unread on purpose — reading them would
+    // give every web paste that page's vertical rhythm.
+    [Fact]
+    public void Html_RoundTrips_ParagraphMargins_ButIgnoresForeignOnes()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { MarginTop = 24, MarginBottom = 3, MarginRight = 30, Inlines = { new Run { Text = "spaced" } } });
+        var tb = new TableBlock(1, 1);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { MarginTop = 7, MarginBottom = 2, MarginRight = 5, Inlines = { new Run { Text = "in a cell" } } });
+        doc.Blocks.Add(tb);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var top = back.Blocks.OfType<Paragraph>().First();
+        Assert.Equal(24, top.MarginTop);
+        Assert.Equal(3, top.MarginBottom);
+        Assert.Equal(30, top.MarginRight);
+        var inCell = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock)).Cells[0][0].Blocks.OfType<Paragraph>().First();
+        Assert.Equal(7, inCell.MarginTop);
+        Assert.Equal(2, inCell.MarginBottom);
+        Assert.Equal(5, inCell.MarginRight);
+
+        // A page's own margins are not this document's.
+        var foreign = HtmlDocumentFormatter.ParseHtml("<p style=\"margin-top:80px;margin-bottom:80px;margin-right:80px\">web</p>");
+        var fp = foreign.Blocks.OfType<Paragraph>().First();
+        Assert.Equal(0, fp.MarginTop);
+        Assert.Equal(10, fp.MarginBottom); // the model's default, untouched
+        Assert.Equal(0, fp.MarginRight);
+    }
+
     // Two paragraphs in a cell stay two. They were joined with <br>, which the reader has never read as a
     // paragraph boundary — it comes back as a newline inside ONE paragraph — so every HTML cycle collapsed
     // a multi-paragraph cell. The round-trip fuzz could not see it: once collapsed it stays collapsed, so

@@ -442,6 +442,10 @@ public static class HtmlDocumentFormatter
         return false;
     }
 
+    // Block.MarginBottom's default. A paragraph at the default writes no margin at all, which is what
+    // keeps an ordinary document's HTML unchanged.
+    private const double DefaultMarginBottom = 10;
+
     // The paragraph-level formatting an element carries. Only values the element actually states are
     // written, so applying this to a paragraph the walk already produced cannot clobber that
     // paragraph's own formatting with defaults.
@@ -453,6 +457,21 @@ public static class HtmlDocumentFormatter
         if (name == "blockquote") p.IsQuote = true;
         if (ReadAlign(node) is var al && al != TextAlignment.Left) p.TextAlignment = al;
         ApplyLineHeightStyle(node, p);
+        ApplyMarginMarker(node, p);
+    }
+
+    // Paragraph spacing, from this library's own marker only (see EmitParagraphElement for why foreign
+    // CSS margins are deliberately not read).
+    private static void ApplyMarginMarker(HtmlNode node, Paragraph p)
+    {
+        var v = node.GetAttributeValue("data-are-m", "");
+        if (string.IsNullOrEmpty(v)) return;
+        var parts = v.Split(',');
+        if (parts.Length != 3) return;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (double.TryParse(parts[0], System.Globalization.NumberStyles.Float, inv, out double t)) p.MarginTop = t;
+        if (double.TryParse(parts[1], System.Globalization.NumberStyles.Float, inv, out double b)) p.MarginBottom = b;
+        if (double.TryParse(parts[2], System.Globalization.NumberStyles.Float, inv, out double r)) p.MarginRight = r;
     }
 
     private static bool HasBlockOrMedia(HtmlNode n)
@@ -994,6 +1013,18 @@ public static class HtmlDocumentFormatter
         // heading level would then be dropped outright, so it rides along as a marker.
         string extraAttr = p.IsListItem && p.HeadingLevel >= 1 && p.HeadingLevel <= 6
             ? $" data-are-h=\"{p.HeadingLevel}\"" : "";
+        // Paragraph spacing (the context menu's margin submenu sets all three) went out as nothing at all
+        // and came back as the defaults. It goes out TWICE on purpose: as real CSS so a browser or Word
+        // shows the spacing, and as a marker because only the marker is read back. Reading foreign
+        // margin-top/bottom would give every web paste that page's vertical rhythm — the same reason
+        // data-are-empty exists. margin-left is not here: it is Indent, and reading it from foreign HTML
+        // is long-standing behaviour.
+        string Px(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        if (p.MarginTop != 0) pStyle += $"margin-top:{Px(p.MarginTop)}px;";
+        if (p.MarginBottom != DefaultMarginBottom) pStyle += $"margin-bottom:{Px(p.MarginBottom)}px;";
+        if (p.MarginRight != 0) pStyle += $"margin-right:{Px(p.MarginRight)}px;";
+        if (p.MarginTop != 0 || p.MarginBottom != DefaultMarginBottom || p.MarginRight != 0)
+            extraAttr += $" data-are-m=\"{Px(p.MarginTop)},{Px(p.MarginBottom)},{Px(p.MarginRight)}\"";
         // An empty paragraph is a blank LINE the author put there. The importer drops elements
         // that produce no inline, and it has to: foreign HTML is full of empty <p>/<div> used for
         // spacing, and keeping those adds a blank line to every web paste. The marker separates
@@ -1019,7 +1050,8 @@ public static class HtmlDocumentFormatter
            || p.Background != null
            || p.Indent > 0
            || (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 0)
-           || (!double.IsNaN(p.LineHeight) && p.LineHeight > 0);
+           || (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
+           || p.MarginTop != 0 || p.MarginBottom != DefaultMarginBottom || p.MarginRight != 0;
 
     private static double SumColumnWidths(TableBlock tb)
     {

@@ -290,6 +290,8 @@ public class DocumentFuzzTests
                 if (rng.Next(3) == 0) p.ListMarker = (ListMarkerStyle)rng.Next(10);
                 if (rng.Next(4) == 0) p.Background = Color.FromArgb(255, (byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
                 if (rng.Next(5) == 0) p.MarginRight = rng.Next(3) * 15;
+                if (rng.Next(5) == 0) p.MarginTop = rng.Next(3) * 12;
+                if (rng.Next(6) == 0) p.MarginBottom = rng.Next(4) * 8;
                 if (rng.Next(6) == 0) p.LineHeight = 12 + rng.Next(20);
                 return "paragraph format";
             }
@@ -618,6 +620,8 @@ public class DocumentFuzzTests
         if (p.Background != null) parts.Add("bg" + Col(p.Background));
         if (p.Indent != 0) parts.Add("in" + Num(p.Indent));
         if (p.MarginRight != 0) parts.Add("mr" + Num(p.MarginRight));
+        if (p.MarginTop != 0) parts.Add("mt" + Num(p.MarginTop));
+        if (p.MarginBottom != 10) parts.Add("mb" + Num(p.MarginBottom)); // 10 = Block.MarginBottom's default
         if (!double.IsNaN(p.LineSpacing)) parts.Add("ls" + Num(p.LineSpacing));
         if (!double.IsNaN(p.LineHeight)) parts.Add("lh" + Num(p.LineHeight));
         return Wrap(parts);
