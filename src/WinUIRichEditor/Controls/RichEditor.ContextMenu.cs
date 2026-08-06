@@ -54,6 +54,29 @@ public partial class RichEditor
 
     private Point _ctxMenuPos; // where the last context menu opened (for the table-insert grid flyout)
 
+    // Which context menu a right-click opens. Split out of OnCanvasRightTapped because the decision is
+    // the part worth pinning and the handler is the part that cannot be tested — it needs a
+    // RightTappedRoutedEventArgs, which has no public constructor. The handler now does the hit-testing
+    // and the acting; this decides, and it decides from plain values.
+    internal enum ContextMenuKind { BlockImage, InlineImage, InlineTable, ReadOnlyText, Link, Text }
+
+    /// The priority order, which is a contract and not an accident:
+    /// an object under the pointer wins over any text menu (you right-clicked the object, not the line);
+    /// read-only wins over everything textual (a viewer offers copy, never edit); and the concise link
+    /// menu only replaces the full one when there is no selection — with a selection the user is acting
+    /// on the selection, not on the link under the pointer.
+    internal static ContextMenuKind ChooseContextMenu(
+        bool onBlockImage, bool onInlineImage, bool onInlineTableEdge,
+        bool isReadOnly, bool hasSelection, string? linkUri)
+    {
+        if (onBlockImage) return ContextMenuKind.BlockImage;
+        if (onInlineImage) return ContextMenuKind.InlineImage;
+        if (onInlineTableEdge) return ContextMenuKind.InlineTable;
+        if (isReadOnly) return ContextMenuKind.ReadOnlyText;
+        if (!hasSelection && !string.IsNullOrEmpty(linkUri)) return ContextMenuKind.Link;
+        return ContextMenuKind.Text;
+    }
+
     private void OnCanvasRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         _canvas.Focus(Microsoft.UI.Xaml.FocusState.Pointer);
@@ -62,52 +85,63 @@ public partial class RichEditor
         _ctxMenuPos = pos;
         var ipt = ViewToDoc(new Point(pos.X, pos.Y)); // doc space — for hit-testing
 
-        // Per-object menus (block/inline image, inline table) select the object and show its own menu.
+        // Hit-test the per-object targets first; the decision below turns these into a menu choice.
+        ImageBlock? hitBlockImage = null;
+        (Paragraph p, InlineImage img)? hitInlineImage = null;
+        (Paragraph host, InlineTable it)? hitInlineTable = null;
+
         foreach (var (img, rect) in BlockImageRects())
-            if (rect.Contains(ipt))
-            {
-                _selectedInline = null; _selectedBlock = img; CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowImageMenu(pos, img, null); e.Handled = true; return;
-            }
-        foreach (var (img, v) in _inlineImageRects)
-            if (v.rect.Contains(ipt))
-            {
-                _selectedBlock = null; _selectedInline = (v.p, img); CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowImageMenu(pos, null, img); e.Handled = true; return;
-            }
-        foreach (var (it, v) in _inlineTableRects)
-            if (OnEdgeBorder(v.rect, ipt))
-            {
-                ClearObjectSelection(); _selectedInlineTable = (v.host, it); CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowInlineTableMenu(pos, v.host, it); e.Handled = true; return;
-            }
+            if (rect.Contains(ipt)) { hitBlockImage = img; break; }
+        if (hitBlockImage == null)
+            foreach (var (img, v) in _inlineImageRects)
+                if (v.rect.Contains(ipt)) { hitInlineImage = (v.p, img); break; }
+        if (hitBlockImage == null && hitInlineImage == null)
+            foreach (var (it, v) in _inlineTableRects)
+                if (OnEdgeBorder(v.rect, ipt)) { hitInlineTable = (v.host, it); break; }
 
         // Right-clicking outside an existing selection moves the caret there first (Word/VS behavior).
-        if (!HasSelection && GetPositionFromPoint(ipt) is { } tp)
+        // Only when no object was hit — those select the object instead.
+        bool onObject = hitBlockImage != null || hitInlineImage != null || hitInlineTable != null;
+        if (!onObject && !HasSelection && GetPositionFromPoint(ipt) is { } tp)
         {
             _caret = tp; CollapseSelectionToCaret(); InvalidateCanvas();
         }
 
+        // The caret may have just moved, so read the selection and the link AFTER it.
         bool hasSel = HasSelection;
+        string? linkUri = onObject ? null : CurrentLinkUri();
+        var kind = ChooseContextMenu(hitBlockImage != null, hitInlineImage != null, hitInlineTable != null,
+                                     IsReadOnly, hasSel, linkUri);
+
         var menu = new MenuFlyout();
-
-        // Read-only: copy + select-all only.
-        if (IsReadOnly)
+        switch (kind)
         {
-            menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), hasSel, RichEditorIcon.Copy, "Ctrl+C"));
-            menu.Items.Add(Mi(Loc("SelectAll"), SelectAll, true, RichEditorIcon.SelectAll, "Ctrl+A"));
-            menu.ShowAt(_canvas, pos); e.Handled = true; return;
+            case ContextMenuKind.BlockImage:
+                _selectedInline = null; _selectedBlock = hitBlockImage; CollapseSelectionToCaret(); InvalidateCanvas();
+                ShowImageMenu(pos, hitBlockImage, null); e.Handled = true; return;
+
+            case ContextMenuKind.InlineImage:
+                _selectedBlock = null; _selectedInline = hitInlineImage; CollapseSelectionToCaret(); InvalidateCanvas();
+                ShowImageMenu(pos, null, hitInlineImage!.Value.img); e.Handled = true; return;
+
+            case ContextMenuKind.InlineTable:
+                ClearObjectSelection(); _selectedInlineTable = hitInlineTable; CollapseSelectionToCaret(); InvalidateCanvas();
+                ShowInlineTableMenu(pos, hitInlineTable!.Value.host, hitInlineTable.Value.it); e.Handled = true; return;
+
+            case ContextMenuKind.ReadOnlyText: // a viewer: copy + select-all only
+                menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), hasSel, RichEditorIcon.Copy, "Ctrl+C"));
+                menu.Items.Add(Mi(Loc("SelectAll"), SelectAll, true, RichEditorIcon.SelectAll, "Ctrl+A"));
+                break;
+
+            case ContextMenuKind.Link:
+                BuildLinkMenu(menu, linkUri!);
+                break;
+
+            default:
+                BuildTextMenu(menu, hasSel, linkUri);
+                break;
         }
 
-        // Right-clicking directly on a hyperlink (no selection) shows the concise link menu.
-        var linkUri = CurrentLinkUri();
-        if (!hasSel && !string.IsNullOrEmpty(linkUri))
-        {
-            BuildLinkMenu(menu, linkUri!);
-            menu.ShowAt(_canvas, pos); e.Handled = true; return;
-        }
-
-        BuildTextMenu(menu, hasSel, linkUri);
         menu.ShowAt(_canvas, pos);
         e.Handled = true;
     }
