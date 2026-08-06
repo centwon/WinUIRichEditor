@@ -287,7 +287,18 @@ public class DocumentFuzzTests
                 // fill, the right margin and an absolute line height. Each has its own writer/reader pair
                 // in all four formats.
                 if (rng.Next(3) == 0) p.TextAlignment = (Microsoft.UI.Xaml.TextAlignment)rng.Next(4);
-                if (rng.Next(3) == 0) p.ListMarker = (ListMarkerStyle)rng.Next(10);
+                // The marker must belong to the KIND. The editor derives one from the other
+                // (RichEditor.SetListType takes a marker and computes the kind with KindOf), so a bullet
+                // list carrying "A)" is a state the product cannot reach — and the renderer ignores a
+                // mismatched marker anyway (ListMarkers.Text falls through to "•"). Generating the pair
+                // freely produced one HTML non-idempotency at seed 14205 that no user can ever see; a
+                // fuzz that reports unreachable states spends the reader's attention on nothing.
+                if (rng.Next(3) == 0)
+                    p.ListMarker = p.ListType == ListKind.Ordered
+                        ? new[] { ListMarkerStyle.Default, ListMarkerStyle.Decimal, ListMarkerStyle.DecimalParen,
+                                  ListMarkerStyle.LowerAlpha, ListMarkerStyle.UpperAlpha, ListMarkerStyle.LowerRoman }[rng.Next(6)]
+                        : new[] { ListMarkerStyle.Default, ListMarkerStyle.Disc, ListMarkerStyle.Circle,
+                                  ListMarkerStyle.Square, ListMarkerStyle.Dash }[rng.Next(5)];
                 if (rng.Next(4) == 0) p.Background = Color.FromArgb(255, (byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
                 if (rng.Next(5) == 0) p.MarginRight = rng.Next(3) * 15;
                 if (rng.Next(5) == 0) p.MarginTop = rng.Next(3) * 12;
