@@ -80,10 +80,36 @@ public class ControlClipboardTests : IClassFixture<ClipboardGuard>
         return tb;
     }
 
+    // The Windows clipboard is a lock-based resource SHARED WITH OTHER PROCESSES — clipboard history and
+    // sync are on by default — so any single call can fail with a COMException or lose a race, and no
+    // amount of waiting on one attempt fixes that. The whole copy is retried, not just the read.
     private static void CopyBlock(RichEditor ed, Block block, string expect = "c00")
     {
-        UiThread.RunAsync(() => (Task)T.GetMethod("CopyBlockToClipboard", NP)!.Invoke(ed, new object?[] { block })!);
-        Settle(expect);
+        Exception? last = null;
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                UiThread.RunAsync(() => (Task)T.GetMethod("CopyBlockToClipboard", NP)!.Invoke(ed, new object?[] { block })!);
+                Settle(expect);
+                return;
+            }
+            catch (Exception ex) { last = ex; System.Threading.Thread.Sleep(100); }
+        }
+        throw new InvalidOperationException(
+            $"the clipboard could not be written and read back in 6 attempts (expected '{expect}')", last);
+    }
+
+    // Every read goes through here for the same reason.
+    private static TResult Read<TResult>(Func<DataPackageView, TResult> read)
+    {
+        Exception? last = null;
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            try { return UiThread.Run(() => read(Clipboard.GetContent())); }
+            catch (Exception ex) { last = ex; System.Threading.Thread.Sleep(50); }
+        }
+        throw new InvalidOperationException("the clipboard could not be read in 20 attempts", last);
     }
 
     // Clipboard.SetContent hands the data to Windows and returns; a read that follows immediately can
@@ -98,14 +124,21 @@ public class ControlClipboardTests : IClassFixture<ClipboardGuard>
     {
         UiThread.Run(() => { try { Clipboard.Flush(); } catch { /* nothing to flush */ } });
 
-        for (int attempt = 0; attempt < 80; attempt++)
+        for (int attempt = 0; attempt < 60; attempt++)
         {
             if (UiThread.Run(() =>
             {
                 try
                 {
                     var view = Clipboard.GetContent();
+                    // All three flavours, not just the text: they do not necessarily become visible in
+                    // the same instant, and a check that stops at the text let the RTF/HTML assertions
+                    // race it. If a flavour were genuinely missing the wait below times out, which still
+                    // fails the test — with a worse message than the assertion would have given, but
+                    // never with a false pass.
                     return view.Contains(StandardDataFormats.Text)
+                        && view.Contains(StandardDataFormats.Rtf)
+                        && view.Contains(StandardDataFormats.Html)
                         && view.GetTextAsync().AsTask().GetAwaiter().GetResult().Contains(expect, StringComparison.Ordinal);
                 }
                 catch { return false; }
@@ -131,24 +164,22 @@ public class ControlClipboardTests : IClassFixture<ClipboardGuard>
         RichEditor ed = UiThread.Run(() => NewEditor(table));
         CopyBlock(ed, table);
 
-        UiThread.Run(() =>
-        {
-            var view = Clipboard.GetContent();
-            Assert.True(view.Contains(StandardDataFormats.Text), "no plain text flavour");
-            Assert.True(view.Contains(StandardDataFormats.Html), "no CF_HTML flavour");
-            Assert.True(view.Contains(StandardDataFormats.Rtf), "no RTF flavour — HWP/Word would get plain text");
+        var (hasText, hasHtml, hasRtf) = Read(v => (
+            v.Contains(StandardDataFormats.Text),
+            v.Contains(StandardDataFormats.Html),
+            v.Contains(StandardDataFormats.Rtf)));
+        Assert.True(hasText, "no plain text flavour");
+        Assert.True(hasHtml, "no CF_HTML flavour");
+        Assert.True(hasRtf, "no RTF flavour — HWP/Word would get plain text");
 
-            // Tab-separated, so Excel and Notepad get something meaningful.
-            string text = view.GetTextAsync().AsTask().GetAwaiter().GetResult();
-            Assert.Contains("c00\tc01", text);
+        // Tab-separated, so Excel and Notepad get something meaningful.
+        Assert.Contains("c00\tc01", Read(v => v.GetTextAsync().AsTask().GetAwaiter().GetResult()));
 
-            string rtf = view.GetRtfAsync().AsTask().GetAwaiter().GetResult();
-            Assert.Contains(@"\trowd", rtf);      // a real RTF table, not just the text
+        // A real RTF table, not just its text.
+        Assert.Contains(@"\trowd", Read(v => v.GetRtfAsync().AsTask().GetAwaiter().GetResult()));
 
-            string fragment = HtmlFormatHelper.GetStaticFragment(
-                view.GetHtmlFormatAsync().AsTask().GetAwaiter().GetResult());
-            Assert.Contains("<table", fragment);
-        });
+        Assert.Contains("<table", Read(v => HtmlFormatHelper.GetStaticFragment(
+            v.GetHtmlFormatAsync().AsTask().GetAwaiter().GetResult())));
     }
 
     // Plain text goes out with the platform newline. LF-only shows as ONE line in Notepad and native text
@@ -161,8 +192,7 @@ public class ControlClipboardTests : IClassFixture<ClipboardGuard>
         RichEditor ed = UiThread.Run(() => NewEditor(table));
         CopyBlock(ed, table);
 
-        string text = UiThread.Run(() =>
-            Clipboard.GetContent().GetTextAsync().AsTask().GetAwaiter().GetResult());
+        string text = Read(v => v.GetTextAsync().AsTask().GetAwaiter().GetResult());
 
         Assert.Contains("\r\n", text);
         Assert.DoesNotContain("\n\n", text.Replace("\r\n", "\n\n").Replace("\n\n", "\r\n")); // no bare LF left

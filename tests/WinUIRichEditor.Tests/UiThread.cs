@@ -164,11 +164,15 @@ internal static class UiThread
                 _host = new Microsoft.UI.Xaml.Window { Content = _hostRoot };
                 _host.Activate();
             }
-            // Swap the CHILD of a stable root, never the window's Content. Replacing Content on a live
-            // window races: a swap occasionally never loads, and which test pays for it moves with the
-            // ordering — adding the clipboard suite turned an occasional failure into all seventeen caret
-            // tests failing at once, because they share one lazily hosted editor.
-            _hostRoot.Children.Clear();
+            // ADD to a stable root; never replace the window's Content and never evict what is already
+            // there. Two failures came from getting this wrong:
+            //   · Replacing a live window's Content races — a swap occasionally never loads, and which
+            //     test paid for it moved with the ordering.
+            //   · Clearing the root evicts ANOTHER class's hosted control, which then stops laying out.
+            //     Each suite hosts its own editor lazily, so whichever hosted first lost its layout the
+            //     moment the next one started, and its tests failed depending on the order they ran in.
+            // The children stack in one Grid cell; each still gets a full layout pass, which is all these
+            // tests need, and only a handful are ever created.
             _hostRoot.Children.Add(content);
 
             void OnLoaded(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
