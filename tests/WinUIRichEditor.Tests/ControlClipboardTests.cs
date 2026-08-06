@@ -80,8 +80,41 @@ public class ControlClipboardTests : IClassFixture<ClipboardGuard>
         return tb;
     }
 
-    private static void CopyBlock(RichEditor ed, Block block)
-        => UiThread.RunAsync(() => (Task)T.GetMethod("CopyBlockToClipboard", NP)!.Invoke(ed, new object?[] { block })!);
+    private static void CopyBlock(RichEditor ed, Block block, string expect = "c00")
+    {
+        UiThread.RunAsync(() => (Task)T.GetMethod("CopyBlockToClipboard", NP)!.Invoke(ed, new object?[] { block })!);
+        Settle(expect);
+    }
+
+    // Clipboard.SetContent hands the data to Windows and returns; a read that follows immediately can
+    // still see the PREVIOUS contents. Flush() commits it (that is what makes copied data outlive the
+    // owning process), and the retry covers the moment in between.
+    //
+    // It waits for the text WE just copied, not merely for "some text": the previous test left text
+    // behind, so a presence check returns instantly while the new content is still in flight. That
+    // narrowed the failures from two runs in six to one in eight and no further — the remaining one was
+    // this exact hole. It is a race in the test, not in the copy path; a real user is slower than this.
+    private static void Settle(string expect)
+    {
+        UiThread.Run(() => { try { Clipboard.Flush(); } catch { /* nothing to flush */ } });
+
+        for (int attempt = 0; attempt < 80; attempt++)
+        {
+            if (UiThread.Run(() =>
+            {
+                try
+                {
+                    var view = Clipboard.GetContent();
+                    return view.Contains(StandardDataFormats.Text)
+                        && view.GetTextAsync().AsTask().GetAwaiter().GetResult().Contains(expect, StringComparison.Ordinal);
+                }
+                catch { return false; }
+            }))
+                return;
+            System.Threading.Thread.Sleep(25);
+        }
+        throw new TimeoutException($"the clipboard never came to hold the copied text ('{expect}')");
+    }
 
     private static string Flat(RichEditor ed)
         => string.Join(" ", ed.GetPlainText().Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries));
