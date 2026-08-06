@@ -586,6 +586,41 @@ public class FormatterRoundTripTests
         Assert.Equal("P[above]P[<IMG>]P[below]", Shape(twice));
     }
 
+    // Truncation is the common damage — a half-copied file, a download cut short — and it does not
+    // throw: the reader runs out of input and finalizes what it has, which looked like a clean parse of
+    // a SHORTER document. TryParse is the entry point that must not let that replace an open one.
+    [Theory]
+    [InlineData(@"{\rtf1\ansi {\*\broken")]              // truncated inside a nested group
+    [InlineData(@"{\rtf1\ansi hello there")]             // truncated after readable text
+    [InlineData(@"{\rtf1\ansi\trowd\cellx1000 a\cell")]  // truncated mid-table
+    [InlineData(@"{\rtf1\ansi\b bold text\par")]         // no closing brace at all
+    public void Rtf_TryParse_ReportsTruncatedInput(string truncated)
+    {
+        Assert.False(RtfDocumentFormatter.TryParse(truncated, out var doc, out string? error));
+        Assert.NotNull(error);
+        Assert.Contains("truncated", error);
+        Assert.Empty(doc.Blocks);
+    }
+
+    [Theory]
+    [InlineData(@"{\rtf1\ansi hello\par}")]  // ordinary
+    [InlineData(@"{\rtf1\ansi}")]            // genuinely empty is a SUCCESS, not damage
+    [InlineData(@"{\rtf1\ansi hi\par}}}}")]  // trailing junk braces: tolerated, as before
+    public void Rtf_TryParse_AcceptsWellFormedInput(string rtf)
+    {
+        Assert.True(RtfDocumentFormatter.TryParse(rtf, out _, out string? error));
+        Assert.Null(error);
+    }
+
+    // Parse() is the PASTE path and stays lenient on purpose: for a clipboard fragment, whatever was
+    // readable beats nothing. Only TryParse — which guards an open document — is strict.
+    [Fact]
+    public void Rtf_Parse_StaysLenient_OnTruncatedInput()
+    {
+        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi hello there");
+        Assert.Contains("hello there", string.Concat(doc.Blocks.OfType<Paragraph>().Select(Plain)));
+    }
+
     [Fact]
     public void Html_Pre_PreservesWhitespaceAndNewlines()
     {
