@@ -29,6 +29,41 @@ namespace WinUIRichEditor.Formatters;
 /// </summary>
 public static class RtfDocumentFormatter
 {
+    // The left gutter a list item at this nesting level gets, in twips. One place, because the writer adds
+    // it to \li and the reader subtracts the same amount back out — if these two ever disagree, a list
+    // item's indent grows or shrinks on every save.
+    internal static int ListGutterTwips(int level) => 720 * (Math.Clamp(level, 0, 8) + 1);
+
+    // Marker style <-> wire code, spelled out in BOTH directions on purpose: a cast would tie the RTF we
+    // write to the enum's declaration order, so inserting a style would silently change the format.
+    internal static int MarkerCode(ListMarkerStyle s) => s switch
+    {
+        ListMarkerStyle.Disc => 1,
+        ListMarkerStyle.Circle => 2,
+        ListMarkerStyle.Square => 3,
+        ListMarkerStyle.Dash => 4,
+        ListMarkerStyle.Decimal => 5,
+        ListMarkerStyle.DecimalParen => 6,
+        ListMarkerStyle.LowerAlpha => 7,
+        ListMarkerStyle.UpperAlpha => 8,
+        ListMarkerStyle.LowerRoman => 9,
+        _ => 0,
+    };
+
+    internal static ListMarkerStyle MarkerFromCode(int c) => c switch
+    {
+        1 => ListMarkerStyle.Disc,
+        2 => ListMarkerStyle.Circle,
+        3 => ListMarkerStyle.Square,
+        4 => ListMarkerStyle.Dash,
+        5 => ListMarkerStyle.Decimal,
+        6 => ListMarkerStyle.DecimalParen,
+        7 => ListMarkerStyle.LowerAlpha,
+        8 => ListMarkerStyle.UpperAlpha,
+        9 => ListMarkerStyle.LowerRoman,
+        _ => ListMarkerStyle.Default,
+    };
+
     static RtfDocumentFormatter()
     {
         // CP949 (Korean), Shift-JIS, GB2312 etc. aren't in .NET's default set ??register them so
@@ -326,11 +361,17 @@ internal sealed class RtfParser
                     _fontCodePages[_ftblIndex] = fcp;
                 break;
 
-            case "par": case "sect": EndParagraph(); break;
+            case "par": case "sect": _skipMarkerText = false; EndParagraph(); break;
             case "line": if (_st.Dest == Dest.Normal) _bytes.Add(10); break;
-            case "tab": if (_st.Dest == Dest.Normal) _bytes.Add(9); break;
+            // A \tab also TERMINATES a list marker's text (see armkb/armkn): that one is structure, so it
+            // is consumed rather than emitted. Every other \tab is a real tab.
+            case "tab":
+                if (_skipMarkerText) { _skipMarkerText = false; break; }
+                if (_st.Dest == Dest.Normal) _bytes.Add(9);
+                break;
             // \pard resets paragraph formatting; alignment/indent/spacing control words follow it.
             case "pard":
+                _skipMarkerText = false; // a marker's text never spans a paragraph reset
                 _para.TextAlignment = TextAlignment.Left; _para.Indent = 0;
                 _para.LineSpacing = double.NaN; _para.LineHeight = double.NaN;
                 _slTwips = 0; _slMult = false;
@@ -379,6 +420,15 @@ internal sealed class RtfParser
             // skipped it — so a cell background exported and reloaded through our OWN format came back
             // colourless.
             case "clcbpat": _pendingCellDef.Shading = p ?? 0; break;
+            // Paragraph shading — the counterpart of \clcbpat for a paragraph rather than a cell. Word
+            // writes it too, so this also reads a shaded paragraph pasted IN from Word.
+            // Indexed exactly like \clcbpat above: _colors is already RTF-indexed (entry 0 is the
+            // colour table's leading ';' = "default"), so the index is used as-is, and A == 0 means
+            // that default rather than a real colour.
+            case "cbpat":
+                if (p is { } shade && shade > 0 && shade < _colors.Count && _colors[shade].A != 0)
+                    _para.Background = _colors[shade];
+                break;
 
             // A table inside a cell: the model nests, and the writer emits these, so they come back as a
             // real nested TableBlock in the parent cell rather than flattened tab/newline text.
@@ -419,6 +469,38 @@ internal sealed class RtfParser
             case "emspace": AppendChar(' '); break;
             case "enspace": AppendChar(' '); break;
             case "qmspace": AppendChar(' '); break;
+
+            // {\*\pn …} — the legacy list definition (see WriteListMarker). `\*` has already set this
+            // group to Skip, which is what keeps {\pntxtb •} out of the text; the control words inside
+            // still reach here, because Apply runs for every one of them regardless of destination. That
+            // is what makes reading the definition possible without also reading its fallback text.
+            //
+            // Applied to _para directly: the definition precedes the paragraph's text, and \pard (which
+            // resets paragraph formatting) precedes the definition, so nothing later clears it.
+            case "pn": _para.ListType = ListKind.Bullet; _para.ListMarker = ListMarkerStyle.Default; break;
+            case "pnlvlblt": _para.ListType = ListKind.Bullet; break;
+            case "pnlvlbody": _para.ListType = ListKind.Ordered; break;
+            case "pndec": _para.ListMarker = ListMarkerStyle.Default; break;
+            case "pnlcltr": _para.ListMarker = ListMarkerStyle.LowerAlpha; break;
+            case "pnucltr": _para.ListMarker = ListMarkerStyle.UpperAlpha; break;
+            case "pnlcrm": _para.ListMarker = ListMarkerStyle.LowerRoman; break;
+            // Ours (see WriteListMarker): the list kind + exact marker style, and a signal that the text up
+            // to the next \tab is the MARKER rather than content. Every other reader skips the group and
+            // renders that text — the only spelling both Word and HWP show — while we drop it.
+            // Ours: the \sl just seen is the DEFAULT single spacing this writer states for other readers,
+            // not a value the author chose. Put the paragraph back to unset, which is a different rule
+            // from 1.0 in this model (natural baseline vs uniform spacing).
+            case "arsl": _para.LineSpacing = double.NaN; _para.LineHeight = double.NaN; _slTwips = 0; _slMult = false; break;
+
+            // Ours: the list nesting level, announced before the marker tag. It restores ListLevel (which
+            // RTF has no standard place for) and says how much gutter the \li above carried.
+            case "arlvl":
+                _para.ListLevel = Math.Clamp(p ?? 0, 0, 8);
+                _pendingListGutter = RtfDocumentFormatter.ListGutterTwips(_para.ListLevel);
+                break;
+
+            case "armkb": _para.ListType = ListKind.Bullet; StartMarkerText(p); break;
+            case "armkn": _para.ListType = ListKind.Ordered; StartMarkerText(p); break;
 
             case "colortbl": _st.Dest = Dest.ColorTable; _colors.Clear(); _ctR = _ctG = _ctB = 0; _ctHasColor = false; break;
             case "fonttbl": _st.Dest = Dest.FontTable; _ftblIndex = -1; _ftblName.Clear(); _ftblBytes.Clear(); break;
@@ -525,11 +607,32 @@ internal sealed class RtfParser
     private void SetUnderline(bool v) { if (v != _st.Underline) FlushRun(); _st.Underline = v; }
     private void SetStrike(bool v) { if (v != _st.Strike) FlushRun(); _st.Strike = v; }
 
+    // True from a {\*\armkb|armkn} tag until the \tab that closes the list marker's literal text, which
+    // this reader must NOT take as content (other readers render it — that is why it is written at all).
+    private bool _skipMarkerText;
+
+    // The gutter the writer folded into \li for the list level last announced by {\*\arlvl}.
+    private int _pendingListGutter;
+
+    // Also carries the exact marker style in the tag's parameter, and takes the list gutter back out of
+    // the indent: the writer adds it to \li so other readers lay the item out, and \li is read here as the
+    // author's own indent. Without the subtraction a list item's indent grew by the gutter on every cycle.
+    private void StartMarkerText(int? code)
+    {
+        if (code is { } c) _para.ListMarker = RtfDocumentFormatter.MarkerFromCode(c);
+        if (_pendingListGutter > 0)
+        {
+            _para.Indent = Math.Max(0, _para.Indent - _pendingListGutter / 15.0);
+            _pendingListGutter = 0;
+        }
+        _skipMarkerText = true;
+    }
+
     private void EmitUnicode(int code)
     {
         FlushBytes();
         if (code < 0) code += 65536;
-        if (_st.Dest == Dest.Normal)
+        if (_st.Dest == Dest.Normal && !_skipMarkerText)
         {
             if (code >= 0 && code <= 0xFFFF) _run.Append((char)code);
         }
@@ -551,7 +654,7 @@ internal sealed class RtfParser
 
     private void AppendByte(char c)
     {
-        if (_st.Dest != Dest.Normal) return;
+        if (_st.Dest != Dest.Normal || _skipMarkerText) return;
         if (c < 256) _bytes.Add((byte)c);
         else { FlushBytes(); _run.Append(c); }
     }
@@ -560,7 +663,7 @@ internal sealed class RtfParser
     // code-page bytes flush first so the character lands in document order.
     private void AppendChar(char ch)
     {
-        if (_st.Dest != Dest.Normal) return;
+        if (_st.Dest != Dest.Normal || _skipMarkerText) return;
         FlushBytes();
         _run.Append(ch);
     }
@@ -1170,6 +1273,18 @@ internal sealed class RtfWriter
     private void WriteParagraphProps(Paragraph p)
     {
         _body.Append(@"\pard");
+        WriteParagraphPropsBody(p); // ends with the delimiter space for the last control word
+    }
+
+    // The properties themselves, without the \pard. Split out because a CELL paragraph opens with
+    // `\pard\intbl\itapN` and used to follow it with a hardcoded `\ql` — so a centred, indented or
+    // custom-spaced paragraph inside a table cell exported as none of that, while the same paragraph at
+    // the top level exported correctly. Not a limitation of RTF: the top-level path has always written
+    // these, and the cell path simply never called it. (Reported from a Word/HWP paste: "문단 정렬이
+    // 들어오지 않음". The attribute matrix had recorded the loss and mis-filed it as a format limit,
+    // because it only compared RTF against RTF and both cells looked equally lossy.)
+    private void WriteParagraphPropsBody(Paragraph p)
+    {
         // ALWAYS emit the alignment, including \ql for left. In the spec \pard resets alignment to left,
         // but HWP treats \pard as "back to the current defaults" and keeps a previously seen \qr — so a
         // single right-aligned paragraph turned every following one right-aligned on paste. Being explicit
@@ -1181,15 +1296,93 @@ internal sealed class RtfWriter
             case TextAlignment.Justify: _body.Append(@"\qj"); break;
             default: _body.Append(@"\ql"); break;
         }
-        if (p.Indent > 0) _body.Append($@"\li{(int)(p.Indent * 15)}");
+        // A list item needs a real hanging indent, not just a marker followed by \tab. Without one the tab
+        // lands on the reader's next DEFAULT tab stop — in HWP that is far to the right, so the text was
+        // thrown across the line while the marker sat alone at the margin (reported from a paste).
+        // \fi-360 hangs the marker, \li puts the text at the gutter, \tx pins the tab there. This is what
+        // Word writes for its own lists.
+        //
+        // The gutter is added INTO \li, and our reader reads \li as the author's indent — so the marker
+        // tag carries the level and the reader subtracts the gutter back out (see StartMarkerText).
+        int indentTwips = (int)(p.Indent * 15);
+        if (p.IsListItem)
+        {
+            int gutter = RtfDocumentFormatter.ListGutterTwips(p.ListLevel);
+            _body.Append($@"\fi-360\li{indentTwips + gutter}\tx{gutter}");
+        }
+        else if (indentTwips > 0) _body.Append($@"\li{indentTwips}");
+        // Paragraph shading, through the colour table like every other colour. Nothing wrote it before, so
+        // a paragraph fill set in the editor reached no RTF consumer at all (reported from Word and HWP
+        // pastes) — while the HTML flavour carried it correctly, which is what made the gap one-sided.
+        // blackIsDefault: false for the same reason cell shading passes it — a black fill is a choice, and
+        // index 0 means "no shading" here.
+        int paraShade = ColorIndex(p.Background, blackIsDefault: false);
+        if (paraShade > 0) _body.Append($@"\cbpat{paraShade}");
         // Line spacing (see the parser's \sl/\slmult cases): proportional = N/240 lines with \slmult1,
         // absolute = negative twips ("exactly") with \slmult0.
+        //
+        // The unset case is stated EXPLICITLY as single, then tagged as "this was the default". Writing
+        // nothing means "use the reader's default", and HWP's default is 160% — so single-spaced text
+        // arrived visibly looser and it read as the editor having changed the spacing.
+        //
+        // The tag is needed because unset and 1.0 are NOT the same thing here: an unset paragraph uses the
+        // font's natural baseline, a custom one uses the uniform-spacing formula (~0.3px apart, and the
+        // caret geometry follows that split). Letting a round trip turn unset into 1.0 would silently move
+        // every paragraph onto the other rule. Other readers ignore the ignorable group and just get
+        // single spacing, which is the whole point.
+        bool defaulted = false;
         if (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 0)
             _body.Append($@"\sl{(int)Math.Round(p.LineSpacing * 240)}\slmult1");
         else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
             _body.Append($@"\sl-{(int)Math.Round(p.LineHeight * 15)}\slmult0");
+        else
+        {
+            _body.Append(@"\sl240\slmult1");
+            defaulted = true;
+        }
+        // The delimiter for the last CONTROL WORD goes here, before the tag. A space after a group's `}`
+        // is not a delimiter — it is content, and it showed up as a leading space in the paragraph the
+        // first time this tag was appended before it.
         _body.Append(' ');
+        if (defaulted) _body.Append(@"{\*\arsl}");
     }
+
+    // A list item's marker, in the legacy RTF list representation Word itself writes: the literal
+    // fallback text inside {\pntext …}, plus a {\*\pn …} definition of the list.
+    //
+    // It used to be written as BARE TEXT followed by \tab, and that injected the glyph into the document's
+    // content on the way back in — a bulleted item reopened as the plain text "•\t항목", list gone, bullet
+    // now part of what the user typed. Save as .rtf and reopen and every list item had grown a "•<tab>"
+    // prefix. No round-trip fuzz could see it, because the result is PERFECTLY IDEMPOTENT: cycle 2 reads
+    // back exactly what cycle 1 produced, and the marker is only written for a paragraph that still has a
+    // ListType — which this one no longer has. (Found by a human pasting into HWP and noticing a stray ■.)
+    //
+    // Both groups are ones our reader already drops: `pntext` is in its skip list, and `{\*\pn}` is an
+    // ignorable destination. So the fallback text stays available to other readers and stays out of our
+    // content, which is exactly the split the bare form could not express.
+    private void WriteListMarker(Paragraph p, int ordered)
+    {
+        // `{\*\armkb<code>}` / `{\*\armkn<code>}` — ours, ignorable, so every other reader skips it. It
+        // says: the text that follows, up to and including the next \tab, is the MARKER, not content —
+        // and the code carries the exact style (b = bullet, n = numbered), which is more than any standard
+        // construct expresses.
+        //
+        // Why not the standard `{\pntext …}{\*\pn …}` pair (which this did emit for one commit): HWP skips
+        // BOTH of them, so the markers vanished from HWP entirely — measured from a real paste. Word does
+        // honour `{\*\pn}` and made real lists from it, but a bullet that disappears in one of the two
+        // targets is worse than a bullet that is literal text in both. The literal text is what every
+        // reader can render; the tag is what keeps it out of OUR content. (Reading `{\*\pn}` is still
+        // wired up, because WORD writes it and that gives an incoming Word list its ListType.)
+        string marker = ListMarkers.Text(p.ListType, p.ListMarker, ordered);
+        // The nesting level, ahead of the marker tag: it tells the reader how much gutter the \li above
+        // included so it can be taken back out, and it restores ListLevel, which RTF otherwise loses.
+        _body.Append(@"{\*\arlvl").Append(Math.Clamp(p.ListLevel, 0, 8)).Append('}');
+        _body.Append(p.ListType == ListKind.Bullet ? @"{\*\armkb" : @"{\*\armkn")
+             .Append(RtfDocumentFormatter.MarkerCode(p.ListMarker)).Append('}');
+        WriteEscaped(marker);
+        _body.Append(@"\tab ");
+    }
+
 
     private void WriteParagraph(Paragraph p, int ordered)
     {
@@ -1204,8 +1397,7 @@ internal sealed class RtfWriter
 
         if (p.ListType != ListKind.None)
         {
-            WriteEscaped(ListMarkers.Text(p.ListType, p.ListMarker, ordered));
-            _body.Append(@"\tab ");
+            WriteListMarker(p, ordered);
             wrote = true;
         }
 
@@ -1293,13 +1485,13 @@ internal sealed class RtfWriter
                 if (col != ac + cs - 1) continue;
 
                 // \itapN = nesting depth; modern readers use it to tell table paragraphs from body text.
-                _body.Append(@"\pard\intbl\itap").Append(depth).Append(@"\ql ");
+                _body.Append(@"\pard\intbl\itap").Append(depth);
                 // Only the merge anchor carries content; a vertically covered slot emits an empty cell.
                 if (ar == row && WriteCellContent(tb.Cells[row][ac], depth))
                 {
                     // A nested table leaves \itap at ITS depth, so re-declare this cell's own before
                     // closing — otherwise the reader books this cell into the deeper table.
-                    _body.Append(@"\pard\intbl\itap").Append(depth).Append(@"\ql ");
+                    _body.Append(@"\pard\intbl\itap").Append(depth);
                 }
                 _body.Append(depth == 1 ? @"\cell" : @"\nestcell");
             }
@@ -1326,9 +1518,14 @@ internal sealed class RtfWriter
         // A nested table leaves \itap at ITS depth and consumes the paragraph properties. Anything this
         // cell writes afterwards has to re-open the cell's own level first, or Word books that text into
         // the deeper table and drops it (a paragraph after a nested table vanished entirely).
-        void ReopenCell()
+        // `resume` is the paragraph whose remaining inlines continue after the nested table: \pard threw
+        // its properties away, so they have to be restated or the tail of the paragraph loses the
+        // alignment/indent/spacing that its head had. Null when a whole block (not a paragraph) follows,
+        // because the next paragraph states its own.
+        void ReopenCell(Paragraph? resume = null)
         {
-            _body.Append(@"\pard\intbl\itap").Append(depth).Append(@"\ql ");
+            _body.Append(@"\pard\intbl\itap").Append(depth);
+            if (resume != null) WriteParagraphPropsBody(resume); // ends with its own delimiter space
             // A fresh paragraph is now open at this cell's level, so the next block writes straight into
             // it rather than prefixing another \par (which would leave a blank line).
             first = true;
@@ -1347,11 +1544,13 @@ internal sealed class RtfWriter
             {
                 if (!first) _body.Append(@"\par ");
                 first = false;
-                if (cpara.ListType != ListKind.None)
-                {
-                    WriteEscaped(ListMarkers.Text(cpara.ListType, cpara.ListMarker, 1));
-                    _body.Append(@"\tab ");
-                }
+                // This paragraph's OWN alignment / indent / line spacing. The cell prelude opens with
+                // `\pard\intbl\itapN` and used to hardcode `\ql`, so every cell paragraph exported as
+                // left-aligned, un-indented and single-spaced no matter what it was — while the identical
+                // paragraph at the top level exported correctly. These are paragraph properties in scope
+                // until the next \par or \pard, so stating them here is all that was missing.
+                WriteParagraphPropsBody(cpara); // ends with its own delimiter space
+                if (cpara.ListType != ListKind.None) WriteListMarker(cpara, 1);
                 bool heading = cpara.HeadingLevel is >= 1 and <= 6;
                 double headingSize = heading ? HeadingSize(cpara.HeadingLevel) : 0;
                 foreach (var inline in cpara.Inlines)
@@ -1361,7 +1560,7 @@ internal sealed class RtfWriter
                         CloseBeforeNested();
                         WriteTable(it.Table, depth + 1);
                         wroteNested = true;
-                        ReopenCell(); // the rest of this paragraph belongs to THIS cell, not the inner table
+                        ReopenCell(cpara); // the rest of this paragraph belongs to THIS cell, not the inner table
                     }
                     else if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r, heading, headingSize);
                     else if (inline is InlineImage cii && cii.RawBytes != null)
@@ -1399,6 +1598,15 @@ internal sealed class RtfWriter
         // \trgaph = half the gap between cell text and border; \trleft = row origin. Word always writes
         // both, and readers that default them differently otherwise lay the row out at the wrong offset.
         d.Append(@"\trowd\trgaph108\trleft0");
+        // Pin the row's width and turn AUTOFIT OFF. Without this Word stretches a pasted table to the full
+        // text column — reported from a real paste — because its default on paste is to fit the window,
+        // and the \cellx positions alone do not say "this width is intentional". \trftsWidth3 = the width
+        // that follows is absolute twips; \trwWidth is the row's total. Both are written after the loop,
+        // which is where the total is known.
+        int totalTwips = 0;
+        for (int col = 0; col < tb.Columns; col++)
+            totalTwips += (col < tb.ColumnWidths.Count ? (int)tb.ColumnWidths[col] : 100) * 15;
+        d.Append(@"\trautofit0\trftsWidth3\trwWidth").Append(totalTwips);
         int x = 0;
         for (int col = 0; col < tb.Columns; col++)
         {

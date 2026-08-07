@@ -304,21 +304,29 @@ public static class HtmlDocumentFormatter
             else if (HasBlockOrMedia(child))
             {
                 Flush();
-                WalkBlocks(child, flow, childLink);
+                // A paragraph element whose only block-or-media content is MEDIA is still a paragraph.
+                // This branch runs before the BlockLeaf one below, so `<p style="…">text<img/></p>` was
+                // walked as a mere container and the element's own paragraph formatting — alignment,
+                // indent, fill, heading level, quote, line height — was dropped on the way in. Every
+                // picture with a caption line lost it, in a cell or not.
+                //
+                // A container with real BLOCK children (a <div> wrapping <p>s) is deliberately left as it
+                // was: whether formatting should inherit down to them is a separate question, and foreign
+                // HTML depends on today's answer.
+                if (BlockLeaf.Contains(name) && !HasBlockChild(child))
+                {
+                    int at = flow.Blocks.Count;
+                    WalkBlocks(child, flow, childLink);
+                    for (int i = at; i < flow.Blocks.Count; i++)
+                        if (flow.Blocks[i] is Paragraph made) ApplyBlockLeafFormat(child, name, made);
+                }
+                else WalkBlocks(child, flow, childLink);
             }
             else if (BlockLeaf.Contains(name))
             {
                 Flush();
-                int hl = (name.Length == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6') ? name[1] - '0' : 0;
-                var p = new Paragraph
-                {
-                    HeadingLevel = hl,
-                    Background = ReadBackground(child),
-                    Indent = ReadIndentPx(child),
-                    IsQuote = name == "blockquote",
-                    TextAlignment = ReadAlign(child)
-                };
-                ApplyLineHeightStyle(child, p);
+                var p = new Paragraph();
+                ApplyBlockLeafFormat(child, name, p);
                 double size = HeadingSize(name, out var headingWeight);
                 ParseInlines(child, p, headingWeight, FontStyle.Normal, null, childLink, size, hasLink,
                     pre: name == "pre"); // <pre> keeps its whitespace/newlines verbatim
@@ -421,6 +429,49 @@ public static class HtmlDocumentFormatter
             case "h6": weight = FontWeightValues.Bold; return 10;
             default: weight = FontWeightValues.Normal; return 10;
         }
+    }
+
+    // Block-level content only — BlockOrMedia without <img>. The distinction is what separates "this
+    // element is a container of paragraphs" from "this element IS a paragraph that happens to hold a
+    // picture", and only the second can carry its formatting onto what the walk produces.
+    private static bool HasBlockChild(HtmlNode n)
+    {
+        foreach (var c in n.ChildNodes)
+            if ((BlockOrMedia.Contains(c.Name) && !c.Name.Equals("img", StringComparison.OrdinalIgnoreCase))
+                || HasBlockChild(c)) return true;
+        return false;
+    }
+
+    // Block.MarginBottom's default. A paragraph at the default writes no margin at all, which is what
+    // keeps an ordinary document's HTML unchanged.
+    private const double DefaultMarginBottom = 10;
+
+    // The paragraph-level formatting an element carries. Only values the element actually states are
+    // written, so applying this to a paragraph the walk already produced cannot clobber that
+    // paragraph's own formatting with defaults.
+    private static void ApplyBlockLeafFormat(HtmlNode node, string name, Paragraph p)
+    {
+        if (name.Length == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6') p.HeadingLevel = name[1] - '0';
+        if (ReadBackground(node) is { } bg) p.Background = bg;
+        if (ReadIndentPx(node) is > 0 and var ind) p.Indent = ind;
+        if (name == "blockquote") p.IsQuote = true;
+        if (ReadAlign(node) is var al && al != TextAlignment.Left) p.TextAlignment = al;
+        ApplyLineHeightStyle(node, p);
+        ApplyMarginMarker(node, p);
+    }
+
+    // Paragraph spacing, from this library's own marker only (see EmitParagraphElement for why foreign
+    // CSS margins are deliberately not read).
+    private static void ApplyMarginMarker(HtmlNode node, Paragraph p)
+    {
+        var v = node.GetAttributeValue("data-are-m", "");
+        if (string.IsNullOrEmpty(v)) return;
+        var parts = v.Split(',');
+        if (parts.Length != 3) return;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (double.TryParse(parts[0], System.Globalization.NumberStyles.Float, inv, out double t)) p.MarginTop = t;
+        if (double.TryParse(parts[1], System.Globalization.NumberStyles.Float, inv, out double b)) p.MarginBottom = b;
+        if (double.TryParse(parts[2], System.Globalization.NumberStyles.Float, inv, out double r)) p.MarginRight = r;
     }
 
     private static bool HasBlockOrMedia(HtmlNode n)
@@ -870,82 +921,137 @@ public static class HtmlDocumentFormatter
     public static string ToHtml(FlowDocument doc)
     {
         var sb = new StringBuilder();
-        var listStack = new List<ListKind>();
-
-        void CloseOne()
-        {
-            sb.Append(listStack[^1] == ListKind.Ordered ? "</ol>\n" : "</ul>\n");
-            listStack.RemoveAt(listStack.Count - 1);
-        }
-        void CloseAll() { while (listStack.Count > 0) CloseOne(); }
-        void SyncList(ListKind kind, ListMarkerStyle marker, int level)
-        {
-            while (listStack.Count > level + 1) CloseOne();
-            if (listStack.Count == level + 1 && listStack[^1] != kind) CloseOne();
-            while (listStack.Count < level + 1)
-            {
-                string lst = CssListStyle(kind, marker);
-                sb.Append(kind == ListKind.Ordered ? $"<ol style=\"list-style-type:{lst}\">\n" : $"<ul style=\"list-style-type:{lst}\">\n");
-                listStack.Add(kind);
-            }
-        }
+        var lists = new ListNesting(sb);
 
         foreach (var block in doc.Blocks)
         {
             if (block is Paragraph p)
             {
-                if (p.IsListItem) SyncList(p.ListType, p.ListMarker, p.ListLevel);
-                else CloseAll();
-
-                string tag = p.IsListItem ? "li"
-                    : p.IsQuote ? "blockquote"
-                    : (p.HeadingLevel >= 1 && p.HeadingLevel <= 6 ? $"h{p.HeadingLevel}" : "p");
-                string align = p.TextAlignment switch { TextAlignment.Center => "center", TextAlignment.Right => "right", TextAlignment.Justify => "justify", _ => "left" };
-                string pStyle = $"text-align:{align};";
-                if (p.Background is { } pbg) pStyle += $"background-color:{ColorUtil.ToCss(pbg)};";
-                if (p.Indent > 0) pStyle += $"margin-left:{p.Indent.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}px;";
-                // Line spacing round-trips as CSS line-height (% for proportional, px for absolute).
-                if (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 0)
-                    pStyle += $"line-height:{(p.LineSpacing * 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}%;";
-                else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
-                    pStyle += $"line-height:{p.LineHeight.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}px;";
-                // A paragraph can be a list item AND a heading, but the tag can only be one of <li>/<h1..6>,
-                // and <li> wins because the list structure is what HTML cannot otherwise express. The
-                // heading level would then be dropped outright, so it rides along as a marker.
-                string extraAttr = p.IsListItem && p.HeadingLevel >= 1 && p.HeadingLevel <= 6
-                    ? $" data-are-h=\"{p.HeadingLevel}\"" : "";
-                // An empty paragraph is a blank LINE the author put there. The importer drops elements
-                // that produce no inline, and it has to: foreign HTML is full of empty <p>/<div> used for
-                // spacing, and keeping those adds a blank line to every web paste. The marker separates
-                // "this document's blank line" from "that page's layout scaffolding".
-                if (p.Inlines.Count == 0) extraAttr += " data-are-empty=\"1\"";
-                sb.Append($"<{tag}{extraAttr} style=\"{pStyle}\">");
-                // `first` tells an inline table it OPENS this paragraph: an HTML parser closes the <p>
-                // when the <table> starts, so on import there is no pending paragraph and the marker's
-                // reattachment would otherwise grab whatever paragraph precedes it.
-                for (int i = 0; i < p.Inlines.Count; i++)
-                    EmitInline(sb, p.Inlines[i], i == 0, i == p.Inlines.Count - 1);
-                sb.Append($"</{tag}>\n");
+                if (p.IsListItem) lists.Sync(p.ListType, p.ListMarker, p.ListLevel);
+                else lists.CloseAll();
+                EmitParagraphElement(sb, p, newlineAfter: true);
             }
             else if (block is DividerBlock)
             {
-                CloseAll();
+                lists.CloseAll();
                 sb.Append("<hr/>\n");
             }
             else if (block is TableBlock tb)
             {
-                CloseAll();
+                lists.CloseAll();
                 EmitTable(sb, tb);
             }
             else if (block is ImageBlock ib && (ib.RawBytes != null || ib.Image != null))
             {
-                CloseAll();
+                lists.CloseAll();
                 sb.Append($"<p>{ImgTag(ib.RawBytes, ib.MimeType, ib.RawBytes == null ? ib.Image : null, ib.Width, ib.Height, ib.AltText)}</p>\n");
             }
         }
-        CloseAll();
+        lists.CloseAll();
         return sb.ToString();
     }
+
+    // Opens and closes the <ul>/<ol> nesting around a run of list-item paragraphs. One instance per block
+    // list — the document's top level has its own, and so does each <td>, because a list inside a cell has
+    // to open and close inside that cell.
+    private sealed class ListNesting
+    {
+        private readonly StringBuilder _sb;
+        private readonly List<ListKind> _open = new();
+        // Inside a <td> the pretty-printing newlines are not decoration: the cell's content is parsed as
+        // inline, so each one becomes a whitespace text node and comes back as content.
+        private readonly string _nl;
+
+        public ListNesting(StringBuilder sb, bool tight = false) { _sb = sb; _nl = tight ? "" : "\n"; }
+
+        private void CloseOne()
+        {
+            _sb.Append(_open[^1] == ListKind.Ordered ? "</ol>" : "</ul>").Append(_nl);
+            _open.RemoveAt(_open.Count - 1);
+        }
+
+        public void CloseAll() { while (_open.Count > 0) CloseOne(); }
+
+        public void Sync(ListKind kind, ListMarkerStyle marker, int level)
+        {
+            while (_open.Count > level + 1) CloseOne();
+            if (_open.Count == level + 1 && _open[^1] != kind) CloseOne();
+            while (_open.Count < level + 1)
+            {
+                string lst = CssListStyle(kind, marker);
+                _sb.Append(kind == ListKind.Ordered ? $"<ol style=\"list-style-type:{lst}\">" : $"<ul style=\"list-style-type:{lst}\">").Append(_nl);
+                _open.Add(kind);
+            }
+        }
+    }
+
+    // One paragraph as its own HTML element, carrying the paragraph-level formatting the reader knows how
+    // to read back. Shared by the document's top level and by table cells, which is the point: a cell
+    // paragraph used to go out as bare inlines, and bare inlines can express NOTHING paragraph-level, so
+    // a bulleted / centred / indented / shaded / heading cell paragraph lost all of it on export. The
+    // reader has always handled the element form inside a <td> (foreign Word tables with bulleted cells
+    // parse correctly) — only the writer could not produce it.
+    //
+    // newlineAfter is false inside a <td>, where a pretty-printing newline is not decoration: the cell's
+    // content is parsed as inline, so it becomes a whitespace text node and comes back as content.
+    private static void EmitParagraphElement(StringBuilder sb, Paragraph p, bool newlineAfter)
+    {
+        string tag = p.IsListItem ? "li"
+            : p.IsQuote ? "blockquote"
+            : (p.HeadingLevel >= 1 && p.HeadingLevel <= 6 ? $"h{p.HeadingLevel}" : "p");
+        string align = p.TextAlignment switch { TextAlignment.Center => "center", TextAlignment.Right => "right", TextAlignment.Justify => "justify", _ => "left" };
+        string pStyle = $"text-align:{align};";
+        if (p.Background is { } pbg) pStyle += $"background-color:{ColorUtil.ToCss(pbg)};";
+        if (p.Indent > 0) pStyle += $"margin-left:{p.Indent.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}px;";
+        // Line spacing round-trips as CSS line-height (% for proportional, px for absolute).
+        if (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 0)
+            pStyle += $"line-height:{(p.LineSpacing * 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}%;";
+        else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
+            pStyle += $"line-height:{p.LineHeight.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}px;";
+        // A paragraph can be a list item AND a heading, but the tag can only be one of <li>/<h1..6>,
+        // and <li> wins because the list structure is what HTML cannot otherwise express. The
+        // heading level would then be dropped outright, so it rides along as a marker.
+        string extraAttr = p.IsListItem && p.HeadingLevel >= 1 && p.HeadingLevel <= 6
+            ? $" data-are-h=\"{p.HeadingLevel}\"" : "";
+        // Paragraph spacing (the context menu's margin submenu sets all three) went out as nothing at all
+        // and came back as the defaults. It goes out TWICE on purpose: as real CSS so a browser or Word
+        // shows the spacing, and as a marker because only the marker is read back. Reading foreign
+        // margin-top/bottom would give every web paste that page's vertical rhythm — the same reason
+        // data-are-empty exists. margin-left is not here: it is Indent, and reading it from foreign HTML
+        // is long-standing behaviour.
+        string Px(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        if (p.MarginTop != 0) pStyle += $"margin-top:{Px(p.MarginTop)}px;";
+        if (p.MarginBottom != DefaultMarginBottom) pStyle += $"margin-bottom:{Px(p.MarginBottom)}px;";
+        if (p.MarginRight != 0) pStyle += $"margin-right:{Px(p.MarginRight)}px;";
+        if (p.MarginTop != 0 || p.MarginBottom != DefaultMarginBottom || p.MarginRight != 0)
+            extraAttr += $" data-are-m=\"{Px(p.MarginTop)},{Px(p.MarginBottom)},{Px(p.MarginRight)}\"";
+        // An empty paragraph is a blank LINE the author put there. The importer drops elements
+        // that produce no inline, and it has to: foreign HTML is full of empty <p>/<div> used for
+        // spacing, and keeping those adds a blank line to every web paste. The marker separates
+        // "this document's blank line" from "that page's layout scaffolding".
+        if (p.Inlines.Count == 0) extraAttr += " data-are-empty=\"1\"";
+        sb.Append($"<{tag}{extraAttr} style=\"{pStyle}\">");
+        // `first` tells an inline table it OPENS this paragraph: an HTML parser closes the <p>
+        // when the <table> starts, so on import there is no pending paragraph and the marker's
+        // reattachment would otherwise grab whatever paragraph precedes it.
+        for (int i = 0; i < p.Inlines.Count; i++)
+            EmitInline(sb, p.Inlines[i], i == 0, i == p.Inlines.Count - 1);
+        sb.Append($"</{tag}>");
+        if (newlineAfter) sb.Append('\n');
+    }
+
+    // Whether a cell paragraph has to go out as its own element. The bare-inline form is kept for plain
+    // cell text — it is what makes a one-line cell come back as one line, and its whitespace rules were
+    // hard-won — so only a paragraph carrying something the bare form cannot express is promoted.
+    private static bool NeedsOwnElement(Paragraph p)
+        => p.IsListItem || p.IsQuote
+           || (p.HeadingLevel >= 1 && p.HeadingLevel <= 6)
+           || p.TextAlignment != TextAlignment.Left
+           || p.Background != null
+           || p.Indent > 0
+           || (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 0)
+           || (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
+           || p.MarginTop != 0 || p.MarginBottom != DefaultMarginBottom || p.MarginRight != 0;
 
     private static double SumColumnWidths(TableBlock tb)
     {
@@ -996,33 +1102,49 @@ public static class HtmlDocumentFormatter
                     sb.Append($"<td{span} style=\"background-color:{ColorUtil.ToCss(cbg)}\">");
                 else
                     sb.Append($"<td{span}>");
-                // <br> separates two CONSECUTIVE paragraphs. After a block element (a nested table, an
-                // image, a rule) the paragraph boundary already exists, and an extra <br> there is not a
-                // separator at all — it parses back as a newline INSIDE the next paragraph, and grows by
-                // one on every save/load cycle. So the flag has to mean "the previous block was a
-                // paragraph", not "some paragraph has been emitted".
-                bool prevWasParagraph = false;
+                // A cell can hold list items, so it needs its own nesting — opened and closed inside
+                // this <td>, never spanning cells.
+                var cellLists = new ListNesting(sb, tight: true);
+                // A cell's paragraphs used to go out as bare inlines joined by <br>. Two things were wrong
+                // with that, and both were invisible to the round-trip fuzz because both are IDEMPOTENT —
+                // once collapsed, they stay collapsed:
+                //   * <br> is not a paragraph boundary to the reader. It comes back as a newline INSIDE one
+                //     paragraph, so a two-paragraph cell became one paragraph with a soft break.
+                //   * bare inlines carry nothing paragraph-level, so a bulleted / centred / indented /
+                //     shaded / heading cell paragraph lost all of it.
+                // So a paragraph goes out as an ELEMENT whenever the bare form cannot represent it — more
+                // than one paragraph in the cell, or formatting on this one. The reader has always split
+                // and read those correctly (foreign Word tables with bulleted cells prove it). A lone plain
+                // paragraph keeps the bare form, so the common cell's bytes do not change and the
+                // whitespace rules earned there still stand.
+                bool manyParagraphs = cell.Blocks.Count(b => b is Paragraph) > 1;
                 foreach (var cblk in cell.Blocks)
                 {
-                    if (cblk is Paragraph cpara)
+                    if (cblk is Paragraph cpara && (manyParagraphs || NeedsOwnElement(cpara)))
                     {
-                        if (prevWasParagraph) sb.Append("<br>");
-                        prevWasParagraph = true;
+                        if (cpara.IsListItem) cellLists.Sync(cpara.ListType, cpara.ListMarker, cpara.ListLevel);
+                        else cellLists.CloseAll();
+                        EmitParagraphElement(sb, cpara, newlineAfter: false);
+                    }
+                    else if (cblk is Paragraph plain)
+                    {
+                        cellLists.CloseAll();
                         // Same boundary rule as a top-level paragraph: a <td>'s content is parsed as
                         // inline, so a space at either end of it is dropped unless it goes out non-breaking.
-                        for (int i = 0; i < cpara.Inlines.Count; i++)
-                            EmitInline(sb, cpara.Inlines[i], i == 0, i == cpara.Inlines.Count - 1);
+                        for (int i = 0; i < plain.Inlines.Count; i++)
+                            EmitInline(sb, plain.Inlines[i], i == 0, i == plain.Inlines.Count - 1);
                     }
                     else if (cblk is ImageBlock cib && (cib.RawBytes != null || cib.Image != null))
-                    { sb.Append(ImgTag(cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText)); prevWasParagraph = false; }
+                    { cellLists.CloseAll(); sb.Append(ImgTag(cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText)); }
                     else if (cblk is TableBlock nt)
                         // tight: a <td>'s content is parsed as inline, so the pretty-printing newline
                         // after a nested </table> lands INSIDE the cell as a whitespace text node and
                         // comes back as content — one more newline per save/load cycle.
-                    { EmitTable(sb, nt, tight: true); prevWasParagraph = false; }
+                    { cellLists.CloseAll(); EmitTable(sb, nt, tight: true); }
                     else if (cblk is DividerBlock)
-                    { sb.Append("<hr/>"); prevWasParagraph = false; }
+                    { cellLists.CloseAll(); sb.Append("<hr/>"); }
                 }
+                cellLists.CloseAll();
                 sb.Append("</td>\n");
             }
             sb.Append("</tr>\n");
@@ -1030,7 +1152,18 @@ public static class HtmlDocumentFormatter
         // An inline table sits INSIDE a text line, so the pretty-printing newline after </table> becomes a
         // whitespace text node between the table and the text that follows it — which the parser normalizes
         // to a space, inserting one more after every inline table on each save/load cycle.
-        sb.Append(asInline ? "</table>" : "</table>\n");
+        //
+        // `tight` says the same thing about a NESTED table, and this method never read it: the call site
+        // has always passed it, with a comment explaining why, and nothing consulted it.
+        //
+        // Honest about what this line is: NO failing case demonstrates it. The reader flushes at a block
+        // table, so `current` is null when the stray newline arrives and the newline is ignored — the one
+        // fuzz seed that did gain a space there is fixed by the cell-paragraph change above, and reverting
+        // this line alone leaves every test and 20000 fuzz seeds green. It is honoured anyway because a
+        // documented parameter that nothing consults is worse than no parameter: the comment made the case
+        // look handled, and the next writer change that puts bare text after a nested cell table would
+        // pay for that.
+        sb.Append(asInline || tight ? "</table>" : "</table>\n");
     }
 
     // `opensParagraph`/`closesParagraph` mark the first and last inline of their paragraph. The first

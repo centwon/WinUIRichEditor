@@ -364,14 +364,26 @@ public class EnhancementTests
         }
         Add(0, "a"); Add(0, "b"); Add(1, "c"); Add(1, "d"); Add(0, "e");
 
-        // The writer emits literal "N." markers; parsing back yields "N.\t<text>" per paragraph, so the
-        // round-trip exposes the numbering: 1,2 (level 0) → 1,2 (level 1 restarts) → 3 (level 0 resumes).
-        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
-        var texts = back.Blocks.OfType<Paragraph>()
-            .Select(p => string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text)))
-            .Where(t => !string.IsNullOrEmpty(t))
+        // Read the numbering out of the WRITTEN RTF, from the marker text each item carries after its
+        // {\*\armkn…} tag. This test used to read it out of the PARSED text instead, and that only worked
+        // because the marker was being injected into the paragraph's content — the defect fixed in
+        // Rtf_ListMarker_IsStructure_NotText. It failed the moment the injection stopped, which is the
+        // right outcome: it was asserting the numbering THROUGH the corruption.
+        string rtf = RtfDocumentFormatter.Write(doc);
+        var numbers = System.Text.RegularExpressions.Regex
+            .Matches(rtf, @"\{\\\*\\armkn\d+\}(\d+)\.\\tab")
+            .Select(m => m.Groups[1].Value)
             .ToList();
-        Assert.Equal(new[] { "1.\ta", "2.\tb", "1.\tc", "2.\td", "3.\te" }, texts);
+        Assert.Equal(new[] { "1", "2", "1", "2", "3" }, numbers);
+
+        // And the round trip keeps them list items with their text intact — no marker in the text.
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var items = back.Blocks.OfType<Paragraph>()
+            .Where(p => p.Inlines.OfType<Run>().Any(r => !string.IsNullOrEmpty(r.Text)))
+            .ToList();
+        Assert.Equal(new[] { "a", "b", "c", "d", "e" },
+            items.Select(p => string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text))));
+        Assert.All(items, p => Assert.Equal(ListKind.Ordered, p.ListType));
     }
 
     [Fact]

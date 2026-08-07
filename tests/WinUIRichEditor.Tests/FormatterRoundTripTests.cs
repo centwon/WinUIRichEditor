@@ -668,4 +668,380 @@ public class FormatterRoundTripTests
         Assert.Contains("two", all);
         Assert.Contains('\n', all);
     }
+
+    // Paragraph-level formatting inside a table cell, out through HTML and back. The writer used to emit
+    // a cell's paragraphs as BARE INLINES separated by <br>, and bare inlines can carry nothing
+    // paragraph-level — so a bulleted, centred, indented, shaded or heading cell paragraph lost all of it
+    // on export, including into the clipboard's HTML flavour (a bulleted cell pasted into Word as plain
+    // lines). The READER could always do it: foreign Word tables with bulleted cells parse correctly, so
+    // this was the writer alone.
+    [Fact]
+    public void Html_RoundTrips_ParagraphFormatting_InsideACell()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(1, 2);
+        var c0 = tb.Cells[0][0];
+        c0.Blocks.Clear();
+        c0.Blocks.Add(new Paragraph { ListType = ListKind.Bullet, ListMarker = ListMarkerStyle.Square, Inlines = { new Run { Text = "one" } } });
+        c0.Blocks.Add(new Paragraph { ListType = ListKind.Bullet, ListMarker = ListMarkerStyle.Square, ListLevel = 1, Inlines = { new Run { Text = "two" } } });
+        var c1 = tb.Cells[0][1];
+        c1.Blocks.Clear();
+        c1.Blocks.Add(new Paragraph { HeadingLevel = 2, TextAlignment = TextAlignment.Center, Inlines = { new Run { Text = "head" } } });
+        c1.Blocks.Add(new Paragraph { Indent = 40, LineSpacing = 2.0, Background = Red, Inlines = { new Run { Text = "body" } } });
+        doc.Blocks.Add(tb);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var t = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock));
+
+        var a = t.Cells[0][0].Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, a.Count);
+        Assert.All(a, p => Assert.Equal(ListKind.Bullet, p.ListType));
+        Assert.All(a, p => Assert.Equal(ListMarkerStyle.Square, p.ListMarker));
+        Assert.Equal(0, a[0].ListLevel);
+        Assert.Equal(1, a[1].ListLevel);
+
+        var b2 = t.Cells[0][1].Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, b2.Count);
+        Assert.Equal(2, b2[0].HeadingLevel);
+        Assert.Equal(TextAlignment.Center, b2[0].TextAlignment);
+        Assert.Equal(40, b2[1].Indent);
+        Assert.Equal(2.0, b2[1].LineSpacing);
+        Assert.Equal(Red, b2[1].Background);
+    }
+
+    // How a marker glyph appears in the RTF: ASCII stays itself, anything above it goes out as the \uN
+    // escape the writer emits. Only the leading character is checked, which is enough to tell "the marker
+    // is in the text stream" from "the marker is gone".
+    private static string EscapedForRtf(string marker)
+        => marker[0] < 128 ? marker[..1] : @"\u" + (int)marker[0];
+
+    // A list item needs a real hanging indent, not a marker plus a bare \tab. Without one the tab lands on
+    // the reader's next DEFAULT tab stop, which in HWP is far to the right — the marker sat alone at the
+    // margin and the text was thrown across the line (reported from a paste).
+    //
+    // The gutter goes INTO \li, and \li is what this reader takes as the author's indent — so the level
+    // tag lets it be subtracted back out. Two cycles, because getting that wrong makes the indent GROW by
+    // the gutter every time, which one cycle would not show.
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 0)]
+    [InlineData(0, 40)]   // an author indent on top of the gutter
+    [InlineData(2, 20)]
+    public void Rtf_ListItem_HasAHangingIndent_AndKeepsTheAuthorsOwn(int level, double indent)
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph
+        {
+            ListType = ListKind.Bullet, ListLevel = level, Indent = indent,
+            Inlines = { new Run { Text = "항목" } },
+        });
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        int gutter = 720 * (level + 1);
+        Assert.Contains(@"\fi-360", rtf);                             // the marker hangs
+        Assert.Contains($@"\li{(int)(indent * 15) + gutter}", rtf);    // text at the gutter (+ author indent)
+        Assert.Contains($@"\tx{gutter}", rtf);                        // and the tab stops there, not at the default
+
+        var cur = doc;
+        for (int cycle = 1; cycle <= 2; cycle++)
+        {
+            cur = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(cur));
+            var p = cur.Blocks.OfType<Paragraph>().First();
+            Assert.Equal(ListKind.Bullet, p.ListType);
+            Assert.Equal(level, p.ListLevel);   // RTF has no standard place for this; the tag carries it
+            Assert.Equal(indent, p.Indent);     // the gutter came back out
+            Assert.Equal("항목", Plain(p));
+        }
+    }
+
+    // Three things a real Word/HWP paste showed missing, all in what the RTF says rather than in what the
+    // model holds. Each is asserted on the WRITTEN bytes, because the consumer is what is being fixed —
+    // a round trip through our own reader would pass on some of these even while Word saw nothing.
+    [Fact]
+    public void Rtf_TellsConsumers_TheFill_TheWidth_AndTheSpacing()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Background = Red, Inlines = { new Run { Text = "칠해짐" } } });
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "기본 간격" } } });
+        doc.Blocks.Add(new TableBlock(1, 2) { ColumnWidths = { 120, 80 } });
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+
+        // A paragraph fill reached no RTF consumer at all — nothing wrote it, while the HTML flavour
+        // carried it correctly. \cbpat is the paragraph counterpart of the cell's \clcbpat.
+        Assert.Matches(@"\\cbpat[1-9]", rtf);
+
+        // Word stretched a pasted table to the full text column, because nothing said the width was
+        // deliberate. \trautofit0 turns the fit-to-window default off; \trftsWidth3 says the width that
+        // follows is absolute twips. 200px * 15 = 3000.
+        Assert.Contains(@"\trautofit0", rtf);
+        Assert.Contains(@"\trftsWidth3\trwWidth3000", rtf);
+
+        // Saying nothing about spacing means "the reader's default", and HWP's is 160% — single-spaced
+        // text arrived looser. The tag next to it keeps OUR reader from turning unset into an explicit
+        // 1.0, which is a different rule in this model (natural baseline vs uniform spacing).
+        Assert.Contains(@"\sl240\slmult1", rtf);
+        Assert.Contains(@"{\*\arsl}", rtf);
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var ps = back.Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(Red, ps[0].Background);                 // and it comes back
+        Assert.True(double.IsNaN(ps[1].LineSpacing));        // still unset, not 1.0
+        Assert.True(double.IsNaN(ps[1].LineHeight));
+    }
+
+    // A cell paragraph's own alignment / indent / line spacing, through RTF. The cell writer opened every
+    // cell with `\pard\intbl\itapN\ql` — a HARDCODED left — and never wrote the paragraph's properties, so
+    // a centred or indented paragraph inside a table exported as neither, while the identical paragraph at
+    // the top level exported correctly. Reported from a Word and HWP paste ("문단 정렬이 들어오지 않음");
+    // the attribute matrix had recorded the loss and mis-filed it as an RTF limitation, because comparing
+    // RTF against RTF showed both directions equally lossy and hid that the top level was fine.
+    [Fact]
+    public void Rtf_CellParagraph_KeepsItsOwnAlignmentAndIndent()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(1, 2);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { TextAlignment = TextAlignment.Center, Inlines = { new Run { Text = "가운데" } } });
+        tb.Cells[0][1].Blocks.Clear();
+        tb.Cells[0][1].Blocks.Add(new Paragraph { TextAlignment = TextAlignment.Right, Indent = 40, LineSpacing = 2.0, Inlines = { new Run { Text = "오른쪽" } } });
+        doc.Blocks.Add(tb);
+
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        var t = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock));
+        var a = t.Cells[0][0].Blocks.OfType<Paragraph>().First();
+        var b2 = t.Cells[0][1].Blocks.OfType<Paragraph>().First();
+
+        Assert.Equal(TextAlignment.Center, a.TextAlignment);
+        Assert.Equal("가운데", Plain(a));          // and no stray delimiter space became content
+        Assert.Equal(TextAlignment.Right, b2.TextAlignment);
+        Assert.Equal(40, b2.Indent);
+        Assert.Equal(2.0, b2.LineSpacing);
+        Assert.Equal("오른쪽", Plain(b2));
+    }
+
+    // A list marker must not become part of the text. RTF has no list element, so the marker went out as
+    // BARE TEXT + \tab — and came back as content: a bulleted item reopened as the plain text "•\t항목",
+    // the list gone and the glyph now part of what the user typed. Saving as .rtf and reopening grew a
+    // "•<tab>" prefix on every list item.
+    //
+    // No round-trip fuzz could see it, and the reason is the point: the result is PERFECTLY IDEMPOTENT.
+    // Cycle 2 reads back exactly what cycle 1 wrote, because the marker is only emitted for a paragraph
+    // that still has a ListType and this one no longer does. Three cycles here for the same reason — the
+    // corruption to guard against is stable, not accumulating.
+    [Theory]
+    [InlineData(ListKind.Bullet, ListMarkerStyle.Default)]
+    [InlineData(ListKind.Bullet, ListMarkerStyle.Square)]
+    [InlineData(ListKind.Ordered, ListMarkerStyle.Default)]
+    [InlineData(ListKind.Ordered, ListMarkerStyle.LowerRoman)]
+    [InlineData(ListKind.Ordered, ListMarkerStyle.DecimalParen)]
+    public void Rtf_ListMarker_IsStructure_NotText(ListKind kind, ListMarkerStyle marker)
+    {
+        FlowDocument doc = new();
+        doc.Blocks.Add(new Paragraph { ListType = kind, ListMarker = marker, Inlines = { new Run { Text = "항목" } } });
+        // The same shape inside a cell, which the writer emits through its own path.
+        var tb = new TableBlock(1, 1);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { ListType = kind, ListMarker = marker, Inlines = { new Run { Text = "셀 항목" } } });
+        doc.Blocks.Add(tb);
+
+        // The marker must ALSO still be literal text in the output, or readers that do not implement RTF
+        // lists show no marker at all. That is not hypothetical: an earlier version of this fix used the
+        // standard {\pntext …}{\*\pn …} pair, and HWP — which skips both — lost every bullet and number
+        // (seen in a real paste). The tag makes the text structure to US; it must stay text to everyone else.
+        string rtfOnce = RtfDocumentFormatter.Write(doc);
+        string glyph = ListMarkers.Text(kind, marker, 1);
+        Assert.Contains(kind == ListKind.Bullet ? @"{\*\armkb" : @"{\*\armkn", rtfOnce);
+        Assert.Contains(EscapedForRtf(glyph), rtfOnce);
+
+        var cur = doc;
+        for (int cycle = 1; cycle <= 3; cycle++)
+        {
+            cur = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(cur));
+
+            var top = cur.Blocks.OfType<Paragraph>().First(p => Plain(p).Contains("항목"));
+            var cell = Assert.IsType<TableBlock>(cur.Blocks.Single(b => b is TableBlock)).Cells[0][0]
+                          .Blocks.OfType<Paragraph>().First();
+
+            foreach (var (p, want) in new[] { (top, "항목"), (cell, "셀 항목") })
+            {
+                // The text is the text: no glyph, no tab.
+                Assert.Equal(want, Plain(p));
+                // And the list is still a list, which is what the marker was standing in for.
+                Assert.Equal(kind, p.ListType);
+            }
+            // An ordered list's number format rides along in the {\*\pn} definition. A bullet's specific
+            // glyph does not: it lives only in the skipped fallback text, so it comes back as Default —
+            // a real remaining loss, pinned here so it is not mistaken for a regression.
+            if (kind == ListKind.Ordered)
+                Assert.Equal(marker, top.ListMarker);
+        }
+    }
+
+    // Paragraph spacing survives HTML, and only from this library's own marker. The context menu's margin
+    // submenu sets all three values and the export carried none of them, so every HTML save reset a
+    // paragraph's spacing to the defaults. Foreign CSS margins stay unread on purpose — reading them would
+    // give every web paste that page's vertical rhythm.
+    [Fact]
+    public void Html_RoundTrips_ParagraphMargins_ButIgnoresForeignOnes()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { MarginTop = 24, MarginBottom = 3, MarginRight = 30, Inlines = { new Run { Text = "spaced" } } });
+        var tb = new TableBlock(1, 1);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { MarginTop = 7, MarginBottom = 2, MarginRight = 5, Inlines = { new Run { Text = "in a cell" } } });
+        doc.Blocks.Add(tb);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var top = back.Blocks.OfType<Paragraph>().First();
+        Assert.Equal(24, top.MarginTop);
+        Assert.Equal(3, top.MarginBottom);
+        Assert.Equal(30, top.MarginRight);
+        var inCell = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock)).Cells[0][0].Blocks.OfType<Paragraph>().First();
+        Assert.Equal(7, inCell.MarginTop);
+        Assert.Equal(2, inCell.MarginBottom);
+        Assert.Equal(5, inCell.MarginRight);
+
+        // A page's own margins are not this document's.
+        var foreign = HtmlDocumentFormatter.ParseHtml("<p style=\"margin-top:80px;margin-bottom:80px;margin-right:80px\">web</p>");
+        var fp = foreign.Blocks.OfType<Paragraph>().First();
+        Assert.Equal(0, fp.MarginTop);
+        Assert.Equal(10, fp.MarginBottom); // the model's default, untouched
+        Assert.Equal(0, fp.MarginRight);
+    }
+
+    // Two paragraphs in a cell stay two. They were joined with <br>, which the reader has never read as a
+    // paragraph boundary — it comes back as a newline inside ONE paragraph — so every HTML cycle collapsed
+    // a multi-paragraph cell. The round-trip fuzz could not see it: once collapsed it stays collapsed, so
+    // cycle 2 matches cycle 1 and the loss is perfectly idempotent.
+    [Fact]
+    public void Html_RoundTrips_TwoParagraphsInACell_AsTwo()
+    {
+        var doc = new FlowDocument();
+        var tb = new TableBlock(1, 1);
+        var cell = tb.Cells[0][0];
+        cell.Blocks.Clear();
+        cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "first" } } });
+        cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "second" } } });
+        doc.Blocks.Add(tb);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var cellBack = Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock)).Cells[0][0];
+        var ps = cellBack.Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, ps.Count);
+        Assert.Equal("first", Plain(ps[0]));
+        Assert.Equal("second", Plain(ps[1]));
+        // A soft break inside ONE cell paragraph is still a newline, not a split — the two must not be
+        // confused now that <br> no longer separates paragraphs here.
+        Assert.DoesNotContain('\n', Plain(ps[0]));
+    }
+
+    // A nested block table inside a cell must not leave a space glued to the text after it. This is a
+    // GUARD, not proof of a fix: it passes with or without EmitTable honouring `tight`, because the
+    // reader ignores that whitespace while no paragraph is pending. It pins the property the writer's
+    // cell handling now depends on.
+    [Fact]
+    public void Html_NestedTableInACell_DoesNotGrowASpaceAfterIt()
+    {
+        var doc = new FlowDocument();
+        var outer = new TableBlock(1, 1);
+        var cell = outer.Cells[0][0];
+        cell.Blocks.Clear();
+        var inner = new TableBlock(1, 1);
+        ((Run)inner.Cells[0][0].Para.Inlines[0]).Text = "inner";
+        cell.Blocks.Add(inner);
+        cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "after" } } });
+        doc.Blocks.Add(outer);
+
+        // Two cycles: this is the accumulating class, so one cycle is not the test.
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+        foreach (var d in new[] { once, twice })
+        {
+            var c = Assert.IsType<TableBlock>(d.Blocks.Single(b => b is TableBlock)).Cells[0][0];
+            var text = string.Concat(c.Blocks.OfType<Paragraph>().Select(Plain));
+            Assert.Equal("after", text);
+        }
+    }
+
+    // A paragraph that holds a PICTURE keeps its own formatting on import. The walker's
+    // "recurse into anything containing block-or-media" branch ran before the one that reads a
+    // paragraph element's style, so an <img> anywhere in the paragraph turned <p style="…"> into a mere
+    // container and every paragraph-level value was dropped — a captioned picture lost its centring on
+    // every HTML load, at the top level as much as in a cell.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Html_ParagraphHoldingAnImage_KeepsItsOwnFormatting(bool inCell)
+    {
+        // 20x20 is below the icon threshold, so it lands as an inline image on a text line.
+        const string img = "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8//8/AzJgYkAD5AsAAP//A+8DTgn2rL0AAAAASUVORK5CYII=\" width=\"20\" height=\"20\"/>";
+        const string para = "<p style=\"text-align:center;margin-left:40px;line-height:200%;\">caption" + img + "</p>";
+        string html = inCell ? $"<table><tr><td>{para}</td></tr></table>" : para;
+
+        var doc = HtmlDocumentFormatter.ParseHtml(html);
+        var p = inCell
+            ? Assert.IsType<TableBlock>(doc.Blocks.Single(b => b is TableBlock)).Cells[0][0].Blocks.OfType<Paragraph>().First()
+            : doc.Blocks.OfType<Paragraph>().First();
+
+        Assert.Equal(TextAlignment.Center, p.TextAlignment);
+        Assert.Equal(40, p.Indent);
+        Assert.Equal(2.0, p.LineSpacing);
+        Assert.Contains(p.Inlines, i => i is InlineImage); // the picture is still there
+        Assert.Contains("caption", string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text)));
+    }
+
+    // The narrowing that keeps the fix from changing foreign HTML: a <div> that wraps real block
+    // children is still walked as a container, and its styling does NOT descend onto them. Only an
+    // element whose sole block-or-media content is media counts as "a paragraph holding a picture".
+    [Fact]
+    public void Html_ContainerWrappingBlocks_DoesNotPushItsStyleOntoThem()
+    {
+        var doc = HtmlDocumentFormatter.ParseHtml(
+            "<div style=\"text-align:center;margin-left:60px\"><p>a</p><p>b</p></div>");
+        var ps = doc.Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(2, ps.Count);
+        Assert.All(ps, p => Assert.Equal(TextAlignment.Left, p.TextAlignment));
+        Assert.All(ps, p => Assert.Equal(0, p.Indent));
+    }
+
+    // A paragraph fill inside a table cell, through the two NATIVE save formats — which have to be
+    // lossless. The legacy one-paragraph cell encoding shares a single Background field between the
+    // cell's fill and the paragraph's, and the cell's assignment came last: with no cell fill the
+    // paragraph's was overwritten with null and gone. Both cases are pinned, because the second (fills
+    // on both) is the one that still reads as "the cell kept its colour" while the paragraph's is lost.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NativeFormats_KeepAParagraphFillInsideACell(bool cellFilledToo)
+    {
+        var cellFill = new Color { A = 255, R = 0, G = 0, B = 255 };
+        FlowDocument Build()
+        {
+            var doc = new FlowDocument();
+            var tb = new TableBlock(1, 1);
+            var cell = tb.Cells[0][0];
+            cell.Blocks.Clear();
+            cell.Blocks.Add(new Paragraph { Background = Red, Inlines = { new Run { Text = "filled" } } });
+            if (cellFilledToo) cell.Background = cellFill;
+            doc.Blocks.Add(tb);
+            return doc;
+        }
+
+        static Paragraph FirstCellParagraph(FlowDocument d)
+            => Assert.IsType<Paragraph>(Assert.IsType<TableBlock>(d.Blocks[0]).Cells[0][0].Blocks[0]);
+
+        var viaJson = DocumentSerializer.Deserialize(DocumentSerializer.Serialize(Build()));
+        Assert.Equal(Red, FirstCellParagraph(viaJson).Background);
+
+        using var ms = new MemoryStream();
+        DocumentPackage.Save(Build(), ms);
+        ms.Position = 0;
+        var viaFlow = DocumentPackage.Load(ms);
+        Assert.Equal(Red, FirstCellParagraph(viaFlow).Background);
+
+        // The cell's own fill still round-trips — the two are separate values, not one.
+        var cellAfter = Assert.IsType<TableBlock>(viaFlow.Blocks[0]).Cells[0][0];
+        Assert.Equal(cellFilledToo ? cellFill : (Color?)null, cellAfter.Background);
+    }
 }
