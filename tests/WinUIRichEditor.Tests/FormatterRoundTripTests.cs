@@ -715,6 +715,42 @@ public class FormatterRoundTripTests
     private static string EscapedForRtf(string marker)
         => marker[0] < 128 ? marker[..1] : @"\u" + (int)marker[0];
 
+    // Three things a real Word/HWP paste showed missing, all in what the RTF says rather than in what the
+    // model holds. Each is asserted on the WRITTEN bytes, because the consumer is what is being fixed —
+    // a round trip through our own reader would pass on some of these even while Word saw nothing.
+    [Fact]
+    public void Rtf_TellsConsumers_TheFill_TheWidth_AndTheSpacing()
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Background = Red, Inlines = { new Run { Text = "칠해짐" } } });
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "기본 간격" } } });
+        doc.Blocks.Add(new TableBlock(1, 2) { ColumnWidths = { 120, 80 } });
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+
+        // A paragraph fill reached no RTF consumer at all — nothing wrote it, while the HTML flavour
+        // carried it correctly. \cbpat is the paragraph counterpart of the cell's \clcbpat.
+        Assert.Matches(@"\\cbpat[1-9]", rtf);
+
+        // Word stretched a pasted table to the full text column, because nothing said the width was
+        // deliberate. \trautofit0 turns the fit-to-window default off; \trftsWidth3 says the width that
+        // follows is absolute twips. 200px * 15 = 3000.
+        Assert.Contains(@"\trautofit0", rtf);
+        Assert.Contains(@"\trftsWidth3\trwWidth3000", rtf);
+
+        // Saying nothing about spacing means "the reader's default", and HWP's is 160% — single-spaced
+        // text arrived looser. The tag next to it keeps OUR reader from turning unset into an explicit
+        // 1.0, which is a different rule in this model (natural baseline vs uniform spacing).
+        Assert.Contains(@"\sl240\slmult1", rtf);
+        Assert.Contains(@"{\*\arsl}", rtf);
+
+        var back = RtfDocumentFormatter.Parse(rtf);
+        var ps = back.Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(Red, ps[0].Background);                 // and it comes back
+        Assert.True(double.IsNaN(ps[1].LineSpacing));        // still unset, not 1.0
+        Assert.True(double.IsNaN(ps[1].LineHeight));
+    }
+
     // A cell paragraph's own alignment / indent / line spacing, through RTF. The cell writer opened every
     // cell with `\pard\intbl\itapN\ql` — a HARDCODED left — and never wrote the paragraph's properties, so
     // a centred or indented paragraph inside a table exported as neither, while the identical paragraph at

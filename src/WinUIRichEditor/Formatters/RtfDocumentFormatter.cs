@@ -415,6 +415,15 @@ internal sealed class RtfParser
             // skipped it — so a cell background exported and reloaded through our OWN format came back
             // colourless.
             case "clcbpat": _pendingCellDef.Shading = p ?? 0; break;
+            // Paragraph shading — the counterpart of \clcbpat for a paragraph rather than a cell. Word
+            // writes it too, so this also reads a shaded paragraph pasted IN from Word.
+            // Indexed exactly like \clcbpat above: _colors is already RTF-indexed (entry 0 is the
+            // colour table's leading ';' = "default"), so the index is used as-is, and A == 0 means
+            // that default rather than a real colour.
+            case "cbpat":
+                if (p is { } shade && shade > 0 && shade < _colors.Count && _colors[shade].A != 0)
+                    _para.Background = _colors[shade];
+                break;
 
             // A table inside a cell: the model nests, and the writer emits these, so they come back as a
             // real nested TableBlock in the parent cell rather than flattened tab/newline text.
@@ -473,6 +482,11 @@ internal sealed class RtfParser
             // Ours (see WriteListMarker): the list kind + exact marker style, and a signal that the text up
             // to the next \tab is the MARKER rather than content. Every other reader skips the group and
             // renders that text — the only spelling both Word and HWP show — while we drop it.
+            // Ours: the \sl just seen is the DEFAULT single spacing this writer states for other readers,
+            // not a value the author chose. Put the paragraph back to unset, which is a different rule
+            // from 1.0 in this model (natural baseline vs uniform spacing).
+            case "arsl": _para.LineSpacing = double.NaN; _para.LineHeight = double.NaN; _slTwips = 0; _slMult = false; break;
+
             case "armkb": _para.ListType = ListKind.Bullet; StartMarkerText(p); break;
             case "armkn": _para.ListType = ListKind.Ordered; StartMarkerText(p); break;
 
@@ -1261,13 +1275,40 @@ internal sealed class RtfWriter
             default: _body.Append(@"\ql"); break;
         }
         if (p.Indent > 0) _body.Append($@"\li{(int)(p.Indent * 15)}");
+        // Paragraph shading, through the colour table like every other colour. Nothing wrote it before, so
+        // a paragraph fill set in the editor reached no RTF consumer at all (reported from Word and HWP
+        // pastes) — while the HTML flavour carried it correctly, which is what made the gap one-sided.
+        // blackIsDefault: false for the same reason cell shading passes it — a black fill is a choice, and
+        // index 0 means "no shading" here.
+        int paraShade = ColorIndex(p.Background, blackIsDefault: false);
+        if (paraShade > 0) _body.Append($@"\cbpat{paraShade}");
         // Line spacing (see the parser's \sl/\slmult cases): proportional = N/240 lines with \slmult1,
         // absolute = negative twips ("exactly") with \slmult0.
+        //
+        // The unset case is stated EXPLICITLY as single, then tagged as "this was the default". Writing
+        // nothing means "use the reader's default", and HWP's default is 160% — so single-spaced text
+        // arrived visibly looser and it read as the editor having changed the spacing.
+        //
+        // The tag is needed because unset and 1.0 are NOT the same thing here: an unset paragraph uses the
+        // font's natural baseline, a custom one uses the uniform-spacing formula (~0.3px apart, and the
+        // caret geometry follows that split). Letting a round trip turn unset into 1.0 would silently move
+        // every paragraph onto the other rule. Other readers ignore the ignorable group and just get
+        // single spacing, which is the whole point.
+        bool defaulted = false;
         if (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 0)
             _body.Append($@"\sl{(int)Math.Round(p.LineSpacing * 240)}\slmult1");
         else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
             _body.Append($@"\sl-{(int)Math.Round(p.LineHeight * 15)}\slmult0");
+        else
+        {
+            _body.Append(@"\sl240\slmult1");
+            defaulted = true;
+        }
+        // The delimiter for the last CONTROL WORD goes here, before the tag. A space after a group's `}`
+        // is not a delimiter — it is content, and it showed up as a leading space in the paragraph the
+        // first time this tag was appended before it.
         _body.Append(' ');
+        if (defaulted) _body.Append(@"{\*\arsl}");
     }
 
     // A list item's marker, in the legacy RTF list representation Word itself writes: the literal
@@ -1518,6 +1559,15 @@ internal sealed class RtfWriter
         // \trgaph = half the gap between cell text and border; \trleft = row origin. Word always writes
         // both, and readers that default them differently otherwise lay the row out at the wrong offset.
         d.Append(@"\trowd\trgaph108\trleft0");
+        // Pin the row's width and turn AUTOFIT OFF. Without this Word stretches a pasted table to the full
+        // text column — reported from a real paste — because its default on paste is to fit the window,
+        // and the \cellx positions alone do not say "this width is intentional". \trftsWidth3 = the width
+        // that follows is absolute twips; \trwWidth is the row's total. Both are written after the loop,
+        // which is where the total is known.
+        int totalTwips = 0;
+        for (int col = 0; col < tb.Columns; col++)
+            totalTwips += (col < tb.ColumnWidths.Count ? (int)tb.ColumnWidths[col] : 100) * 15;
+        d.Append(@"\trautofit0\trftsWidth3\trwWidth").Append(totalTwips);
         int x = 0;
         for (int col = 0; col < tb.Columns; col++)
         {
