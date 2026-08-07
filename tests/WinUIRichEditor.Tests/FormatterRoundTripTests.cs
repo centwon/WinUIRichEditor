@@ -715,6 +715,45 @@ public class FormatterRoundTripTests
     private static string EscapedForRtf(string marker)
         => marker[0] < 128 ? marker[..1] : @"\u" + (int)marker[0];
 
+    // A list item needs a real hanging indent, not a marker plus a bare \tab. Without one the tab lands on
+    // the reader's next DEFAULT tab stop, which in HWP is far to the right — the marker sat alone at the
+    // margin and the text was thrown across the line (reported from a paste).
+    //
+    // The gutter goes INTO \li, and \li is what this reader takes as the author's indent — so the level
+    // tag lets it be subtracted back out. Two cycles, because getting that wrong makes the indent GROW by
+    // the gutter every time, which one cycle would not show.
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 0)]
+    [InlineData(0, 40)]   // an author indent on top of the gutter
+    [InlineData(2, 20)]
+    public void Rtf_ListItem_HasAHangingIndent_AndKeepsTheAuthorsOwn(int level, double indent)
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph
+        {
+            ListType = ListKind.Bullet, ListLevel = level, Indent = indent,
+            Inlines = { new Run { Text = "항목" } },
+        });
+
+        string rtf = RtfDocumentFormatter.Write(doc);
+        int gutter = 720 * (level + 1);
+        Assert.Contains(@"\fi-360", rtf);                             // the marker hangs
+        Assert.Contains($@"\li{(int)(indent * 15) + gutter}", rtf);    // text at the gutter (+ author indent)
+        Assert.Contains($@"\tx{gutter}", rtf);                        // and the tab stops there, not at the default
+
+        var cur = doc;
+        for (int cycle = 1; cycle <= 2; cycle++)
+        {
+            cur = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(cur));
+            var p = cur.Blocks.OfType<Paragraph>().First();
+            Assert.Equal(ListKind.Bullet, p.ListType);
+            Assert.Equal(level, p.ListLevel);   // RTF has no standard place for this; the tag carries it
+            Assert.Equal(indent, p.Indent);     // the gutter came back out
+            Assert.Equal("항목", Plain(p));
+        }
+    }
+
     // Three things a real Word/HWP paste showed missing, all in what the RTF says rather than in what the
     // model holds. Each is asserted on the WRITTEN bytes, because the consumer is what is being fixed —
     // a round trip through our own reader would pass on some of these even while Word saw nothing.

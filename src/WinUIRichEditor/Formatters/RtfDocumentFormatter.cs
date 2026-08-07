@@ -29,6 +29,11 @@ namespace WinUIRichEditor.Formatters;
 /// </summary>
 public static class RtfDocumentFormatter
 {
+    // The left gutter a list item at this nesting level gets, in twips. One place, because the writer adds
+    // it to \li and the reader subtracts the same amount back out — if these two ever disagree, a list
+    // item's indent grows or shrinks on every save.
+    internal static int ListGutterTwips(int level) => 720 * (Math.Clamp(level, 0, 8) + 1);
+
     // Marker style <-> wire code, spelled out in BOTH directions on purpose: a cast would tie the RTF we
     // write to the enum's declaration order, so inserting a style would silently change the format.
     internal static int MarkerCode(ListMarkerStyle s) => s switch
@@ -487,6 +492,13 @@ internal sealed class RtfParser
             // from 1.0 in this model (natural baseline vs uniform spacing).
             case "arsl": _para.LineSpacing = double.NaN; _para.LineHeight = double.NaN; _slTwips = 0; _slMult = false; break;
 
+            // Ours: the list nesting level, announced before the marker tag. It restores ListLevel (which
+            // RTF has no standard place for) and says how much gutter the \li above carried.
+            case "arlvl":
+                _para.ListLevel = Math.Clamp(p ?? 0, 0, 8);
+                _pendingListGutter = RtfDocumentFormatter.ListGutterTwips(_para.ListLevel);
+                break;
+
             case "armkb": _para.ListType = ListKind.Bullet; StartMarkerText(p); break;
             case "armkn": _para.ListType = ListKind.Ordered; StartMarkerText(p); break;
 
@@ -599,10 +611,20 @@ internal sealed class RtfParser
     // this reader must NOT take as content (other readers render it — that is why it is written at all).
     private bool _skipMarkerText;
 
-    // Also carries the exact marker style in the tag's parameter.
+    // The gutter the writer folded into \li for the list level last announced by {\*\arlvl}.
+    private int _pendingListGutter;
+
+    // Also carries the exact marker style in the tag's parameter, and takes the list gutter back out of
+    // the indent: the writer adds it to \li so other readers lay the item out, and \li is read here as the
+    // author's own indent. Without the subtraction a list item's indent grew by the gutter on every cycle.
     private void StartMarkerText(int? code)
     {
         if (code is { } c) _para.ListMarker = RtfDocumentFormatter.MarkerFromCode(c);
+        if (_pendingListGutter > 0)
+        {
+            _para.Indent = Math.Max(0, _para.Indent - _pendingListGutter / 15.0);
+            _pendingListGutter = 0;
+        }
         _skipMarkerText = true;
     }
 
@@ -1274,7 +1296,21 @@ internal sealed class RtfWriter
             case TextAlignment.Justify: _body.Append(@"\qj"); break;
             default: _body.Append(@"\ql"); break;
         }
-        if (p.Indent > 0) _body.Append($@"\li{(int)(p.Indent * 15)}");
+        // A list item needs a real hanging indent, not just a marker followed by \tab. Without one the tab
+        // lands on the reader's next DEFAULT tab stop — in HWP that is far to the right, so the text was
+        // thrown across the line while the marker sat alone at the margin (reported from a paste).
+        // \fi-360 hangs the marker, \li puts the text at the gutter, \tx pins the tab there. This is what
+        // Word writes for its own lists.
+        //
+        // The gutter is added INTO \li, and our reader reads \li as the author's indent — so the marker
+        // tag carries the level and the reader subtracts the gutter back out (see StartMarkerText).
+        int indentTwips = (int)(p.Indent * 15);
+        if (p.IsListItem)
+        {
+            int gutter = RtfDocumentFormatter.ListGutterTwips(p.ListLevel);
+            _body.Append($@"\fi-360\li{indentTwips + gutter}\tx{gutter}");
+        }
+        else if (indentTwips > 0) _body.Append($@"\li{indentTwips}");
         // Paragraph shading, through the colour table like every other colour. Nothing wrote it before, so
         // a paragraph fill set in the editor reached no RTF consumer at all (reported from Word and HWP
         // pastes) — while the HTML flavour carried it correctly, which is what made the gap one-sided.
@@ -1338,6 +1374,9 @@ internal sealed class RtfWriter
         // reader can render; the tag is what keeps it out of OUR content. (Reading `{\*\pn}` is still
         // wired up, because WORD writes it and that gives an incoming Word list its ListType.)
         string marker = ListMarkers.Text(p.ListType, p.ListMarker, ordered);
+        // The nesting level, ahead of the marker tag: it tells the reader how much gutter the \li above
+        // included so it can be taken back out, and it restores ListLevel, which RTF otherwise loses.
+        _body.Append(@"{\*\arlvl").Append(Math.Clamp(p.ListLevel, 0, 8)).Append('}');
         _body.Append(p.ListType == ListKind.Bullet ? @"{\*\armkb" : @"{\*\armkn")
              .Append(RtfDocumentFormatter.MarkerCode(p.ListMarker)).Append('}');
         WriteEscaped(marker);
