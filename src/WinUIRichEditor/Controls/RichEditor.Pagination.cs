@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Windows.Foundation;
 using Microsoft.UI.Xaml;
@@ -15,8 +15,11 @@ public partial class RichEditor
 {
     internal const double A4PageWidth = 794;
     internal const double A4PageHeight = 1123;
-    internal const double PagePadX = 48;   // left/right page margin
-    internal const double PagePadY = 40;   // top/bottom page margin
+    // Aliases of the shared page geometry (Documents.PageSetup): the RTF writer needs the same numbers
+    // for its footer tab stop, and it cannot read them off this type without triggering the dependency-
+    // property static constructor, which requires the WinUI runtime.
+    internal const double PagePadX = Documents.PageSetup.MarginX; // left/right page margin
+    internal const double PagePadY = Documents.PageSetup.MarginY; // top/bottom page margin
     internal const double PageGap = 14;    // grey desk gap between stacked pages (page view)
 
     // ---- visual zoom -------------------------------------------------------
@@ -233,24 +236,8 @@ public partial class RichEditor
     internal bool IsPaged => PageSize != RichEditorPageSize.Continuous;
 
     // The paper's pixel size at 96 DPI, accounting for orientation. Continuous reports its A4 fallback.
-    private (double w, double h) PaperDims
-    {
-        get
-        {
-            var (w, h) = PageSize switch
-            {
-                RichEditorPageSize.A3 => (1123.0, 1587.0),
-                RichEditorPageSize.A5 => (559.0, 794.0),
-                RichEditorPageSize.B4 => (971.0, 1376.0),
-                RichEditorPageSize.B5 => (688.0, 971.0),
-                RichEditorPageSize.Letter => (816.0, 1056.0),
-                RichEditorPageSize.Legal => (816.0, 1344.0),
-                RichEditorPageSize.Tabloid => (1056.0, 1632.0),
-                _ => (A4PageWidth, A4PageHeight), // A4 + Continuous fallback
-            };
-            return PageOrientation == RichEditorPageOrientation.Landscape ? (h, w) : (w, h);
-        }
-    }
+    // The table itself lives in Documents.PageSetup so the RTF writer uses the very same numbers.
+    private (double w, double h) PaperDims => Documents.PageSetup.PaperDips(PageSize, PageOrientation);
 
     internal double PaperWidth => PaperDims.w;
     internal double PaperHeight => PaperDims.h;
