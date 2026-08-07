@@ -491,6 +491,12 @@ WinUIRichEditor.Formatters.DocumentPackage
 WinUIRichEditor.Formatters.DocumentSerializer
 WinUIRichEditor.Formatters.HtmlDocumentFormatter
 WinUIRichEditor.Formatters.RtfDocumentFormatter
+WinUIRichEditor.RichEditorDiagnostics
+WinUIRichEditor.RichEditorFaultEventArgs
+WinUIRichEditor.RichEditorFaultEventArgs.Exception.get -> System.Exception!
+WinUIRichEditor.RichEditorFaultEventArgs.File.get -> string!
+WinUIRichEditor.RichEditorFaultEventArgs.Line.get -> int
+WinUIRichEditor.RichEditorFaultEventArgs.Member.get -> string!
 WinUIRichEditor.RichEditorLocalization
 abstract WinUIRichEditor.Documents.TextElement.Clone() -> WinUIRichEditor.Documents.TextElement!
 const WinUIRichEditor.Formatters.DocumentSerializer.CurrentSchemaVersion = "1.0" -> string!
@@ -505,9 +511,14 @@ override WinUIRichEditor.Documents.TableBlock.Clone() -> WinUIRichEditor.Documen
 override WinUIRichEditor.Documents.TableCell.Clone() -> WinUIRichEditor.Documents.TextElement!
 override WinUIRichEditor.Documents.TextPointer.Equals(object? obj) -> bool
 override WinUIRichEditor.Documents.TextPointer.GetHashCode() -> int
+override WinUIRichEditor.RichEditorFaultEventArgs.ToString() -> string!
 static WinUIRichEditor.Controls.RichEditorIcons.Provider.get -> System.Func<WinUIRichEditor.Controls.RichEditorIcon, Microsoft.UI.Xaml.UIElement?>?
 static WinUIRichEditor.Controls.RichEditorIcons.Provider.set -> void
 static WinUIRichEditor.Controls.RichEditorPrintHelper.ShowPrintUIAsync(WinUIRichEditor.Controls.RichEditor! editor, nint windowHandle, string! jobTitle = "Document", double dpi = 150) -> System.Threading.Tasks.Task<bool>!
+static WinUIRichEditor.Controls.RichEditorToolbar.FontSizes.get -> double[]!
+static WinUIRichEditor.Controls.RichEditorToolbar.FontSizes.set -> void
+static WinUIRichEditor.Controls.RichEditorToolbar.Palette.get -> string![]!
+static WinUIRichEditor.Controls.RichEditorToolbar.Palette.set -> void
 static WinUIRichEditor.Documents.TextPointer.operator !=(WinUIRichEditor.Documents.TextPointer? a, WinUIRichEditor.Documents.TextPointer? b) -> bool
 static WinUIRichEditor.Documents.TextPointer.operator ==(WinUIRichEditor.Documents.TextPointer? a, WinUIRichEditor.Documents.TextPointer? b) -> bool
 static WinUIRichEditor.Formatters.DocumentPackage.Load(System.IO.Stream! source) -> WinUIRichEditor.Documents.FlowDocument!
@@ -519,7 +530,10 @@ static WinUIRichEditor.Formatters.HtmlDocumentFormatter.ParseHtmlAsync(string! h
 static WinUIRichEditor.Formatters.HtmlDocumentFormatter.ToHtml(WinUIRichEditor.Documents.FlowDocument! doc) -> string!
 static WinUIRichEditor.Formatters.RtfDocumentFormatter.LooksLikeRtf(string? text) -> bool
 static WinUIRichEditor.Formatters.RtfDocumentFormatter.Parse(string! rtf) -> WinUIRichEditor.Documents.FlowDocument!
+static WinUIRichEditor.Formatters.RtfDocumentFormatter.TryParse(string! rtf, out WinUIRichEditor.Documents.FlowDocument! document, out string? error) -> bool
 static WinUIRichEditor.Formatters.RtfDocumentFormatter.Write(WinUIRichEditor.Documents.FlowDocument! document) -> string!
+static WinUIRichEditor.RichEditorDiagnostics.Fault -> System.EventHandler<WinUIRichEditor.RichEditorFaultEventArgs!>?
+static WinUIRichEditor.RichEditorDiagnostics.Reset() -> void
 static WinUIRichEditor.RichEditorLocalization.GetString(string! key) -> string!
 static WinUIRichEditor.RichEditorLocalization.Language.get -> string!
 static WinUIRichEditor.RichEditorLocalization.Language.set -> void

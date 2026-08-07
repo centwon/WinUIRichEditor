@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 using Windows.UI;
 using Windows.UI.Text;
@@ -788,6 +788,49 @@ public class FormatterRoundTripTests
         Assert.Equal(Red, ps[0].Background);                 // and it comes back
         Assert.True(double.IsNaN(ps[1].LineSpacing));        // still unset, not 1.0
         Assert.True(double.IsNaN(ps[1].LineHeight));
+    }
+
+    // A list item is a paragraph, so it carries paragraph formatting — and HTML's reader read only the
+    // line height off an `<li>`, dropping the fill, indent, alignment and spacing the WRITER had put
+    // there. Found by the 1.1 NuGet consumer smoke test, which combined "is a list item" with "has a
+    // fill"; the unit tests had checked those two separately and never together, and the fuzz could not
+    // see it at all because the loss is IDEMPOTENT — cycle 2 loses exactly what cycle 1 lost.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Html_ListItem_KeepsItsParagraphFormatting(bool inCell)
+    {
+        var item = new Paragraph
+        {
+            ListType = ListKind.Bullet,
+            Background = Red,
+            Indent = 40,
+            TextAlignment = TextAlignment.Center,
+            LineSpacing = 2.0,
+            Inlines = { new Run { Text = "item" } },
+        };
+
+        var doc = new FlowDocument();
+        if (inCell)
+        {
+            var tb = new TableBlock(1, 1);
+            tb.Cells[0][0].Blocks.Clear();
+            tb.Cells[0][0].Blocks.Add(item);
+            doc.Blocks.Add(tb);
+        }
+        else doc.Blocks.Add(item);
+
+        var back = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var p = inCell
+            ? Assert.IsType<TableBlock>(back.Blocks.Single(b => b is TableBlock)).Cells[0][0].Blocks.OfType<Paragraph>().First()
+            : back.Blocks.OfType<Paragraph>().First();
+
+        Assert.Equal(ListKind.Bullet, p.ListType);
+        Assert.Equal(Red, p.Background);
+        Assert.Equal(40, p.Indent);
+        Assert.Equal(TextAlignment.Center, p.TextAlignment);
+        Assert.Equal(2.0, p.LineSpacing);
+        Assert.Equal("item", Plain(p));
     }
 
     // A cell paragraph's own alignment / indent / line spacing, through RTF. The cell writer opened every
