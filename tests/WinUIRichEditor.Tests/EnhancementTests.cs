@@ -364,14 +364,14 @@ public class EnhancementTests
         }
         Add(0, "a"); Add(0, "b"); Add(1, "c"); Add(1, "d"); Add(0, "e");
 
-        // Read the numbering out of the WRITTEN RTF, from the {\pntext …} fallback text the writer emits
-        // for each item. This test used to read it out of the PARSED text instead, and that only worked
+        // Read the numbering out of the WRITTEN RTF, from the marker text each item carries after its
+        // {\*\armkn…} tag. This test used to read it out of the PARSED text instead, and that only worked
         // because the marker was being injected into the paragraph's content — the defect fixed in
         // Rtf_ListMarker_IsStructure_NotText. It failed the moment the injection stopped, which is the
         // right outcome: it was asserting the numbering THROUGH the corruption.
         string rtf = RtfDocumentFormatter.Write(doc);
         var numbers = System.Text.RegularExpressions.Regex
-            .Matches(rtf, @"\{\\pntext (\d+)\.\\tab\}")
+            .Matches(rtf, @"\{\\\*\\armkn\d+\}(\d+)\.\\tab")
             .Select(m => m.Groups[1].Value)
             .ToList();
         Assert.Equal(new[] { "1", "2", "1", "2", "3" }, numbers);

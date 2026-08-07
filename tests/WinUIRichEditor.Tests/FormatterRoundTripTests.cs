@@ -709,6 +709,12 @@ public class FormatterRoundTripTests
         Assert.Equal(Red, b2[1].Background);
     }
 
+    // How a marker glyph appears in the RTF: ASCII stays itself, anything above it goes out as the \uN
+    // escape the writer emits. Only the leading character is checked, which is enough to tell "the marker
+    // is in the text stream" from "the marker is gone".
+    private static string EscapedForRtf(string marker)
+        => marker[0] < 128 ? marker[..1] : @"\u" + (int)marker[0];
+
     // A cell paragraph's own alignment / indent / line spacing, through RTF. The cell writer opened every
     // cell with `\pard\intbl\itapN\ql` — a HARDCODED left — and never wrote the paragraph's properties, so
     // a centred or indented paragraph inside a table exported as neither, while the identical paragraph at
@@ -763,6 +769,15 @@ public class FormatterRoundTripTests
         tb.Cells[0][0].Blocks.Clear();
         tb.Cells[0][0].Blocks.Add(new Paragraph { ListType = kind, ListMarker = marker, Inlines = { new Run { Text = "셀 항목" } } });
         doc.Blocks.Add(tb);
+
+        // The marker must ALSO still be literal text in the output, or readers that do not implement RTF
+        // lists show no marker at all. That is not hypothetical: an earlier version of this fix used the
+        // standard {\pntext …}{\*\pn …} pair, and HWP — which skips both — lost every bullet and number
+        // (seen in a real paste). The tag makes the text structure to US; it must stay text to everyone else.
+        string rtfOnce = RtfDocumentFormatter.Write(doc);
+        string glyph = ListMarkers.Text(kind, marker, 1);
+        Assert.Contains(kind == ListKind.Bullet ? @"{\*\armkb" : @"{\*\armkn", rtfOnce);
+        Assert.Contains(EscapedForRtf(glyph), rtfOnce);
 
         var cur = doc;
         for (int cycle = 1; cycle <= 3; cycle++)

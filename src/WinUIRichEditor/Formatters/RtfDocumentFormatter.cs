@@ -356,11 +356,17 @@ internal sealed class RtfParser
                     _fontCodePages[_ftblIndex] = fcp;
                 break;
 
-            case "par": case "sect": EndParagraph(); break;
+            case "par": case "sect": _skipMarkerText = false; EndParagraph(); break;
             case "line": if (_st.Dest == Dest.Normal) _bytes.Add(10); break;
-            case "tab": if (_st.Dest == Dest.Normal) _bytes.Add(9); break;
+            // A \tab also TERMINATES a list marker's text (see armkb/armkn): that one is structure, so it
+            // is consumed rather than emitted. Every other \tab is a real tab.
+            case "tab":
+                if (_skipMarkerText) { _skipMarkerText = false; break; }
+                if (_st.Dest == Dest.Normal) _bytes.Add(9);
+                break;
             // \pard resets paragraph formatting; alignment/indent/spacing control words follow it.
             case "pard":
+                _skipMarkerText = false; // a marker's text never spans a paragraph reset
                 _para.TextAlignment = TextAlignment.Left; _para.Indent = 0;
                 _para.LineSpacing = double.NaN; _para.LineHeight = double.NaN;
                 _slTwips = 0; _slMult = false;
@@ -464,9 +470,11 @@ internal sealed class RtfParser
             case "pnlcltr": _para.ListMarker = ListMarkerStyle.LowerAlpha; break;
             case "pnucltr": _para.ListMarker = ListMarkerStyle.UpperAlpha; break;
             case "pnlcrm": _para.ListMarker = ListMarkerStyle.LowerRoman; break;
-            // Ours, and it comes after {\*\pn} in the stream, so the exact style wins over the number
-            // format {\*\pn} could express.
-            case "armarker": if (p is { } mc) _para.ListMarker = RtfDocumentFormatter.MarkerFromCode(mc); break;
+            // Ours (see WriteListMarker): the list kind + exact marker style, and a signal that the text up
+            // to the next \tab is the MARKER rather than content. Every other reader skips the group and
+            // renders that text — the only spelling both Word and HWP show — while we drop it.
+            case "armkb": _para.ListType = ListKind.Bullet; StartMarkerText(p); break;
+            case "armkn": _para.ListType = ListKind.Ordered; StartMarkerText(p); break;
 
             case "colortbl": _st.Dest = Dest.ColorTable; _colors.Clear(); _ctR = _ctG = _ctB = 0; _ctHasColor = false; break;
             case "fonttbl": _st.Dest = Dest.FontTable; _ftblIndex = -1; _ftblName.Clear(); _ftblBytes.Clear(); break;
@@ -573,11 +581,22 @@ internal sealed class RtfParser
     private void SetUnderline(bool v) { if (v != _st.Underline) FlushRun(); _st.Underline = v; }
     private void SetStrike(bool v) { if (v != _st.Strike) FlushRun(); _st.Strike = v; }
 
+    // True from a {\*\armkb|armkn} tag until the \tab that closes the list marker's literal text, which
+    // this reader must NOT take as content (other readers render it — that is why it is written at all).
+    private bool _skipMarkerText;
+
+    // Also carries the exact marker style in the tag's parameter.
+    private void StartMarkerText(int? code)
+    {
+        if (code is { } c) _para.ListMarker = RtfDocumentFormatter.MarkerFromCode(c);
+        _skipMarkerText = true;
+    }
+
     private void EmitUnicode(int code)
     {
         FlushBytes();
         if (code < 0) code += 65536;
-        if (_st.Dest == Dest.Normal)
+        if (_st.Dest == Dest.Normal && !_skipMarkerText)
         {
             if (code >= 0 && code <= 0xFFFF) _run.Append((char)code);
         }
@@ -599,7 +618,7 @@ internal sealed class RtfParser
 
     private void AppendByte(char c)
     {
-        if (_st.Dest != Dest.Normal) return;
+        if (_st.Dest != Dest.Normal || _skipMarkerText) return;
         if (c < 256) _bytes.Add((byte)c);
         else { FlushBytes(); _run.Append(c); }
     }
@@ -608,7 +627,7 @@ internal sealed class RtfParser
     // code-page bytes flush first so the character lands in document order.
     private void AppendChar(char ch)
     {
-        if (_st.Dest != Dest.Normal) return;
+        if (_st.Dest != Dest.Normal || _skipMarkerText) return;
         FlushBytes();
         _run.Append(ch);
     }
@@ -1266,39 +1285,22 @@ internal sealed class RtfWriter
     // content, which is exactly the split the bare form could not express.
     private void WriteListMarker(Paragraph p, int ordered)
     {
+        // `{\*\armkb<code>}` / `{\*\armkn<code>}` — ours, ignorable, so every other reader skips it. It
+        // says: the text that follows, up to and including the next \tab, is the MARKER, not content —
+        // and the code carries the exact style (b = bullet, n = numbered), which is more than any standard
+        // construct expresses.
+        //
+        // Why not the standard `{\pntext …}{\*\pn …}` pair (which this did emit for one commit): HWP skips
+        // BOTH of them, so the markers vanished from HWP entirely — measured from a real paste. Word does
+        // honour `{\*\pn}` and made real lists from it, but a bullet that disappears in one of the two
+        // targets is worse than a bullet that is literal text in both. The literal text is what every
+        // reader can render; the tag is what keeps it out of OUR content. (Reading `{\*\pn}` is still
+        // wired up, because WORD writes it and that gives an incoming Word list its ListType.)
         string marker = ListMarkers.Text(p.ListType, p.ListMarker, ordered);
-        _body.Append(@"{\pntext ");
+        _body.Append(p.ListType == ListKind.Bullet ? @"{\*\armkb" : @"{\*\armkn")
+             .Append(RtfDocumentFormatter.MarkerCode(p.ListMarker)).Append('}');
         WriteEscaped(marker);
-        _body.Append(@"\tab}");
-        _body.Append(@"{\*\pn");
-        if (p.ListType == ListKind.Bullet)
-        {
-            _body.Append(@"\pnlvlblt\pnindent0{\pntxtb ");
-            WriteEscaped(marker);
-            _body.Append('}');
-        }
-        else
-        {
-            _body.Append(@"\pnlvlbody\pnindent0\pnstart1");
-            _body.Append(p.ListMarker switch
-            {
-                ListMarkerStyle.LowerAlpha => @"\pnlcltr",
-                ListMarkerStyle.UpperAlpha => @"\pnucltr",
-                ListMarkerStyle.LowerRoman => @"\pnlcrm",
-                _ => @"\pndec",
-            });
-            // The punctuation belongs to the marker, not to the number: \pntxta is what follows it.
-            _body.Append(p.ListMarker == ListMarkerStyle.DecimalParen ? @"{\pntxta )}" : @"{\pntxta .}");
-        }
-        _body.Append('}');
-        // Our own marker for the exact style. {\*\pn} can only say NUMBER FORMAT, so "1)" versus "1." and
-        // a square versus a round bullet are outside what it expresses — and the fallback text that does
-        // carry them is skipped by design, so without this they came back as Default. Same idiom as
-        // {\*\arinline} for an inline table: every other reader drops an ignorable group, and only ours
-        // restores the exact style. It rides as a control-word PARAMETER rather than as group text,
-        // because text inside an ignorable group is exactly what a reader is supposed to skip.
-        if (p.ListMarker != ListMarkerStyle.Default)
-            _body.Append(@"{\*\armarker").Append(RtfDocumentFormatter.MarkerCode(p.ListMarker)).Append('}');
+        _body.Append(@"\tab ");
     }
 
 
