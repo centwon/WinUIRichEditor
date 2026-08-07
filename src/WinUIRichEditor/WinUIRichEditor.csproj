@@ -1,4 +1,4 @@
-<!-- TreatAsLocalProperty: 호스트 앱(NewSchool)이 `dotnet publish` 로 AOT/트림 게시하면
+﻿<!-- TreatAsLocalProperty: 호스트 앱(NewSchool)이 `dotnet publish` 로 AOT/트림 게시하면
      PublishTrimmed·PublishAot·PublishReadyToRun·RID 가 프로젝트 그래프 전체에 '전역 속성'으로
      적용된다. 전역 속성은 일반 할당으로 못 덮으므로(빌드 로그: "전역 속성이므로 수정할 수 없습니다"),
      이 라이브러리에서 로컬 재정의를 허용해 자체 ILLink/R2R 게시 후처리를 끈다(아래 PropertyGroup).
@@ -22,7 +22,7 @@
   <!-- NuGet 패키지 메타데이터. 버전은 태그(release)로 덮어쓸 수 있게 CI에서 -p:Version 전달 가능. -->
   <PropertyGroup Label="Packaging">
     <PackageId>WinUIRichEditor</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>centwon</Authors>
     <Company>centwon</Company>
     <Product>WinUIRichEditor</Product>
@@ -36,7 +36,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>winui;winui3;win2d;richtextbox;richtext;rich-text-editor;editor;wysiwyg;flowdocument;rtf;directwrite</PackageTags>
-    <PackageReleaseNotes>See CHANGELOG.md. 1.0.0 freezes the public API: from here on it follows SemVer, and the surface is tracked in PublicAPI.Shipped.txt so a change to it cannot ship unnoticed. What made this 1.0 is verification depth, not new features — a full comparison against AvaloniaRichEditor 1.0 fixed 20 defects, including two memory-exhaustion DoS paths reachable from a paste (HTML colspan, JSON/.flow declared table size), text loss when importing ordinary Word RTF, and a toolbar that silently took keyboard focus away from the editor. BREAKING: Formatters.RoundTripHarness is gone (a development tool; it moved to the demo). BEHAVIOUR: a damaged document now throws (InvalidDataException / JsonException) instead of reading as an empty one, so hosts calling LoadJson/LoadJsonAsync/LoadPackageAsync must handle it — reading a damaged file as empty meant the next save overwrote a recoverable file. RTF table output changed shape for HWP fidelity (horizontal merge is geometric; tables nested in a cell are real \itap nesting), and inline tables now survive an HTML/RTF round trip. Added: nine behaviour flags became dependency properties (bindable), XML documentation now ships with the package.</PackageReleaseNotes>
+    <PackageReleaseNotes>See CHANGELOG.md. 1.1.0 adds no features: it fixes ten defects that LOST or CORRUPTED document content on save, and every one of them had survived this project's round-trip tests, because a round trip cannot see a loss that each cycle repeats identically. A paragraph fill inside a table cell was erased by the editor's OWN save formats (JSON/.flow). HTML export dropped every paragraph-level format inside table cells, merged two cell paragraphs into one on each cycle, dropped the formatting of any paragraph holding a picture, and never wrote paragraph spacing. RTF was worse than lossy: a list marker went out as bare text and came back as CONTENT, so every saved list item grew a "bullet + tab" prefix. RTF also carried no paragraph fill, no cell paragraph alignment/indent/spacing, no list hanging indent (HWP threw the text across the line), and no header/footer at all -- while READING a Word document inserted its header into the document body as the first paragraph. NO BREAKING CHANGES: the public surface only grew -- RtfDocumentFormatter.TryParse (strict parse for anything that REPLACES open content), the RichEditorDiagnostics fault hook, and replaceable RichEditorToolbar.FontSizes/Palette. BEHAVIOUR: outgoing RTF changed shape in several places for Word/HWP fidelity (list markers, cell paragraph properties, paragraph shading, explicit table width and line spacing, header/footer), so hosts that byte-compare RTF output will see differences; a damaged RTF file no longer blanks the open document (LoadRtf keeps it). Verification grew too: the first control-level tests (caret geometry at 100/200/300% zoom, the real system clipboard, pagination, context menu and IME), the first RENDER PIXEL tests, PDF structure tests, and a fuzz that finally observes the formatting it had been generating all along -- clean over 20000 seeds. Native AOT re-verified: 14.5 MB native exe.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>

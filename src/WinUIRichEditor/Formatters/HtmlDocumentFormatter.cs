@@ -388,7 +388,14 @@ public static class HtmlDocumentFormatter
             // An <li> that was also a heading (see the export's data-are-h): HTML has no tag for both.
             int liHeading = child.GetAttributeValue("data-are-h", 0);
             if (liHeading >= 1 && liHeading <= 6) p.HeadingLevel = liHeading;
-            ApplyLineHeightStyle(child, p);
+            // A list item is a paragraph and carries paragraph formatting like any other. This read only
+            // the line height, so an item's FILL, indent, alignment and spacing were written by the
+            // exporter and then dropped on the way back in — `<li style="…background-color:…">` went out
+            // and came back plain. Found by the 1.1 consumer smoke test, which combined "is a list item"
+            // with "has a fill"; the unit tests had only ever checked those two separately, and the fuzz
+            // could not see it because the loss is IDEMPOTENT (cycle 2 loses exactly what cycle 1 did).
+            // `name` is passed as "li" so the heading-from-tag rule does not disturb data-are-h above.
+            ApplyBlockLeafFormat(child, "li", p);
             ParseInlines(child, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
             if (p.Inlines.Count > 0) flow.Blocks.Add(p);
 
