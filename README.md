@@ -1,35 +1,43 @@
 ﻿# WinUIRichEditor
 
-A from-scratch rich text editor control for **WinUI 3**, rendered with **Win2D**
-(`CanvasVirtualControl` / `CanvasTextLayout`). It is a port of
-[AvaloniaRichEditor](https://github.com/centwon/AvaloniaRichEditor) — the same document model,
-formatters, and "single `TextLayout` is the source of truth" engine design, rebuilt on the
-DirectWrite-backed `CanvasTextLayout` instead of Avalonia's `TextLayout`.
+A from-scratch rich text editor control for **WinUI 3**, rendered with **Win2D** — tables, images,
+lists, hyperlinks, page view, print/PDF, and Word/HWP-grade HTML & RTF interop. No XAML, Native AOT ready.
 
-> **Status: 1.0 — the public API is frozen and follows SemVer from here.**
-> The surface is tracked in `PublicAPI.Shipped.txt`, so it cannot change unnoticed. What made this 1.0
-> is verification depth, not new features: a full comparison against AvaloniaRichEditor 1.0 (which cut
-> its own 1.0 the same way) fixed 20 defects, including two memory-exhaustion paths reachable from a
-> paste, text loss when importing ordinary Word RTF, and a toolbar that silently took keyboard focus
-> from the editor. The two projects stay converged and have exchanged improvements both ways.
-> See [`CHANGELOG.md`](CHANGELOG.md) for the upgrade notes (one breaking removal, two behaviour
-> changes). Tables, images, formatting,
-> clipboard, page view, print/PDF, the drop-in host controls, localization and accessibility all work,
-> including the edge cases (nested/inline-table row·column resize, full keyboard caret traversal through
-> inline-table cells). **Native AOT** publish works end-to-end (self-contained — builds, runs, renders;
-> re-verified each release). The document format is byte-compatible with AvaloniaRichEditor (verified by
-> loading a `.flow` saved by the original). See [`Project_Roadmap.md`](Project_Roadmap.md) for the
-> engineering log.
+[![NuGet](https://img.shields.io/nuget/v/WinUIRichEditor.svg)](https://www.nuget.org/packages/WinUIRichEditor)
+[![Downloads](https://img.shields.io/nuget/dt/WinUIRichEditor.svg)](https://www.nuget.org/packages/WinUIRichEditor)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/centwon/WinUIRichEditor/blob/main/LICENSE)
 
-> **Requires Windows App SDK 2.2.1 or later.**
-> (Historical: 0.9.0 alone wrongly required 2.3.2 — *higher* than the WinUI the
-> `Microsoft.WindowsAppSDK` meta-package brings — which broke framework-dependent apps. Fixed in 0.9.1.)
->
-> **Consuming apps that publish self-contained** (`WindowsAppSDKSelfContained=true`) must reference the
-> **meta-package** `Microsoft.WindowsAppSDK` — only it brings `Microsoft.WindowsAppSDK.Runtime`, the
-> redistributable runtime. This library references the split `Microsoft.WindowsAppSDK.WinUI` component
-> because a *library* needs only the compile-time surface; copying that choice into an *app* leaves it
-> with no runtime to bundle.
+```
+dotnet add package WinUIRichEditor
+```
+
+![The demo's control + toolbar page: headings, a table with bulleted, centred and shaded cell paragraphs, a hyperlink, a blockquote and lists](https://raw.githubusercontent.com/centwon/WinUIRichEditor/main/docs/screenshot.png)
+
+**Requirements:** .NET 10 · Windows 10 build 26100+ · **Windows App SDK 2.2.1 or later**.
+
+> **Status: 1.1 — the public API follows SemVer and is tracked in `PublicAPI.Shipped.txt`,** so it cannot
+> change unnoticed. 1.1 adds no features: it fixes nine defects that lost or corrupted document content on
+> save, and adds the first control-level and render-pixel tests. **No breaking changes** — see
+> [`CHANGELOG.md`](https://github.com/centwon/WinUIRichEditor/blob/main/CHANGELOG.md) for the upgrade notes (outgoing RTF changed shape in several places for
+> Word/HWP fidelity). [`Project_Roadmap.md`](https://github.com/centwon/WinUIRichEditor/blob/main/Project_Roadmap.md) is the engineering log.
+
+It is a port of [AvaloniaRichEditor](https://github.com/centwon/AvaloniaRichEditor) — the same document
+model, formatters, and "single `TextLayout` is the source of truth" engine design, rebuilt on the
+DirectWrite-backed `CanvasTextLayout`. The two projects stay converged and exchange fixes both ways, and
+the `.flow` document format is byte-compatible between them.
+
+<details>
+<summary><b>Consuming apps that publish self-contained — read this</b></summary>
+
+An app with `WindowsAppSDKSelfContained=true` must reference the **meta-package**
+`Microsoft.WindowsAppSDK`: only it brings `Microsoft.WindowsAppSDK.Runtime`, the redistributable runtime.
+This library references the split `Microsoft.WindowsAppSDK.WinUI` component because a *library* needs only
+the compile-time surface — copying that choice into an *app* leaves it with no runtime to bundle.
+
+(Historical: 0.9.0 alone wrongly required Windows App SDK 2.3.2 — *higher* than the WinUI the meta-package
+brings — which broke framework-dependent apps. Fixed in 0.9.1.)
+
+</details>
 
 ## Tech stack
 
@@ -66,7 +74,7 @@ DirectWrite-backed `CanvasTextLayout` instead of Avalonia's `TextLayout`.
 - Internal rich copy/paste, **RTF**, external **HTML** (`CF_HTML`), **image**, and **Excel/TSV→table** paste;
   plain-text paste (Ctrl+Shift+V); copy a selected image to the system clipboard
 - File formats: `.flow` (ZIP package), `.json`, `.html`, `.rtf`, **PDF export** — see the
-  [document format spec](docs/DOCUMENT_FORMAT.md) (byte-compatible with AvaloniaRichEditor)
+  [document format spec](https://github.com/centwon/WinUIRichEditor/blob/main/docs/DOCUMENT_FORMAT.md) (byte-compatible with AvaloniaRichEditor)
 
 **Page view, print & PDF**
 - `PageSize` / `PageOrientation` / `ShowPageBoundaries`, stacked page view with **line-aware page breaks**,
@@ -124,7 +132,7 @@ page (see `samples/.../ViewDemoPage.xaml`). File pickers need HWND interop (`Ini
 
 ```
 dotnet build WinUIRichEditor.slnx
-dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 106 headless model/formatter tests
+dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 304 tests (see below)
 dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj
 # run the unpackaged exe directly:
 #   samples/WinUIRichEditor.Demo/bin/Debug/net10.0-windows10.0.26100.0/win-x64/WinUIRichEditor.Demo.exe
@@ -133,24 +141,32 @@ dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj
 A running instance locks the exe — stop it before rebuilding:
 `Get-Process -Name "WinUIRichEditor.Demo" | Stop-Process -Force`.
 
+The suite is mostly headless (document model, `TextRange`, all four formatters, plus a randomized
+edit-sequence fuzz that round-trips every format twice), and since 1.1 it also covers the **control**
+layer — caret geometry at 100/200/300 % zoom, the real system clipboard, pagination, the context menu and
+IME state — and **render pixels**, off-screen through `RenderPrintPage`. Widen the fuzz with
+`RICHEDITOR_FUZZ_SEEDS=20000` when touching a formatter; the committed default is 400 seeds (~3 s).
+
 The demo is a **four-page nav shell**, one per library layer: **컨트롤** (bare `RichEditor`),
 **읽기 전용** (`IsReadOnly=true`), **컨트롤+툴바** (`RichEditor` + `RichEditorToolbar`), and **View**
 (full `RichEditorView` with page/zoom chrome, status bar, Export/Import/Print, and PDF export).
 
 ## Native AOT
 
-Native AOT publish **works end-to-end**. The library is AOT-shaped (source-gen JSON, no reflection
-serialization, code-only control, `IsAotCompatible`, no WinRT-static activation in the model/formatter
-layer), and the **self-contained** profile (`samples/.../PublishProfiles/win-x64.pubxml`: `PublishAot` +
-`SelfContained` + `PublishSingleFile` + `PublishTrimmed`, `WindowsAppSDKSelfContained=true`) builds
-cleanly (~13 MB native exe, 0 trim/AOT warnings), runs, and renders — Win2D `CanvasTextLayout`,
-`CanvasDevice`, and `CanvasFontSet` all activate under AOT. (An earlier "crashes at startup in `combase
-0x80004005`" was a *framework-dependent*-only limitation; the self-contained bundle supplies WinRT
-activation.)
+Native AOT publish **works end-to-end**, and it is re-verified every release. The library is AOT-shaped
+(source-gen JSON, no reflection serialization, code-only control, `IsAotCompatible`, no WinRT-static
+activation in the model/formatter layer), and the **self-contained** profile
+(`samples/.../PublishProfiles/win-x64.pubxml`: `PublishAot` + `SelfContained` + `PublishSingleFile` +
+`PublishTrimmed`, `WindowsAppSDKSelfContained=true`) builds cleanly with 0 trim/AOT warnings, runs, and
+renders — Win2D `CanvasTextLayout`, `CanvasDevice` and `CanvasFontSet` all activate under AOT. Measured at
+1.1: a **14.5 MB** native exe, 85.7 MB published, with no `coreclr.dll`, `clrjit.dll` or managed
+`WinUIRichEditor.dll` in the output. (An earlier "crashes at startup in `combase 0x80004005`" was a
+*framework-dependent*-only limitation; the self-contained bundle supplies WinRT activation.)
 
-**Build workaround (still required):** `GenerateLibraryLayout` on the library plus an MSBuild target that
-strips the stale `windowsappsdk.winui\1.8` PRIs (pulled in transitively by Win2D 1.4.0) clears the
-`PRI277` conflict with Windows App SDK 2.2's PRI. Removable once a WinAppSDK-2.x-aligned Win2D ships.
+The library sets `GenerateLibraryLayout`. It also used to need an MSBuild target that stripped stale
+`windowsappsdk.winui\1.8` PRIs to clear a `PRI277` merge conflict; **that target is gone** — both projects
+now reference Windows App SDK explicitly, so NuGet never resolves the 1.8 floor Win2D 1.4.0 declares and no
+1.8 PRI reaches the merge. Dropping that explicit reference would bring the conflict back.
 
 ## Project layout
 
@@ -162,6 +178,6 @@ strips the stale `windowsappsdk.winui\1.8` PRIs (pulled in transitively by Win2D
 
 ## License
 
-[MIT](LICENSE) © 2026 centwon. Depends on the [Windows App SDK](https://github.com/microsoft/WindowsAppSDK),
+[MIT](https://github.com/centwon/WinUIRichEditor/blob/main/LICENSE) © 2026 centwon. Depends on the [Windows App SDK](https://github.com/microsoft/WindowsAppSDK),
 [Win2D](https://github.com/microsoft/Win2D), and [HtmlAgilityPack](https://html-agility-pack.net/)
-(all MIT) — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+(all MIT) — see [THIRD-PARTY-NOTICES.md](https://github.com/centwon/WinUIRichEditor/blob/main/THIRD-PARTY-NOTICES.md).
