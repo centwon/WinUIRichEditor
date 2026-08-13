@@ -6,6 +6,22 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 게시되는 어셈블리에 빌드 머신의 절대 경로가 박혀 있었다
+
+`RichEditorDiagnostics`는 결함 위치를 `[CallerFilePath]`로 받는데, 컴파일러는 그것을 **빌드 머신의 전체
+경로** 문자열 리터럴로 심는다. 그래서 NuGet에 게시되는 dll 안에 이런 문자열이 **20개** 들어 있었다:
+
+```
+C:\Users\<빌드한 사람>\source\repos\WinUIRichEditor\src\WinUIRichEditor\Formatters\DocumentSerializer.cs
+```
+
+빌더의 사용자명과 디렉터리 구조가 그대로 노출된다. Release 빌드에 `PathMap`을 걸어 리포 루트를 `/_/`로
+치환했다 — 진단이 주는 `file:line`은 그대로이고(`RichEditorDiagnostics`는 파일명만 쓴다), 빌드 머신에
+대한 정보는 남지 않는다. Debug는 실제 경로를 유지하므로 로컬 디버깅·IDE 이동에 영향이 없다.
+
+- 절대 경로 문자열 **20개 → 0개**. dll 513,024 → 510,464 바이트(−2,560).
+- 크기 절감은 부수적이다 — 이 수정의 목적은 **노출 제거**다.
+
 ## [1.1.0] - 2026-08-07
 
 **기능 추가가 없는 릴리스다.** 저장에서 문서 내용이 **사라지거나 변조되던 결함 10건**을 고쳤고, 그 열

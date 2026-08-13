@@ -78,6 +78,14 @@
     <IsAotCompatible>true</IsAotCompatible>
     <Deterministic>true</Deterministic>
 
+    <!-- RichEditorDiagnostics reports fault locations via [CallerFilePath], which the compiler bakes in
+         as a string literal — the FULL path on the build machine. That put ~17KB of
+         "C:\Users\<whoever>\...\src\WinUIRichEditor\Controls\*.cs" into the shipped assembly, and with it
+         the builder's username and directory layout. Release builds rewrite the repo root to a short
+         token: same file:line diagnostics, a fraction of the bytes, nothing about the build machine.
+         Debug keeps real paths so local stepping and IDE navigation are unaffected. -->
+    <PathMap Condition="'$(Configuration)' == 'Release'">$(MSBuildThisFileDirectory)=/_/</PathMap>
+
     <!-- Win2D is platform-specific (C++). This library targets x64 only so it matches its
          x64 host apps (e.g. NewSchool) directly — no AnyCPU↔x64 platform negotiation, which
          avoids VS building it to bin\Debug (AnyCPU) and the host hitting CS0006. -->
