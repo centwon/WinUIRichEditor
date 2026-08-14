@@ -56,12 +56,20 @@ jobs:
       - name: Publish (win-x64, self-contained, AOT)
         run: dotnet publish samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj -p:PublishProfile=win-x64
 
+      # The publish directory is NOT hardcoded: the profile's PublishDir resolved to a different place on
+      # a clean runner than it does locally, and a size report that guesses wrong fails the job for a
+      # reason that has nothing to do with AOT. Locate the published exe instead — and if there isn't
+      # one, that IS a publish failure worth failing on.
       - name: Report publish size
         shell: pwsh
         run: |
-          $pub = "samples/WinUIRichEditor.Demo/bin/win-x64/publish"
+          $exe = Get-ChildItem samples/WinUIRichEditor.Demo/bin -Recurse -Filter WinUIRichEditor.Demo.exe -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -like '*publish*' } | Select-Object -First 1
+          if (-not $exe) { Write-Error "no published WinUIRichEditor.Demo.exe found under samples/WinUIRichEditor.Demo/bin"; exit 1 }
+          $pub = $exe.Directory.FullName
+          Write-Host "publish dir: $pub"
           $files = Get-ChildItem $pub -Recurse -File
           $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum / 1MB), 1)
-          Write-Host "publish: $mb MB ($($files.Count) files)"
+          Write-Host "publish: $mb MB ($($files.Count) files), native exe $([math]::Round($exe.Length/1MB,1)) MB"
           $files | Sort-Object Length -Descending | Select-Object -First 10 |
             ForEach-Object { "{0,8:N2} MB  {1}" -f ($_.Length / 1MB), $_.Name }
