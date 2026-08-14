@@ -1,0 +1,67 @@
+name: CI
+
+# Build + test every push to main and every PR. Until this existed the repo had only publish.yml
+# (tag-triggered), so nothing verified a change before it landed — which is how a Native AOT regression
+# reached a release: LineMetrics threw on every layout under AOT, every caller swallowed it, and the
+# build and the tests were both green.
+#
+# Windows-only on purpose: WinUI 3 + Win2D do not build anywhere else. (The Avalonia peer runs a 3-OS
+# matrix; the same file here would just be two guaranteed failures.)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore WinUIRichEditor.slnx
+
+      - name: Build
+        run: dotnet build WinUIRichEditor.slnx -c Release --no-restore
+
+      # NOT --no-build. The library lands in two output paths (AnyCPU bin\Release and x64
+      # bin\x64\Release) depending on how it was built, and --no-build after a solution build runs the
+      # test assembly from the other one — i.e. a stale DLL, silently. Letting `dotnet test` build the
+      # test project itself is what makes the run trustworthy; the incremental cost is small.
+      - name: Test
+        run: dotnet test tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj -c Release
+
+  aot-publish:
+    name: Native AOT publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # Native AOT is a stated goal of this project, and ILCompiler surfaces trim/AOT problems only at
+      # publish — a normal build says nothing about them. This job is the guard for that.
+      #
+      # It catches AOT *compilation* regressions. It does NOT catch the runtime kind: an API that
+      # compiles but throws under AOT marshalling (see LineMetrics) shows up only when the app runs and
+      # draws, which needs a desktop session. RichEditorDiagnostics is what surfaces those — a host that
+      # subscribes sees them; CI does not.
+      - name: Publish (win-x64, self-contained, AOT)
+        run: dotnet publish samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj -p:PublishProfile=win-x64
+
+      - name: Report publish size
+        shell: pwsh
+        run: |
+          $pub = "samples/WinUIRichEditor.Demo/bin/win-x64/publish"
+          $files = Get-ChildItem $pub -Recurse -File
+          $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum / 1MB), 1)
+          Write-Host "publish: $mb MB ($($files.Count) files)"
+          $files | Sort-Object Length -Descending | Select-Object -First 10 |
+            ForEach-Object { "{0,8:N2} MB  {1}" -f ($_.Length / 1MB), $_.Name }
