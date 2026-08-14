@@ -6,6 +6,64 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — 데모 AOT 게시 다이어트 확장 (85.7MB → 78.0MB)
+
+self-contained WinAppSDK 런타임은 플랫폼 전체를 번들하는데, 그중 텍스트 에디터가 건드리지 않는 기능
+스택이 있다. 기존 Windows-ML 트림(onnxruntime + DirectML, ~39MB)에 **7.7MB**를 더 걷어냈다 —
+Widgets, WebView2, 온디바이스 AI 4종, PerceptiveStreaming.
+
+CLAUDE.md가 적어 둔 그 묶음이다: 라이브러리는 이걸 피하려고 메타패키지를 안 쓰지만, self-contained로
+게시하는 **앱**은 메타패키지를 참조할 수밖에 없어(`Microsoft.WindowsAppSDK.Runtime`이 거기에만 있다)
+결국 앱이 값을 치른다. 그래서 게시 후에 턴다.
+
+검증은 기존 타깃과 같은 방법이다 — 게시본을 실행해 **프로세스의 로드된 모듈 목록에 없음**을 확인하고,
+지운 뒤 다시 실행해 **정상 기동·렌더**를 확인했다.
+
+**안 건드린 것과 이유**: `.mui`/`.pri`/`.winmd`(~10MB)는 `LoadLibrary`가 아니라 리소스·메타데이터로
+읽히므로 모듈 목록이 아무 말도 해주지 않는다 — "미로드"가 근거가 못 된다. `DWriteCore.dll`(3.1MB)도
+미로드로 나왔지만 텍스트 스택이라 위험 대비 이득이 없다.
+
+### Fixed — Native AOT에서 줄 메트릭이 통째로 실패하고 있었다
+
+`CanvasTextLayout.LineMetrics`가 반환하는 `CanvasLineMetrics[]`는 구조체가 `bool`(IsTrimmed)을 품어
+**non-blittable**이고, CsWinRT가 Native AOT에서 이 배열을 마샬링하지 못한다:
+
+```
+NotSupportedException 0x80131515 — Cannot handle array marshalling for non blittable ...
+```
+
+이 API를 쓰는 **8곳 전부**가 try/catch로 감싸 "줄 없음"으로 폴백하고 있었다. 그래서 AOT 빌드에서는
+매 프레임 조용히: 글머리표가 베이스라인 정렬을 잃고, **줄바꿈을 넘는 세로 캐럿 이동이 동작하지 않고**,
+페이지네이션이 모든 문단을 한 줄로 측정했다. **빌드도 되고 렌더도 되니 멀쩡해 보였다** — 위 진단 훅이
+삼킨 예외를 보고하기 시작하고 나서야 드러났다.
+
+- `LineMetricsOf` 하나로 모으고, JIT 경로는 **종전 그대로** `LineMetrics`를 쓴다.
+- AOT 경로는 `GetCharacterRegions`(ints + Rect = blittable, AOT에서 동작)로 줄별 `Height`와
+  `CharacterCount`를 재구성한다. `Baseline`은 대응물이 없어 `NaN`으로 오는데, 소비자 전원이 이미
+  NaN 분기를 갖고 있다(`CaretInLayout`의 "no metrics: fall back to the line box").
+- 첫 실패 후 **래치**한다. AOT에서는 영영 성공하지 않으므로, 없으면 문단마다 매 프레임 예외를 던지고
+  잡는 비용을 계속 문다.
+- 폴백은 **정답과 대조해 검증**했다. 폴백은 진짜가 동작하지 **않는** 곳에서만 실행되므로 그곳엔 정답이
+  없다 — 그래서 Debug에서 둘을 모두 계산해 불일치를 진단 채널로 보고하는 임시 자가 검증을 넣고 데모의
+  모든 레이아웃(제목·줄바꿈 본문·표 셀·목록)에 돌렸다. 줄 수, 줄별 문자 수, 줄 높이(±0.75px)가 전부
+  일치했고 보고된 불일치는 없었다.
+
+### Fixed — 게시되는 어셈블리에 빌드 머신의 절대 경로가 박혀 있었다
+
+`RichEditorDiagnostics`는 결함 위치를 `[CallerFilePath]`로 받는데, 컴파일러는 그것을 **빌드 머신의 전체
+경로** 문자열 리터럴로 심는다. 그래서 NuGet에 게시되는 dll 안에 이런 문자열이 **20개** 들어 있었다:
+
+```
+C:\Users\<빌드한 사람>\source\repos\WinUIRichEditor\src\WinUIRichEditor\Formatters\DocumentSerializer.cs
+```
+
+빌더의 사용자명과 디렉터리 구조가 그대로 노출된다. Release 빌드에 `PathMap`을 걸어 리포 루트를 `/_/`로
+치환했다 — 진단이 주는 `file:line`은 그대로이고(`RichEditorDiagnostics`는 파일명만 쓴다), 빌드 머신에
+대한 정보는 남지 않는다. Debug는 실제 경로를 유지하므로 로컬 디버깅·IDE 이동에 영향이 없다.
+
+- 절대 경로 문자열 **20개 → 0개**. dll 513,024 → 510,464 바이트(−2,560).
+- 크기 절감은 부수적이다 — 이 수정의 목적은 **노출 제거**다.
+
 ## [1.1.0] - 2026-08-07
 
 **기능 추가가 없는 릴리스다.** 저장에서 문서 내용이 **사라지거나 변조되던 결함 10건**을 고쳤고, 그 열

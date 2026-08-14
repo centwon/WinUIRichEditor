@@ -1,0 +1,98 @@
+name: CI
+
+# Build + test every push to main and every PR. Until this existed the repo had only publish.yml
+# (tag-triggered), so nothing verified a change before it landed — which is how a Native AOT regression
+# reached a release: LineMetrics threw on every layout under AOT, every caller swallowed it, and the
+# build and the tests were both green.
+#
+# Windows-only on purpose: WinUI 3 + Win2D do not build anywhere else. (The Avalonia peer runs a 3-OS
+# matrix; the same file here would just be two guaranteed failures.)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore WinUIRichEditor.slnx
+
+      - name: Build
+        run: dotnet build WinUIRichEditor.slnx -c Release --no-restore
+
+      # NOT --no-build. The library lands in two output paths (AnyCPU bin\Release and x64
+      # bin\x64\Release) depending on how it was built, and --no-build after a solution build runs the
+      # test assembly from the other one — i.e. a stale DLL, silently. Letting `dotnet test` build the
+      # test project itself is what makes the run trustworthy; the incremental cost is small.
+      - name: Test
+        run: dotnet test tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj -c Release
+
+  aot-publish:
+    name: Native AOT publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # Native AOT is a stated goal of this project, and ILCompiler surfaces trim/AOT problems only at
+      # publish — a normal build says nothing about them. This job is the guard for that.
+      #
+      # It catches AOT *compilation* regressions. It does NOT catch the runtime kind: an API that
+      # compiles but throws under AOT marshalling (see LineMetrics) shows up only when the app runs and
+      # draws, which needs a desktop session. RichEditorDiagnostics is what surfaces those — a host that
+      # subscribes sees them; CI does not.
+      # Properties passed explicitly rather than via -p:PublishProfile. The profile resolves locally but
+      # silently does NOT on a clean runner (tried both the bare name and the full .pubxml path): the
+      # publish landed in the default directory with PublishAot never applied, producing an ordinary
+      # self-contained build that exited 0. A green job that never compiled anything natively is worse
+      # than no job at all.
+      #
+      # KEEP IN SYNC with Properties/PublishProfiles/win-x64.pubxml — that profile is what a human
+      # publishes with, this is what CI verifies, and nothing enforces that they match. The assertion
+      # below is the backstop: it fails if this stops producing an AOT binary for any reason.
+      - name: Publish (win-x64, self-contained, AOT)
+        run: >
+          dotnet publish samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:Platform=x64 -p:PublishAot=true -p:PublishTrimmed=true
+          -p:CopyOutputSymbolsToPublishDirectory=false
+
+      # The publish directory is NOT hardcoded: the profile's PublishDir resolved to a different place on
+      # a clean runner than it does locally, and a size report that guesses wrong fails the job for a
+      # reason that has nothing to do with AOT. Locate the published exe instead — and if there isn't
+      # one, that IS a publish failure worth failing on.
+      - name: Report publish size
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem samples/WinUIRichEditor.Demo/bin -Recurse -Filter WinUIRichEditor.Demo.exe -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -like '*publish*' } | Select-Object -First 1
+          if (-not $exe) { Write-Error "no published WinUIRichEditor.Demo.exe found under samples/WinUIRichEditor.Demo/bin"; exit 1 }
+          $pub = $exe.Directory.FullName
+          Write-Host "publish dir: $pub"
+          $files = Get-ChildItem $pub -Recurse -File
+          $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum / 1MB), 1)
+          $exeMb = [math]::Round($exe.Length / 1MB, 1)
+          Write-Host "publish: $mb MB ($($files.Count) files), native exe $exeMb MB"
+          $files | Sort-Object Length -Descending | Select-Object -First 10 |
+            ForEach-Object { "{0,8:N2} MB  {1}" -f ($_.Length / 1MB), $_.Name }
+
+          # Assert the publish really was Native AOT. Exit code 0 does not prove it: if the profile is
+          # not applied, the same command produces a perfectly valid non-AOT self-contained build. Two
+          # things separate them — AOT links everything into one large native exe (~14MB, vs ~0.3MB for
+          # the managed launcher), and it leaves no managed framework assemblies behind.
+          if ($exeMb -lt 5) { Write-Error "not an AOT publish: native exe is only $exeMb MB (expected >5)"; exit 1 }
+          $managed = $files | Where-Object { $_.Name -in 'Microsoft.WinUI.dll','Microsoft.Windows.SDK.NET.dll' }
+          if ($managed) { Write-Error "not an AOT publish: managed framework assemblies present ($($managed.Name -join ', '))"; exit 1 }
+          Write-Host "AOT verified: single native exe, no managed framework assemblies."

@@ -285,7 +285,7 @@ public partial class RichEditor
         using (var layout = CreateLayout(p, width))
         {
             h = System.Math.Max(EmptyLineHeight(p), layout.LayoutBounds.Height);
-            bottoms = ParagraphLineBottoms(layout, h).ToArray();
+            bottoms = ParagraphLineBottoms(layout, h, GetParagraphLength(p)).ToArray();
         }
         if (_lineCache.Count > 100000) _lineCache.Clear(); // guard against pathological growth
         _lineCache[p] = (sig, width, h, bottoms);
@@ -345,12 +345,10 @@ public partial class RichEditor
     }
 
     // The doc-relative bottom Y of each visual line in a paragraph layout (the page-break atom edges).
-    private List<double> ParagraphLineBottoms(CanvasTextLayout layout, double paraH)
+    private List<double> ParagraphLineBottoms(CanvasTextLayout layout, double paraH, int textLength)
     {
         var result = new List<double>();
-        CanvasLineMetrics[] lm;
-        try { lm = layout.LineMetrics; }
-        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return new List<double> { paraH }; }
+        var lm = LineMetricsOf(layout, textLength);
         if (lm.Length <= 1) return new List<double> { paraH };
         double acc = 0;
         for (int i = 0; i < lm.Length; i++)
