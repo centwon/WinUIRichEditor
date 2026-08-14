@@ -6,6 +6,23 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — 데모 AOT 게시 다이어트 확장 (85.7MB → 78.0MB)
+
+self-contained WinAppSDK 런타임은 플랫폼 전체를 번들하는데, 그중 텍스트 에디터가 건드리지 않는 기능
+스택이 있다. 기존 Windows-ML 트림(onnxruntime + DirectML, ~39MB)에 **7.7MB**를 더 걷어냈다 —
+Widgets, WebView2, 온디바이스 AI 4종, PerceptiveStreaming.
+
+CLAUDE.md가 적어 둔 그 묶음이다: 라이브러리는 이걸 피하려고 메타패키지를 안 쓰지만, self-contained로
+게시하는 **앱**은 메타패키지를 참조할 수밖에 없어(`Microsoft.WindowsAppSDK.Runtime`이 거기에만 있다)
+결국 앱이 값을 치른다. 그래서 게시 후에 턴다.
+
+검증은 기존 타깃과 같은 방법이다 — 게시본을 실행해 **프로세스의 로드된 모듈 목록에 없음**을 확인하고,
+지운 뒤 다시 실행해 **정상 기동·렌더**를 확인했다.
+
+**안 건드린 것과 이유**: `.mui`/`.pri`/`.winmd`(~10MB)는 `LoadLibrary`가 아니라 리소스·메타데이터로
+읽히므로 모듈 목록이 아무 말도 해주지 않는다 — "미로드"가 근거가 못 된다. `DWriteCore.dll`(3.1MB)도
+미로드로 나왔지만 텍스트 스택이라 위험 대비 이득이 없다.
+
 ### Fixed — Native AOT에서 줄 메트릭이 통째로 실패하고 있었다
 
 `CanvasTextLayout.LineMetrics`가 반환하는 `CanvasLineMetrics[]`는 구조체가 `bool`(IsTrimmed)을 품어

@@ -47,17 +47,38 @@
        AOT self-contained publish succeeds with the target disabled. If the explicit WindowsAppSDK
        reference is ever dropped, Win2D's floor pulls 1.8 back in and this conflict can return. -->
 
-  <!-- Deployment diet (publish only): drop the Windows-ML stack (onnxruntime.dll ~21MB +
-       DirectML.dll ~18MB) that the WinAppSDK self-contained runtime bundles for AI APIs this
-       editor never calls and never loads (confirmed absent from the running process' module list).
-       The ~64MB AOT .pdb is handled separately via CopyOutputSymbolsToPublishDirectory in the
-       publish profile. Together these save ~101MB. -->
-  <Target Name="_TrimUnusedWindowsMlRuntime" AfterTargets="Publish">
+  <!-- Deployment diet (publish only). The self-contained WinAppSDK runtime bundles the whole platform,
+       including feature stacks a text editor never touches. Each entry below was verified the same way:
+       run the published app, enumerate the process' loaded modules, and confirm the DLL is absent — then
+       delete it, re-run, and confirm the app still starts and renders.
+
+       Windows-ML (~39MB): onnxruntime + DirectML, for AI APIs this editor never calls.
+       Feature stacks (~7.7MB): the WebView2/AI/Widgets set the WinAppSDK METAPACKAGE drags in. The
+       library itself avoids the metapackage for exactly this reason (see CLAUDE.md), but an app that
+       publishes self-contained must reference it — Microsoft.WindowsAppSDK.Runtime ships only there —
+       so the app pays, and trims here instead.
+
+       The ~64MB AOT .pdb is handled separately (CopyOutputSymbolsToPublishDirectory in the publish
+       profile). Together: ~110MB, and the publish folder lands at ~78MB.
+
+       NOT trimmed, and why: .mui / .pri / .winmd (~10MB) are read as resources and metadata, never
+       LoadLibrary'd, so the module-list check says nothing about them — absence from it is not evidence.
+       DWriteCore.dll likewise showed as unloaded but is the text stack; not worth the risk. -->
+  <Target Name="_TrimUnusedRuntimeStacks" AfterTargets="Publish">
     <ItemGroup>
+      <!-- Windows-ML -->
       <_DietFile Include="$(PublishDir)onnxruntime.dll" />
       <_DietFile Include="$(PublishDir)DirectML.dll" />
+      <!-- Widgets / WebView2 / on-device AI -->
+      <_DietFile Include="$(PublishDir)Microsoft.Windows.Widgets.dll" />
+      <_DietFile Include="$(PublishDir)Microsoft.Web.WebView2.Core.dll" />
+      <_DietFile Include="$(PublishDir)Microsoft.Windows.AI.MachineLearning.dll" />
+      <_DietFile Include="$(PublishDir)Microsoft.Windows.AI.Text.dll" />
+      <_DietFile Include="$(PublishDir)Microsoft.Windows.AI.Imaging.dll" />
+      <_DietFile Include="$(PublishDir)Microsoft.Windows.AI.Video.dll" />
+      <_DietFile Include="$(PublishDir)PerceptiveStreaming.dll" />
     </ItemGroup>
     <Delete Files="@(_DietFile)" />
-    <Message Importance="high" Text="Deployment diet: trimmed Windows-ML runtime DLLs from $(PublishDir)" />
+    <Message Importance="high" Text="Deployment diet: trimmed unused runtime stacks from $(PublishDir)" />
   </Target>
 </Project>
