@@ -6,6 +6,31 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Native AOT에서 줄 메트릭이 통째로 실패하고 있었다
+
+`CanvasTextLayout.LineMetrics`가 반환하는 `CanvasLineMetrics[]`는 구조체가 `bool`(IsTrimmed)을 품어
+**non-blittable**이고, CsWinRT가 Native AOT에서 이 배열을 마샬링하지 못한다:
+
+```
+NotSupportedException 0x80131515 — Cannot handle array marshalling for non blittable ...
+```
+
+이 API를 쓰는 **8곳 전부**가 try/catch로 감싸 "줄 없음"으로 폴백하고 있었다. 그래서 AOT 빌드에서는
+매 프레임 조용히: 글머리표가 베이스라인 정렬을 잃고, **줄바꿈을 넘는 세로 캐럿 이동이 동작하지 않고**,
+페이지네이션이 모든 문단을 한 줄로 측정했다. **빌드도 되고 렌더도 되니 멀쩡해 보였다** — 위 진단 훅이
+삼킨 예외를 보고하기 시작하고 나서야 드러났다.
+
+- `LineMetricsOf` 하나로 모으고, JIT 경로는 **종전 그대로** `LineMetrics`를 쓴다.
+- AOT 경로는 `GetCharacterRegions`(ints + Rect = blittable, AOT에서 동작)로 줄별 `Height`와
+  `CharacterCount`를 재구성한다. `Baseline`은 대응물이 없어 `NaN`으로 오는데, 소비자 전원이 이미
+  NaN 분기를 갖고 있다(`CaretInLayout`의 "no metrics: fall back to the line box").
+- 첫 실패 후 **래치**한다. AOT에서는 영영 성공하지 않으므로, 없으면 문단마다 매 프레임 예외를 던지고
+  잡는 비용을 계속 문다.
+- 폴백은 **정답과 대조해 검증**했다. 폴백은 진짜가 동작하지 **않는** 곳에서만 실행되므로 그곳엔 정답이
+  없다 — 그래서 Debug에서 둘을 모두 계산해 불일치를 진단 채널로 보고하는 임시 자가 검증을 넣고 데모의
+  모든 레이아웃(제목·줄바꿈 본문·표 셀·목록)에 돌렸다. 줄 수, 줄별 문자 수, 줄 높이(±0.75px)가 전부
+  일치했고 보고된 불일치는 없었다.
+
 ### Fixed — 게시되는 어셈블리에 빌드 머신의 절대 경로가 박혀 있었다
 
 `RichEditorDiagnostics`는 결함 위치를 `[CallerFilePath]`로 받는데, 컴파일러는 그것을 **빌드 머신의 전체

@@ -1571,9 +1571,7 @@ public partial class RichEditor
         double contentLeft = cellRect.X + CellPad + pl;
         double innerW = Math.Max(10, cellRect.Width - 2 * CellPad - pl);
         var layout = BuildTextLayout(p, innerW);
-        Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; }
-        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return firstLine ? 0 : GetParagraphLength(p); }
+        var lines = LineMetricsOf(layout, GetParagraphLength(p));
         if (lines.Length == 0) return 0;
         int line = firstLine ? 0 : lines.Length - 1;
         double yTop = 0;
@@ -1587,9 +1585,7 @@ public partial class RichEditor
         double px = ParaLeft(p);
         double pWidth = Math.Max(10, _layoutWidth - 20 - px - p.MarginRight);
         var layout = BuildTextLayout(p, pWidth);
-        Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; }
-        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return firstLine ? 0 : GetParagraphLength(p); }
+        var lines = LineMetricsOf(layout, GetParagraphLength(p));
         if (lines.Length == 0) return 0;
         int line = firstLine ? 0 : lines.Length - 1;
         double yTop = 0;
@@ -1606,9 +1602,7 @@ public partial class RichEditor
         double px = ParaLeft(p);
         double pWidth = Math.Max(10, _layoutWidth - 20 - px - p.MarginRight);
         var layout = BuildTextLayout(p, pWidth);
-        Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; }
-        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
+        var lines = LineMetricsOf(layout, GetParagraphLength(p));
         if (lines.Length <= 1) return false;
 
         int len = GetParagraphLength(p);
@@ -1775,13 +1769,7 @@ public partial class RichEditor
         // ParagraphWrapWidth, not the top-level formula: a cell paragraph wraps at the cell's inner
         // width, and building at the wrong width would misplace the visual-line boundaries.
         var layout = BuildTextLayout(p, ParagraphWrapWidth(p));
-        Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; }
-        catch (Exception ex)
-        {
-            RichEditorDiagnostics.Report(ex);
-            lines = System.Array.Empty<Microsoft.Graphics.Canvas.Text.CanvasLineMetrics>();
-        }
+        var lines = LineMetricsOf(layout, len);
 
         bool atLineEnd = false;
         if (lines.Length > 1)
@@ -2167,7 +2155,7 @@ public partial class RichEditor
         if (len == 0 || onFreshBreakLine)
         {
             double emptyH = EmptyTextHeight(p);
-            double bl = BaselineOfLineAt(layout, offset); // empty: line 0; fresh break: the trailing line
+            double bl = BaselineOfLineAt(layout, offset, len); // empty: line 0; fresh break: the trailing line
             if (!double.IsNaN(bl))
                 return (pos.X, yTop + bl - emptyH * BaselineFraction, emptyH, yTop, yTop + EmptyLineHeight(p));
         }
@@ -2190,7 +2178,7 @@ public partial class RichEditor
                     // the formula mentions only the baseline and the font size, and neither changes when
                     // line spacing does. (Using the line box instead left the caret sitting low — the same
                     // defect list markers had, fixed the same way on 2026-07-16.)
-                    double lineBaseline = BaselineOfLineAt(layout, probe);
+                    double lineBaseline = BaselineOfLineAt(layout, probe, len);
                     bool tallInlineObject = rb.Height > textH * 1.5 && !ParagraphHasCustomSpacing(p);
                     if (tallInlineObject)
                     {
@@ -2215,11 +2203,10 @@ public partial class RichEditor
 
     // Baseline offset (from the line's top) of the visual line holding `offset`, or NaN if unavailable.
     // rb.Y from a character region is that same line's top, so the two combine into an absolute baseline.
-    private static double BaselineOfLineAt(CanvasTextLayout layout, int offset)
+    private static double BaselineOfLineAt(CanvasTextLayout layout, int offset, int textLength)
     {
-        Microsoft.Graphics.Canvas.Text.CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; }
-        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return double.NaN; }
+        var lines = LineMetricsOf(layout, textLength);
+        if (lines.Length == 0) return double.NaN;
         int acc = 0;
         for (int i = 0; i < lines.Length; i++)
         {

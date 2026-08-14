@@ -235,9 +235,7 @@ public partial class RichEditor
     // LineSpacingBaseline, so at 200% the bullet floated well above the text it labels.
     private void DrawListMarkers(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, string fullText, double px, double oy, ref int orderedIndex)
     {
-        CanvasLineMetrics[] lines;
-        try { lines = layout.LineMetrics; }
-        catch (Exception ex) { RichEditorDiagnostics.Report(ex); lines = Array.Empty<CanvasLineMetrics>(); }
+        var lines = LineMetricsOf(layout, fullText.Length);
 
         int segStart = 0;
         for (int i = 0; i <= fullText.Length; i++)
@@ -291,8 +289,8 @@ public partial class RichEditor
         if (!double.IsNaN(lineBaseline))
         {
             double mlBaseline = 0;
-            try { var mlm = ml.LineMetrics; if (mlm.Length > 0) mlBaseline = mlm[0].Baseline; }
-            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+            var mlm = LineMetricsOf(ml, m.Length);
+            if (mlm.Length > 0 && !double.IsNaN(mlm[0].Baseline)) mlBaseline = mlm[0].Baseline;
             if (mlBaseline > 0) y = lineTopY + lineBaseline - mlBaseline;
         }
         ds.DrawTextLayout(ml, (float)(textLeft - gap - mw), (float)y, color);
