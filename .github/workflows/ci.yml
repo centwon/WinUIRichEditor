@@ -53,8 +53,12 @@ jobs:
       # compiles but throws under AOT marshalling (see LineMetrics) shows up only when the app runs and
       # draws, which needs a desktop session. RichEditorDiagnostics is what surfaces those — a host that
       # subscribes sees them; CI does not.
+      # Full path to the .pubxml, not the bare profile name: the short form resolved locally but silently
+      # did NOT on a clean runner — the publish landed in the default directory with PublishAot never
+      # applied, producing an ordinary self-contained build that exited 0. A green job that never
+      # compiled anything natively is worse than no job.
       - name: Publish (win-x64, self-contained, AOT)
-        run: dotnet publish samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj -p:PublishProfile=win-x64
+        run: dotnet publish samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj -p:PublishProfile=Properties/PublishProfiles/win-x64.pubxml
 
       # The publish directory is NOT hardcoded: the profile's PublishDir resolved to a different place on
       # a clean runner than it does locally, and a size report that guesses wrong fails the job for a
@@ -70,6 +74,16 @@ jobs:
           Write-Host "publish dir: $pub"
           $files = Get-ChildItem $pub -Recurse -File
           $mb = [math]::Round((($files | Measure-Object Length -Sum).Sum / 1MB), 1)
-          Write-Host "publish: $mb MB ($($files.Count) files), native exe $([math]::Round($exe.Length/1MB,1)) MB"
+          $exeMb = [math]::Round($exe.Length / 1MB, 1)
+          Write-Host "publish: $mb MB ($($files.Count) files), native exe $exeMb MB"
           $files | Sort-Object Length -Descending | Select-Object -First 10 |
             ForEach-Object { "{0,8:N2} MB  {1}" -f ($_.Length / 1MB), $_.Name }
+
+          # Assert the publish really was Native AOT. Exit code 0 does not prove it: if the profile is
+          # not applied, the same command produces a perfectly valid non-AOT self-contained build. Two
+          # things separate them — AOT links everything into one large native exe (~14MB, vs ~0.3MB for
+          # the managed launcher), and it leaves no managed framework assemblies behind.
+          if ($exeMb -lt 5) { Write-Error "not an AOT publish: native exe is only $exeMb MB (expected >5)"; exit 1 }
+          $managed = $files | Where-Object { $_.Name -in 'Microsoft.WinUI.dll','Microsoft.Windows.SDK.NET.dll' }
+          if ($managed) { Write-Error "not an AOT publish: managed framework assemblies present ($($managed.Name -join ', '))"; exit 1 }
+          Write-Host "AOT verified: single native exe, no managed framework assemblies."
