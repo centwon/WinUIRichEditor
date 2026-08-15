@@ -48,49 +48,24 @@ public class TextPointer : IComparable<TextPointer>
         var doc = GetFlowDocument(this.Paragraph);
         if (doc == null) return 0; // cannot compare without document
 
+        // The editor's block order, from the walk that owns it (BlockWalk). Every block takes one index,
+        // tables included — that is the historical numbering these comparisons and undo's caret
+        // restoration both rely on. The walk is lazy, so locating both endpoints ends it.
+        //
+        // This used to be a hand-written copy of RichEditor.ParagraphsInBlocks, and its own comment
+        // recorded what a missing level of recursion cost: a pointer inside a nested or inline table kept
+        // index -1, and selections spanning one compared as equal or reversed.
         int index = 0, thisIdx = -1, otherIdx = -1;
-        void Locate(Paragraph p)
+        foreach (var block in BlockWalk.DocumentOrder(doc.Blocks))
         {
-            if (thisIdx < 0 && ReferenceEquals(p, this.Paragraph)) thisIdx = index;
-            if (otherIdx < 0 && ReferenceEquals(p, other.Paragraph)) otherIdx = index;
-            index++;
-        }
-        bool Done() => thisIdx >= 0 && otherIdx >= 0;
-
-        // Mirrors the editor's ParagraphsInBlocks order — fully recursive: a paragraph precedes its
-        // inline tables' cell paragraphs, and a table's logical (anchor) cells recurse row-major through
-        // any nesting depth. Without the recursion, a pointer inside a nested or inline table kept
-        // index -1 and selections spanning one compared as equal/reversed.
-        void WalkBlocks(System.Collections.Generic.IEnumerable<Block> blocks)
-        {
-            foreach (var block in blocks)
+            if (block is Paragraph p)
             {
-                if (Done()) return;
-                if (block is Paragraph p)
-                {
-                    Locate(p);
-                    foreach (var inl in p.Inlines)
-                        if (inl is InlineTable it)
-                            foreach (var (_, _, cell) in it.Table.LogicalCells())
-                            {
-                                if (Done()) return;
-                                WalkBlocks(cell.Blocks);
-                            }
-                }
-                else if (block is TableBlock tb)
-                {
-                    index++; // the table itself occupies one index, matching the historical numbering
-                    foreach (var (_, _, cell) in tb.LogicalCells())
-                    {
-                        if (Done()) return;
-                        WalkBlocks(cell.Blocks);
-                    }
-                }
-                else index++;
+                if (thisIdx < 0 && ReferenceEquals(p, this.Paragraph)) thisIdx = index;
+                if (otherIdx < 0 && ReferenceEquals(p, other.Paragraph)) otherIdx = index;
             }
+            index++;
+            if (thisIdx >= 0 && otherIdx >= 0) break;
         }
-
-        WalkBlocks(doc.Blocks);
         return thisIdx.CompareTo(otherIdx);
     }
 

@@ -6,6 +6,34 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — 문서 순서 걷기 4개를 하나로 (리팩토링, 동작 변경 없음)
+
+문서의 문단 순서를 만드는 코드가 **넷**이었다 — `RichEditor.ParagraphsInBlocks`,
+`TextRange.CollectParagraphs`, `TextPointer.CompareTo`의 워크, `UndoManager.WalkParagraphs`.
+그중 셋의 주석이 *"Mirror of the control's ParagraphsInBlocks"* · *"Mirrors the editor's
+ParagraphsInBlocks order"* · *"mirroring CollectParagraphs"* 라고 적고 있었다. **다음에 고치는 사람에게
+맞춰 달라고 부탁하는 것 말고는 넷을 일치시키는 게 아무것도 없었고**, 그 부탁은 이미 한 번 깨졌다 —
+TextPointer의 주석이 기록한다: *"재귀가 없으면 중첩·인라인 표 안의 포인터가 index −1로 남아 그걸
+가로지르는 선택이 같거나 뒤집힌 것으로 비교됐다."*
+
+`Documents/BlockWalk.cs`가 그 순서를 소유한다(`DocumentOrder`/`Paragraphs`/`Holds`). 규칙 셋을 한곳에:
+문단은 자기 인라인 표의 셀보다 **먼저** · 표 자신이 셀보다 먼저 **한 자리를 차지**(TextPointer 비교와
+언두 캐럿 복원이 의존하는 역사적 번호) · 셀은 **`LogicalCells()`(앵커)만**(피복 셀은 내용이 아니다).
+`TextRange.BlockHolds`(같은 재귀의 네 번째 사본)도 흡수했다. 전부 `internal` — **공개 표면 불변**.
+
+> **반증이 또 커버리지 구멍을 열었다.**
+> ① 인라인 표 하강을 빼면 **기존 테스트 1개**가 잡는다(`TextPointer_OrdersAcrossInlineTable`).
+> ② **피복 셀을 순서에 넣어도 318개가 전부 통과했다** — 주석 셋이 "load-bearing"이라 적어 둔
+> "logical cells only" 규칙이 미검증이었다. `BlockWalkTests` 6개 신설(런타임 불필요, 헤드리스).
+>
+> ⚠️ **그 신설 테스트의 첫 판은 공허했다.** `MergeCells`는 피복 셀의 내용을 앵커로 **옮기고 빈 문단으로
+> 교체**하므로, 병합 *전에* 잡아 둔 문단 객체가 순서에 없다는 단정은 **문서에 그 객체가 아예 없어서**
+> 통과한다. 병합 *후* 격자에 남은 문단(`tb.Cells[0][1].Blocks[0]`)을 단정해야 한다 — 로드맵의
+> "동작을 바꿨는데 그걸 단언하던 테스트가 여전히 통과하면 무엇을 단언하는지 다시 볼 것"의 실례다.
+
+**성능**: `ParagraphsInBlocks`는 키 입력마다 문서 전체를 도는 경로(`GetStatus`)라 iterator 레이어가
+하나 늘어난 것을 **같은 세션 연속 A/B**로 확인했다 — 공유 1.358ms vs 지역 사본 1.417ms, 측정 한계 이하.
+
 ### Changed — 셀 걷기 4개와 문단 그리기 2개를 하나로 (리팩토링, 동작 변경 1건 포함)
 
 표 셀의 블록 리스트를 걷는 코드가 **넷**이었고 — `MeasureCellContentHeight`·`DrawCellBlockList`·

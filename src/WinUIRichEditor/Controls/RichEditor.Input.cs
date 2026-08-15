@@ -176,23 +176,11 @@ public partial class RichEditor
     private List<Paragraph> AllParagraphs()
         => Document == null ? new() : ParagraphsInBlocks(Document.Blocks).ToList();
 
+    // The document's paragraph order — see BlockWalk, which owns it now. This used to be the original of
+    // four copies (TextRange, TextPointer and UndoManager each carried one, each with a comment saying it
+    // mirrors this method).
     private static IEnumerable<Paragraph> ParagraphsInBlocks(IEnumerable<Block> blocks)
-    {
-        foreach (var block in blocks)
-        {
-            if (block is Paragraph p)
-            {
-                yield return p;
-                foreach (var inl in p.Inlines)
-                    if (inl is InlineTable it)
-                        foreach (var (_, _, cell) in it.Table.LogicalCells())
-                            foreach (var q in ParagraphsInBlocks(cell.Blocks)) yield return q;
-            }
-            else if (block is TableBlock tb)
-                foreach (var (_, _, cell) in tb.LogicalCells())
-                    foreach (var q in ParagraphsInBlocks(cell.Blocks)) yield return q;
-        }
-    }
+        => BlockWalk.Paragraphs(blocks);
 
     private void UpdateParents(FlowDocument doc)
     {
