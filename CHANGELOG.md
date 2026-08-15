@@ -6,6 +6,80 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 문서에서 빠진 문단을 캐시가 붙잡고 있었다 (메모리)
+
+문단별 곁캐시 3종(`_heightCache`·`_lineCache`·`_statsCache`)과 표 행 높이 캐시는
+`Dictionary<Paragraph, …>`, 즉 **강한 참조**였다. 각 항목은 `ParagraphSig`로 검증되므로 *낡을* 수는
+없지만 **잊을** 수도 없었다 — 그런데 문단은 편집 중에 끊임없이 사라진다(Backspace가 둘을 합칠 때,
+붙여넣기가 선택을 대체할 때, 목록 토글이 문단을 다시 만들 때). 이들을 캐시에서 지우는 코드는 한 줄도
+없었으므로 **긴 편집 세션은 그 무덤을 통째로 들고 있었다.**
+
+- **측정으로 확인**: `Document.Blocks`에서 뺀 문단이 **전체 GC 이후에도 도달 가능**했다.
+- 유일한 상한은 항목당 **100,000개**짜리 "병적 증가 방지" 가드였다. 죽은 문단 10만 개와 그 런·텍스트는
+  가질 만한 상한이 아니다.
+- 넷 다 `ConditionalWeakTable`로 바꿨다. 항목 수명이 키에 묶이므로 문서가 버린 문단은 캐시 항목과 함께
+  수거되고, **임의의 상한 4개가 필요 없어졌다**.
+- **무거운 레이아웃 캐시(`_layoutCache`)는 Dictionary 그대로 둔다** — `CanvasTextLayout`은 명시적으로
+  `Dispose`해야 하는 네이티브 객체라 약한 테이블에 넣으면 파이널라이저에 맡기는 꼴이 된다. 이쪽은
+  `LayoutCacheCap` + `EvictLayouts`가 제대로 해제하며, 실측상 300문단 문서에서 **22개**만 들고 있다.
+- 가드: `LayoutCostTests.ADroppedParagraphIsNotPinnedByTheCaches`. **반증 확인 완료** — 캐시 하나를
+  강한 Dictionary로 되돌리면 실패한다.
+
+### Changed — 측정용 레이아웃이 그리기 전용 속성을 더 이상 만들지 않는다 (성능)
+
+`CreateLayout(forMeasure: true)`는 `SetColor`·`SetUnderline`·`SetStrikethrough`를 건너뛴다.
+DirectWrite는 이 셋으로 **그리지** 배치하지 않는다 — 글리프도 줄 상자도 움직이지 않는다. 그런데
+레이아웃을 만들어 재기만 하고 버리는 경로(`ParagraphHeight`·`ParagraphLines`, 즉 **문서를 열 때와 매
+재배치마다 문서 전체**)가 런마다 색 객체를 만들어 놓고 한 번도 그리지 않고 있었다.
+
+또 `ParagraphLines`가 잰 높이를 `_heightCache`에 함께 싣는다 — 같은 문단을 같은 폭으로 재는 값이라,
+페이지네이션이 먼저 도는 순서(인쇄·PDF·재배치 전 쪽수 조회)에서 두 번째 임시 레이아웃이 사라진다.
+
+**실측**(Release, 2000문단·서식 있는 문서): 문서 열기 **84.9 → 72.2ms**, 쪽수 계산 **0.27 → 0.16ms**,
+페이지 렌더 **1.18 → 0.83ms**.
+
+> ⚠️ 이 최적화가 기대는 전제는 딱 하나이고, 틀리면 **문서의 모든 높이가 그려지는 것과 어긋난다**
+> (캐럿 기하·히트테스트·페이지네이션이 전부 측정 높이를 읽는다). 왕복·퍼즈·픽셀 테스트 어느 것도
+> 이걸 볼 수 없다 — 모델은 틀린 데가 없고 페이지는 여전히 그려진다. 그래서 전제 자체를 고정했다:
+> `LayoutCostTests.MeasureLayoutMatchesDrawLayout`이 밑줄·취소선·색·하이퍼링크가 섞인 문단을 세 폭에서
+> 양쪽으로 재어 비교한다.
+
+### Changed — 렌더 워크의 프레임당 할당 2건 (성능)
+
+- `DrawContentWalk`이 **보이는 문단마다 `BuildPlain`** 을 호출했는데, 그 문자열의 유일한 소비자는
+  목록 마커 그리기다. 목록이 하나도 없는 문서에서도 캐럿이 깜빡일 때마다·드래그 선택 포인터 이동마다
+  StringBuilder + string을 문단 수만큼 만들고 있었다. 목록 문단일 때만 만든다.
+- **표의 기하가 프레임당 두 번 조립됐다** — 워크가 (히트테스트 rect·선택 크롬 때문에) `LayoutTable`을
+  부르고, 바로 다음 `DrawTableBlock`이 같은 인자로 다시 불렀다. 행 높이는 캐시돼 있었지만 `colX`/`rowY`
+  배열과 논리 셀마다의 anchor rect 리스트는 매번 새로 만들어졌다. 이미 계산한 것을 넘긴다.
+
+### Changed — 게시 다이어트 3단계 (78.0MB → 74.4MB)
+
+self-contained WinAppSDK 런타임은 **86개 언어**의 지역화 리소스를 깐다(`.mui` 172개, ~3.4MB). 앱은
+자기가 UI를 가진 언어로 배포하면 되고, 이 라이브러리는 정확히 둘이다(`RichEditorLocalization`의
+`en`·`ko`). `$(ShippedLanguages)`(기본 `en-us;ko-KR`)만 남기고 지운다 — `en-us`는 목록에 없는 언어가
+떨어지는 MRM 폴백이라 무조건 유지. 빈 폴더 84개도 함께 지운다. 라이브러리의 `.xml`(IntelliSense)과
+`.pdb`(AOT가 싣지도 않는 관리형 어셈블리의 것) ~0.35MB도 뺀다.
+
+> ⚠️ **`.mui`는 이 파일에서 로드된-모듈 검사로 정당화할 수 없는 유일한 트림이다** — 리소스로 읽히지
+> `LoadLibrary`되지 않으므로 "미로드"가 근거가 못 된다(바로 아래 절의 그 이유). 그래서 되는 방법으로
+> 확인했다: 게시 → 삭제 → **실행** → 창 캡처(`tools\capture-window.ps1`, 이번에 추가). 78.03 → 74.36MB,
+> 렌더 동일, 한국어 크롬 정상.
+>
+> **`.winmd`(~2.7MB)는 건드리지 않았다.** 지워도 기동하고 렌더된다 — 하지만 `.winmd`는 활성화·리플렉션
+> 시점에 지연 해석되는 **WinRT 메타데이터**(`RoGetMetaDataFile`)라, 문단을 그리는 데 필요 없던 타입을
+> 활성화하는 경로(파일 피커·인쇄 대화상자)에 대해 첫 화면이 그려진 것은 아무 증거도 아니다.
+> **측정된 후보로만 남긴다.**
+
+### Added — 성능 측정 하네스와 창 캡처 도구
+
+- `PerfProbeTests` — `RICHEDITOR_PERF=1`일 때만 도는 측정용(`RICHEDITOR_FUZZ_SEEDS`와 같은 관용).
+  살아 있는 데스크톱의 시간은 합/불 신호가 아니지만, 이 리포의 규칙이 "정독이 아니라 측정"이므로
+  레시피를 버리는 스크래치 파일이 아니라 여기에 둔다. 문서 열기·타이핑 1글자(+호스트 상태바 읽기)·
+  쪽수·페이지 렌더를 3라운드 최소값으로 잰다.
+- `tools\capture-window.ps1` — 로드맵의 GUI 확인 레시피를 스크립트로. WinUI 3는 일반 `WM_PRINT` 경로
+  밖에서 합성하므로 `PW_RENDERFULLCONTENT`(플래그 2)가 있어야 Win2D 캔버스가 나온다.
+
 ### Changed — 데모 AOT 게시 다이어트 확장 (85.7MB → 78.0MB)
 
 self-contained WinAppSDK 런타임은 플랫폼 전체를 번들하는데, 그중 텍스트 에디터가 건드리지 않는 기능

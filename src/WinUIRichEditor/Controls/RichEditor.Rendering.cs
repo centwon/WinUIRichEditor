@@ -154,7 +154,7 @@ public partial class RichEditor
             {
                 double startX = listIndent + tb.Indent;
                 var tl = LayoutTable(tb, startX, y);
-                DrawTableBlock(ds, tb, startX, y);
+                DrawTableBlock(ds, tb, startX, y, tl);
                 RecordTopLevelTableRect(tb, y, tl);
                 DrawTableSelectionChrome(ds, tb, startX, y, tl);
             }

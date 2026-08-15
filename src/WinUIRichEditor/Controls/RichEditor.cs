@@ -69,9 +69,28 @@ public partial class RichEditor : ContentControl
     private const int LayoutCacheCap = 2048;
     private readonly Dictionary<Paragraph, (long sig, double width, CanvasTextLayout layout)> _layoutCache = new();
 
-    // Cheap per-paragraph height cache (a double, not a native layout). Lets MeasureContentHeight size
-    // the scrollbar for the whole document without retaining a CanvasTextLayout per paragraph.
-    private readonly Dictionary<Paragraph, (long sig, double width, double height)> _heightCache = new();
+    // ---- the per-paragraph side caches ------------------------------------
+    // Height, pagination lines and text statistics are cached per paragraph, keyed by identity and
+    // validated by ParagraphSig — so a stale entry is impossible. What a Dictionary<Paragraph, …> could
+    // not do is FORGET: it is a strong reference, and paragraphs leave the document constantly
+    // (Backspace merging two, a paste replacing a selection, a list toggle rebuilding them). Nothing
+    // removed them from these caches, so a long editing session retained the whole graveyard — measured:
+    // a paragraph dropped from Document.Blocks was still reachable after a full GC. Only the arbitrary
+    // 100,000-entry "guard against pathological growth" bounded it, and 100,000 dead paragraphs with
+    // their runs and text is not a bound worth having.
+    //
+    // ConditionalWeakTable ties each entry's lifetime to its key's, so a paragraph the document drops is
+    // collected with its cache entries and the caps are no longer needed. (The HEAVY layout cache stays a
+    // Dictionary on purpose: CanvasTextLayout is a native DirectWrite object that must be Disposed, and a
+    // weak table would leave that to the finalizer. It is bounded by LayoutCacheCap + EvictLayouts, which
+    // dispose properly, and it only ever holds a viewport's worth — measured at 22 entries for a
+    // 300-paragraph document.)
+    private sealed class HeightEntry(long sig, double width, double height)
+    {
+        public readonly long Sig = sig; public readonly double Width = width; public readonly double Height = height;
+    }
+
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Paragraph, HeightEntry> _heightCache = new();
 
     private double _measuredHeight;
 
@@ -249,7 +268,7 @@ public partial class RichEditor : ContentControl
         _layoutCache.Clear();
         _heightCache.Clear();
         _lineCache.Clear();
-        _statsCache.Clear(); // sig-validated, but keyed by Paragraph — don't retain a swapped-out document
+        _statsCache.Clear();
         _tableRowHeights.Clear();
         InvalidateBlockLayout();
         ClearMarkerLayouts(); // device-bound like the layouts above (device recreate path)
@@ -439,7 +458,14 @@ public partial class RichEditor : ContentControl
     // Constructs a fresh CanvasTextLayout (NOT cached). Measurement callers wrap it in `using` so the
     // heavy native object is released immediately instead of polluting the bounded layout cache, which
     // is what keeps total memory from scaling with document length.
-    private CanvasTextLayout CreateLayout(Paragraph p, double maxWidth)
+    //
+    // forMeasure skips the three range calls that only affect DRAWING — SetColor, SetUnderline,
+    // SetStrikethrough. DirectWrite treats colour as a drawing effect and underline/strikethrough as
+    // decorations painted from the line's own metrics; none of them moves a glyph or changes a line box,
+    // so LayoutBounds is identical either way (pinned by MeasureLayoutMatchesDrawLayout). Every caller
+    // that measures and throws the layout away — ParagraphHeight and ParagraphLines, i.e. the whole
+    // document on load and on every relayout — was paying for a per-run colour object it never drew.
+    private CanvasTextLayout CreateLayout(Paragraph p, double maxWidth, bool forMeasure = false)
     {
         var device = CanvasDevice.GetSharedDevice();
         string defaultFamily = DefaultFontFamily;
@@ -480,13 +506,16 @@ public partial class RichEditor : ContentControl
                 layout.SetFontSize(pos, len, (float)PtToPx(size));
                 layout.SetFontWeight(pos, len, weight);
                 layout.SetFontStyle(pos, len, r.FontStyle);
-                if (r.Foreground is { } fg) layout.SetColor(pos, len, fg);
-                // A hyperlink without its own color renders link-blue — same as HTML-pasted links, so
-                // in-app SetHyperlink and pasted links look identical (an explicit Foreground wins).
-                else if (!string.IsNullOrEmpty(r.NavigateUri)) layout.SetColor(pos, len, Windows.UI.Color.FromArgb(255, 0, 0, 255));
-                bool underline = r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri);
-                if (underline) layout.SetUnderline(pos, len, true);
-                if (r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)) layout.SetStrikethrough(pos, len, true);
+                if (!forMeasure)
+                {
+                    if (r.Foreground is { } fg) layout.SetColor(pos, len, fg);
+                    // A hyperlink without its own color renders link-blue — same as HTML-pasted links, so
+                    // in-app SetHyperlink and pasted links look identical (an explicit Foreground wins).
+                    else if (!string.IsNullOrEmpty(r.NavigateUri)) layout.SetColor(pos, len, Windows.UI.Color.FromArgb(255, 0, 0, 255));
+                    bool underline = r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri);
+                    if (underline) layout.SetUnderline(pos, len, true);
+                    if (r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)) layout.SetStrikethrough(pos, len, true);
+                }
             }
             else if (inline is InlineImage img)
             {
@@ -534,6 +563,22 @@ public partial class RichEditor : ContentControl
     // via the per-run cached hash (Run.TextHash) — this sig is recomputed for EVERY paragraph on each
     // relayout (i.e. per keystroke), and hashing the characters here made typing O(document chars).
     // With the cache the sig is O(runs); formatting fields are still read live, so nothing can go stale.
+    /// <summary>Test hook: how many native <c>CanvasTextLayout</c>s the heavy cache is holding. The whole
+    /// bounded-memory design rests on this staying viewport-sized whatever the document's length.</summary>
+    internal int LayoutCacheCount => _layoutCache.Count;
+
+    /// <summary>Test hook for the one assumption <c>forMeasure</c> rests on: a layout built WITHOUT the
+    /// colour/underline/strikethrough range calls must lay out exactly like the one built with them.
+    /// Returns (measure-only bounds, drawing bounds) so a test can compare them directly — if DirectWrite
+    /// ever let a decoration move a glyph or grow a line box, every height in the document would drift
+    /// away from what is drawn, and nothing else in the suite would say so.</summary>
+    internal (Windows.Foundation.Rect measure, Windows.Foundation.Rect draw) MeasureBothWays(Paragraph p, double width)
+    {
+        using var m = CreateLayout(p, width, forMeasure: true);
+        using var d = CreateLayout(p, width, forMeasure: false);
+        return (m.LayoutBounds, d.LayoutBounds);
+    }
+
     private static long ParagraphSig(Paragraph p)
     {
         unchecked

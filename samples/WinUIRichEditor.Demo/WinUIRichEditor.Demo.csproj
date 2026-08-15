@@ -61,9 +61,10 @@
        The ~64MB AOT .pdb is handled separately (CopyOutputSymbolsToPublishDirectory in the publish
        profile). Together: ~110MB, and the publish folder lands at ~78MB.
 
-       NOT trimmed, and why: .mui / .pri / .winmd (~10MB) are read as resources and metadata, never
-       LoadLibrary'd, so the module-list check says nothing about them — absence from it is not evidence.
-       DWriteCore.dll likewise showed as unloaded but is the text stack; not worth the risk. -->
+       NOT trimmed, and why: .pri / .winmd (~7MB) are read as resources and metadata, never LoadLibrary'd,
+       so the module-list check says nothing about them — absence from it is not evidence. DWriteCore.dll
+       likewise showed as unloaded but is the text stack; not worth the risk. (The .mui files are in the
+       same category and ARE now trimmed — by a different kind of evidence: see part 2 below.) -->
   <Target Name="_TrimUnusedRuntimeStacks" AfterTargets="Publish">
     <ItemGroup>
       <!-- Windows-ML -->
@@ -77,8 +78,50 @@
       <_DietFile Include="$(PublishDir)Microsoft.Windows.AI.Imaging.dll" />
       <_DietFile Include="$(PublishDir)Microsoft.Windows.AI.Video.dll" />
       <_DietFile Include="$(PublishDir)PerceptiveStreaming.dll" />
+      <!-- Development artefacts of the referenced library (~0.35MB): the XML docs are IntelliSense for
+           whoever COMPILES against it, and the .pdb belongs to a managed assembly that an AOT publish
+           does not even ship. Neither is reachable at runtime. -->
+      <_DietFile Include="$(PublishDir)WinUIRichEditor.xml" />
+      <_DietFile Include="$(PublishDir)WinUIRichEditor.pdb" />
     </ItemGroup>
     <Delete Files="@(_DietFile)" />
     <Message Importance="high" Text="Deployment diet: trimmed unused runtime stacks from $(PublishDir)" />
+  </Target>
+
+  <!-- Deployment diet, part 2 (publish only): the self-contained WinAppSDK runtime ships its localized
+       resources for 86 languages — 172 .mui files, ~3.4MB — and an app ships in the languages it has UI
+       for. This library has exactly two (see RichEditorLocalization: "en" and "ko"), and the demo's own
+       chrome is Korean, so en-us + ko-KR is the whole set. en-us stays regardless: it is the fallback
+       MRM lands on for any language not present.
+
+       Set $(ShippedLanguages) to change the list; set it empty to keep all of them.
+
+       ⚠ This is the ONE trim in this file that the loaded-module check cannot justify — .mui files are
+       read as resources, never LoadLibrary'd, so their absence from the module list means nothing (see
+       the note above). It was verified the only way that works: publish, delete, RUN the app, and
+       capture the window (tools\capture-window.ps1). 78.03MB -> 74.39MB, renders identically, Korean
+       chrome intact.
+
+       NOT trimmed: the ~2.7MB of .winmd. Deleting those also runs and renders — but .winmd is WinRT
+       METADATA resolved lazily (RoGetMetaDataFile) for activation and reflection, so a first screen that
+       draws proves nothing about the file picker, the print dialog or any other path that activates a
+       type it did not need to draw a paragraph. Absence of evidence, again. -->
+  <PropertyGroup>
+    <ShippedLanguages Condition="'$(ShippedLanguages)' == ''">en-us;ko-KR</ShippedLanguages>
+  </PropertyGroup>
+
+  <Target Name="_TrimUnshippedLanguages" AfterTargets="Publish" Condition="'$(ShippedLanguages)' != ''">
+    <ItemGroup>
+      <_ShippedLanguage Include="$(ShippedLanguages)" />
+      <!-- Every per-language .mui the runtime laid down, minus the ones we ship (Exclude expands the
+           wildcards in the kept patterns, so this is a set difference, not a string compare). -->
+      <_KeptMui Include="@(_ShippedLanguage->'$(PublishDir)%(Identity)\*.mui')" />
+      <_DropMui Include="$(PublishDir)*\*.mui" Exclude="@(_KeptMui)" />
+      <_DropLangDir Include="@(_DropMui->'%(RootDir)%(Directory)'->Distinct())" />
+    </ItemGroup>
+    <Delete Files="@(_DropMui)" />
+    <!-- Their folders hold nothing else; leaving 84 empty directories behind is not a diet. -->
+    <RemoveDir Directories="@(_DropLangDir)" />
+    <Message Importance="high" Text="Deployment diet: kept only $(ShippedLanguages) of the runtime's localized resources" />
   </Target>
 </Project>

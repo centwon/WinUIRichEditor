@@ -273,22 +273,33 @@ public partial class RichEditor
     // (a double[] per paragraph, not a native layout) and measured with a TRANSIENT layout, so
     // recomputing page breaks — which happens on every relayout — neither inflates the heavy layout
     // cache with the whole document nor rebuilds DirectWrite layouts for unchanged paragraphs.
-    private readonly System.Collections.Generic.Dictionary<Paragraph, (long sig, double width, double height, double[] bottoms)> _lineCache = new();
+    // Weak-keyed for the reason spelled out on _heightCache: these entries must not outlive the
+    // paragraph they describe.
+    private sealed class LineEntry(long sig, double width, double height, double[] bottoms)
+    {
+        public readonly long Sig = sig; public readonly double Width = width;
+        public readonly double Height = height; public readonly double[] Bottoms = bottoms;
+    }
+
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Paragraph, LineEntry> _lineCache = new();
 
     private (double height, double[] bottoms) ParagraphLines(Paragraph p, double width)
     {
         long sig = ParagraphSig(p);
-        if (_lineCache.TryGetValue(p, out var hc) && hc.sig == sig && hc.width == width)
-            return (hc.height, hc.bottoms);
+        if (_lineCache.TryGetValue(p, out var hc) && hc.Sig == sig && hc.Width == width)
+            return (hc.Height, hc.Bottoms);
         double h;
         double[] bottoms;
-        using (var layout = CreateLayout(p, width))
+        // Measurement only: no colour or decoration is applied (see CreateLayout's forMeasure).
+        using (var layout = CreateLayout(p, width, forMeasure: true))
         {
             h = System.Math.Max(EmptyLineHeight(p), layout.LayoutBounds.Height);
             bottoms = ParagraphLineBottoms(layout, h, GetParagraphLength(p)).ToArray();
         }
-        if (_lineCache.Count > 100000) _lineCache.Clear(); // guard against pathological growth
-        _lineCache[p] = (sig, width, h, bottoms);
+        _lineCache.AddOrUpdate(p, new LineEntry(sig, width, h, bottoms));
+        // The height this just measured is exactly what ParagraphHeight would build a SECOND transient
+        // layout for. In paged mode both run over the whole document on every relayout, so publish it.
+        _heightCache.AddOrUpdate(p, new HeightEntry(sig, width, h));
         return (h, bottoms);
     }
 

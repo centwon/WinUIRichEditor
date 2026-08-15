@@ -27,20 +27,28 @@ public partial class RichEditor
 
     // Measured row heights per table (position-independent — depends only on content + column widths),
     // cached by table identity. Cleared with the layout cache on any document/format change.
-    private readonly Dictionary<TableBlock, double[]> _tableRowHeights = new();
+    // Weak-keyed for the reason spelled out on _heightCache: a table dropped from the document must not
+    // be pinned by its measured row heights.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TableBlock, double[]> _tableRowHeights = new();
 
     // Build-or-return a paragraph's rendered height at a wrap width (single source for measure + draw).
     private double ParagraphHeight(Paragraph p, double width)
     {
         long sig = ParagraphSig(p);
-        if (_heightCache.TryGetValue(p, out var hc) && hc.sig == sig && hc.width == width)
-            return hc.height;
+        if (_heightCache.TryGetValue(p, out var hc) && hc.Sig == sig && hc.Width == width)
+            return hc.Height;
+        // Pagination measures the same paragraph at the same width and keeps the height it found. When it
+        // ran first (print, PDF, a page count asked for before a relayout) that measurement is already
+        // here, and building a second transient layout for a number we have is pure waste.
+        if (_lineCache.TryGetValue(p, out var lc) && lc.Sig == sig && lc.Width == width)
+            return lc.Height;
 
-        using var layout = CreateLayout(p, width); // transient: measured then released, never cached
+        // Transient: measured then released, never cached. forMeasure drops the colour/underline/
+        // strikethrough range calls — DirectWrite DRAWS with those, it does not lay out with them.
+        using var layout = CreateLayout(p, width, forMeasure: true);
         double h = Math.Max(EmptyLineHeight(p), layout.LayoutBounds.Height);
 
-        if (_heightCache.Count > 100000) _heightCache.Clear(); // guard against pathological growth
-        _heightCache[p] = (sig, width, h);
+        _heightCache.AddOrUpdate(p, new HeightEntry(sig, width, h));
         return h;
     }
 
@@ -135,8 +143,7 @@ public partial class RichEditor
                 if (need > have) rowH[last] += need - have;
             }
 
-            if (_tableRowHeights.Count > 2000) _tableRowHeights.Clear();
-            _tableRowHeights[tb] = rowH;
+            _tableRowHeights.AddOrUpdate(tb, rowH);
         }
 
         return AssembleTableLayout(tb, colX, rowH, startX, top);
@@ -161,13 +168,17 @@ public partial class RichEditor
 
     // ---- read-only table drawing ------------------------------------------
 
-    // Draws a top-level table at its document origin and recurses into each anchor cell.
-    private void DrawTableBlock(CanvasDrawingSession ds, TableBlock tb, double startX, double top)
-        => DrawNestedTable(ds, tb, startX, top);
+    // Draws a top-level table at its document origin and recurses into each anchor cell. `known` is the
+    // geometry the caller already computed for this exact (tb, startX, top) — the top-level draw walk
+    // needs the layout anyway (for the recorded hit-test rect and the selection chrome), and re-deriving
+    // it here allocated a second colX/rowY pair and a second anchor list per table PER FRAME. Row heights
+    // were cached; assembling the rectangles was not.
+    private void DrawTableBlock(CanvasDrawingSession ds, TableBlock tb, double startX, double top, TableLayout? known = null)
+        => DrawNestedTable(ds, tb, startX, top, known);
 
-    private void DrawNestedTable(CanvasDrawingSession ds, TableBlock tb, double startX, double top)
+    private void DrawNestedTable(CanvasDrawingSession ds, TableBlock tb, double startX, double top, TableLayout? known = null)
     {
-        var tl = LayoutTable(tb, startX, top);
+        var tl = known ?? LayoutTable(tb, startX, top);
         if (!_printMode) RecordTableResizeBoundaries(tb, top, tl); // column/row drag handles for every table
         var cellSel = _printMode ? null : _renderCellSel; // per-pass cache (see DrawDocument)
         foreach (var (r, c, rect) in tl.AnchorRects)

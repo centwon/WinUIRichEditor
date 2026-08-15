@@ -274,13 +274,21 @@ public partial class RichEditor
     // every StatusChanged (i.e. per keystroke via the status bar), and rescanning every character made
     // typing O(document chars); with this cache only the edited paragraph rescans. Words never span
     // paragraphs (the separator '\n' breaks them), so per-paragraph counts sum exactly.
-    private readonly System.Collections.Generic.Dictionary<Paragraph, (long sig, int chars, int words, int breaks)> _statsCache = new();
+    // Weak-keyed for the reason spelled out on _heightCache: these entries must not outlive the
+    // paragraph they describe.
+    private sealed class StatsEntry(long sig, int chars, int words, int breaks)
+    {
+        public readonly long Sig = sig; public readonly int Chars = chars;
+        public readonly int Words = words; public readonly int Breaks = breaks;
+    }
+
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Paragraph, StatsEntry> _statsCache = new();
 
     private (int chars, int words, int breaks) ParagraphStats(Paragraph p)
     {
         long sig = ParagraphSig(p);
-        if (_statsCache.TryGetValue(p, out var hit) && hit.sig == sig)
-            return (hit.chars, hit.words, hit.breaks);
+        if (_statsCache.TryGetValue(p, out var hit) && hit.Sig == sig)
+            return (hit.Chars, hit.Words, hit.Breaks);
 
         int chars = 0, words = 0, breaks = 0;
         bool inWord = false;
@@ -295,8 +303,7 @@ public partial class RichEditor
             else if (inline is not Run) Consume(ObjChar);
         }
 
-        if (_statsCache.Count > 100000) _statsCache.Clear(); // guard against pathological growth
-        _statsCache[p] = (sig, chars, words, breaks);
+        _statsCache.AddOrUpdate(p, new StatsEntry(sig, chars, words, breaks));
         return (chars, words, breaks);
     }
 
