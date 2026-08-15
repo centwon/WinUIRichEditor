@@ -303,32 +303,17 @@ public partial class RichEditor : ContentControl
         var map = new List<(Block, double, double, int)>(Document?.Blocks.Count ?? 0);
         var index = new Dictionary<Block, int>();
         double y = 0;
-        // Ordered-list numbering counts PER ListLevel (HTML nested-<ol> semantics): entering a deeper
-        // sublist starts it at 1, returning to a shallower level continues that level's own count, and
-        // re-entering a deeper level restarts (its counter is dropped on the way up). Bullet items keep
-        // the surrounding numbering context alive (a bulleted sublist doesn't reset its parent's
-        // numbers); any non-list block still breaks the list. The old single counter made a nested
-        // ordered list continue its PARENT's numbers (1, 2, then the sublist showing 3).
-        var ordCounters = new List<int>(); // ordCounters[level] = items consumed at that level
+        // Ordered-list numbering: see OrderedStartFor, which the cell walk shares. (The old single
+        // counter made a nested ordered list continue its PARENT's numbers — 1, 2, then the sublist
+        // showing 3 — which is why the level semantics exist at all.)
+        List<int>? ordCounters = null; // ordCounters[level] = items consumed at that level
         if (Document != null)
         {
             foreach (var block in Document.Blocks)
             {
                 y += block.MarginTop;
                 double h = BlockHeight(block, width);
-                int orderedStart = 0;
-                if (block is Paragraph { IsListItem: true } lp)
-                {
-                    int lvl = Math.Clamp(lp.ListLevel, 0, 16);
-                    if (ordCounters.Count > lvl + 1) ordCounters.RemoveRange(lvl + 1, ordCounters.Count - lvl - 1);
-                    if (lp.ListType == ListKind.Ordered)
-                    {
-                        while (ordCounters.Count <= lvl) ordCounters.Add(0);
-                        orderedStart = ordCounters[lvl];
-                        ordCounters[lvl] += HardLineCount(lp);
-                    }
-                }
-                else ordCounters.Clear();
+                int orderedStart = OrderedStartFor(block, ref ordCounters);
                 index[block] = map.Count;
                 map.Add((block, y, h, orderedStart));
                 y += h + block.MarginBottom;

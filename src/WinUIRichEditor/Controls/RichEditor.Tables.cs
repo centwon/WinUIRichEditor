@@ -52,22 +52,82 @@ public partial class RichEditor
         return h;
     }
 
+    // ---- the cell block-list walk (one advance, four consumers) ------------
+    // Everything a walk over a cell's block list needs to know about one entry: where it sits, how tall
+    // it is, where a paragraph's text starts and how wide it wraps, and a nested table's geometry.
+    //
+    // Four walks used to derive all of this SEPARATELY — MeasureCellContentHeight, DrawCellBlockList,
+    // HitTestBlockList and CaretInBlockList — and the arithmetic had to agree in four places or the
+    // rendered text and the caret/hit-test geometry drift apart (rule #1: one layout, one source). The
+    // comments on those four all said "must match the draw walk", which is the code asking a human to
+    // hold an invariant it could hold itself. It holds it here now.
+    private readonly record struct CellSlot(
+        double Y, double Height, double ParaX, double ParaWidth, TableLayout? Table, int OrderedStart);
+
+    // Places one block at `y` inside a content box that starts at `ox` and is `innerW` wide.
+    private CellSlot NextCellSlot(Block b, double ox, double y, double innerW, ref List<int>? ordCounters)
+    {
+        int orderedStart = OrderedStartFor(b, ref ordCounters);
+        switch (b)
+        {
+            case Paragraph p:
+            {
+                // The list/indent gutter, applied identically by every walk — hit-testing a bulleted
+                // paragraph in a cell lands on the wrong character without it.
+                double pl = CellParaLeft(p);
+                double pw = Math.Max(10, innerW - pl);
+                return new CellSlot(y, ParagraphHeight(p, pw), ox + pl, pw, null, orderedStart);
+            }
+            case ImageBlock im:
+                return new CellSlot(y, CellImageSize(im, innerW).h, ox, innerW, null, 0);
+            case DividerBlock:
+                return new CellSlot(y, DividerHeight, ox, innerW, null, 0);
+            case TableBlock nt:
+            {
+                // Derived once and carried: the draw walk hands it to DrawNestedTable, the hit-test and
+                // caret walks read its AnchorRects, and everyone advances by its TotalHeight.
+                var tl = LayoutTable(nt, ox, y);
+                return new CellSlot(y, tl.TotalHeight, ox, innerW, tl, 0);
+            }
+            default:
+                return new CellSlot(y, 0, ox, innerW, null, 0);
+        }
+    }
+
+    // Ordered-list numbering, shared by the top-level block map (EnsureBlockLayout) and the cell walk.
+    // Counting is PER ListLevel (HTML nested-<ol> semantics): a deeper sublist starts at 1, returning to
+    // a shallower level continues that level's own count, and re-entering a deeper level restarts (its
+    // counter is dropped on the way up). Bullet items keep the surrounding numbering context alive — a
+    // bulleted sublist does not reset its parent's numbers — and ANY non-list block breaks it.
+    //
+    // `counters` is created on demand: most block lists hold no list paragraph at all, and the walks that
+    // do not draw markers (measure, hit-test, caret) should not allocate for numbering they never read.
+    private static int OrderedStartFor(Block block, ref List<int>? counters)
+    {
+        if (block is Paragraph { IsListItem: true } lp)
+        {
+            counters ??= new List<int>();
+            int lvl = Math.Clamp(lp.ListLevel, 0, 16);
+            if (counters.Count > lvl + 1) counters.RemoveRange(lvl + 1, counters.Count - lvl - 1);
+            if (lp.ListType != ListKind.Ordered) return 0;
+            while (counters.Count <= lvl) counters.Add(0);
+            int start = counters[lvl];
+            counters[lvl] += HardLineCount(lp);
+            return start;
+        }
+        counters?.Clear();
+        return 0;
+    }
+
     // The content height of a cell's block list laid out in innerWidth (sum of block heights). Mutually
     // recursive with LayoutTable through nested tables, closing the recursion at any depth.
     private double MeasureCellContentHeight(TableCell cell, double innerWidth)
     {
         double h = 0;
         double w = Math.Max(10, innerWidth);
+        List<int>? ord = null;
         foreach (var b in cell.Blocks)
-        {
-            switch (b)
-            {
-                case Paragraph p: h += ParagraphHeight(p, Math.Max(10, w - CellParaLeft(p))); break;
-                case ImageBlock im: h += CellImageSize(im, w).h; break;
-                case DividerBlock: h += DividerHeight; break;
-                case TableBlock nt: h += LayoutTable(nt, 0, 0).TotalHeight; break;
-            }
-        }
+            h += NextCellSlot(b, 0, h, w, ref ord).Height;
         return h;
     }
 
@@ -222,92 +282,45 @@ public partial class RichEditor
     private void DrawCellBlockList(CanvasDrawingSession ds, IList<Block> blocks, double ox, double oy, double innerW)
     {
         double by = 0;
-        // Ordered-list numbering is per cell (the top-level counters live in the block layout map, which
-        // only covers Document.Blocks). Same level semantics as EnsureBlockLayout: a deeper sublist
-        // starts at 1, returning to a shallower level continues its own count, any non-list block resets.
-        var ordCounters = new List<int>();
+        // Ordered-list numbering is per cell — the top-level counters live in the block layout map, which
+        // only covers Document.Blocks. The level semantics are EnsureBlockLayout's, because both now go
+        // through OrderedStartFor.
+        List<int>? ord = null;
         foreach (var b in blocks)
         {
-            double blkY = oy + by;
+            var slot = NextCellSlot(b, ox, oy + by, innerW, ref ord);
+            by += slot.Height;
+
             switch (b)
             {
                 case Paragraph para:
-                {
-                    // List paragraphs are inset to leave a gutter for the marker, exactly like top-level
-                    // ones (CellParaLeft); the hit-test/caret/measure walks apply the same inset.
-                    double pl = CellParaLeft(para);
-                    double px = ox + pl;
-                    double pw = Math.Max(10, innerW - pl);
-                    var layout = BuildTextLayout(para, pw);
-
-                    int orderedStart = 0;
-                    if (para.IsListItem)
-                    {
-                        int lvl = Math.Clamp(para.ListLevel, 0, 16);
-                        if (ordCounters.Count > lvl + 1) ordCounters.RemoveRange(lvl + 1, ordCounters.Count - lvl - 1);
-                        if (para.ListType == ListKind.Ordered)
-                        {
-                            while (ordCounters.Count <= lvl) ordCounters.Add(0);
-                            orderedStart = ordCounters[lvl];
-                            ordCounters[lvl] += HardLineCount(para);
-                        }
-                    }
-                    else ordCounters.Clear();
-
-                    // The paragraph's own fill and quote bar, which the top-level loop has always drawn
-                    // and this one never did — the same omission the list markers had (see the comment
-                    // below): the model kept the value, every format now round-trips it, and a cell
-                    // rendered it as nothing. Both go down BEFORE the run backgrounds and the text, or
-                    // they paint over them.
-                    double ph = Math.Max(EmptyLineHeight(para), layout.LayoutBounds.Height);
-                    if (para.Background is { } paraBg)
-                        ds.FillRectangle(new Rect(px, blkY, pw, ph), paraBg);
-                    // Clamped to the cell's own left edge: the top-level bar sits 10px into the margin,
-                    // and a cell has no margin to sit in — unclamped it would straddle the cell border.
-                    if (para.IsQuote)
-                        ds.FillRectangle(new Rect(Math.Max(ox, px - 10), blkY, 3, ph), QuoteBarColor);
-
-                    DrawRunBackgrounds(ds, para, layout, px, blkY);
-                    DrawFindHighlights(ds, para, layout, px, blkY);
-                    DrawSelectionHighlight(ds, para, layout, px, blkY);
-                    // Markers were never drawn inside cells: a bulleted/numbered paragraph kept its
-                    // ListType in the model but rendered as plain text, so the list looked lost.
-                    if (para.ListType != ListKind.None)
-                    {
-                        int orderedIndex = orderedStart;
-                        DrawListMarkers(ds, para, layout, BuildPlain(para), px, blkY, ref orderedIndex);
-                    }
-                    ds.DrawTextLayout(layout, (float)px, (float)blkY, EffectiveTextColor);
-                    DrawInlineObjects(ds, para, layout, px, blkY);
-                    DrawCompositionUnderline(ds, para, layout, px, blkY);
-                    DrawCaret(ds, para, layout, px, blkY);
-                    DrawDropPreview(ds, para, layout, px, blkY);
-                    by += ph;
+                    // The same painting the top-level walk does, because it is literally the same code.
+                    DrawParagraphContent(ds, para, BuildTextLayout(para, slot.ParaWidth),
+                        slot.ParaX, slot.Y, slot.ParaWidth, slot.Height, leftLimit: ox, slot.OrderedStart);
                     break;
-                }
                 case ImageBlock cimg:
                 {
-                    var (iw, ih) = CellImageSize(cimg, innerW);
+                    var (iw, _) = CellImageSize(cimg, innerW);
                     var bmp = _images.Get(_canvas, cimg, cimg.RawBytes, cimg.Image);
-                    var ir = new Rect(ox, blkY, iw, ih);
+                    var ir = new Rect(ox, slot.Y, iw, slot.Height);
                     if (bmp != null) ds.DrawImage(bmp, ir); else DrawPlaceholder(ds, ir, "");
                     TrackCellImage(ds, cimg, ir); // selection/resize registry — see _cellImageRects
-                    by += ih;
                     break;
                 }
                 case DividerBlock:
                 {
-                    double ly = blkY + DividerHeight / 2;
+                    double ly = slot.Y + DividerHeight / 2;
                     ds.DrawLine((float)ox, (float)ly, (float)(ox + innerW), (float)ly, GrayBorderColor, 1f);
-                    by += DividerHeight;
                     break;
                 }
                 case TableBlock nt:
-                {
-                    DrawNestedTable(ds, nt, ox, blkY);
-                    by += LayoutTable(nt, ox, blkY).TotalHeight;
+                    // Once, not twice: DrawNestedTable used to derive this layout again for itself while
+                    // the advance asked for it separately — per nested table, per frame. The slot carries
+                    // the one the walk already built. (The identical duplicate at the top level lived in
+                    // DrawContentWalk; that the two had to be found separately is the split doing what it
+                    // always does.)
+                    DrawNestedTable(ds, nt, ox, slot.Y, slot.Table);
                     break;
-                }
             }
         }
     }

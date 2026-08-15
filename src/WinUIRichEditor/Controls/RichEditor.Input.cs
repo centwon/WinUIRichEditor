@@ -568,47 +568,37 @@ public partial class RichEditor
     {
         double by = 0;
         Paragraph? last = null;
+        List<int>? ord = null;
         foreach (var b in blocks)
         {
-            double blkY = oy + by;
-            switch (b)
+            // Position and size come from the shared walk (NextCellSlot); the layout for a paragraph is
+            // still built only on a hit.
+            var slot = NextCellSlot(b, ox, oy + by, innerW, ref ord);
+            by += slot.Height;
+
+            if (b is Paragraph para)
             {
-                case Paragraph para:
+                if (point.Y >= slot.Y && point.Y <= slot.Y + slot.Height)
                 {
-                    // Same list/indent gutter the draw walk applies (CellParaLeft), or hit-testing
-                    // lands on the wrong character for every bulleted paragraph in a cell.
-                    double pl = CellParaLeft(para);
-                    double px = ox + pl;
-                    double pw = Math.Max(10, innerW - pl);
-                    double h = ParagraphHeight(para, pw); // cheap; layout built only on a hit
-                    if (point.Y >= blkY && point.Y <= blkY + h)
-                    {
-                        var layout = BuildTextLayout(para, pw);
-                        if (HitInlineTable(para, layout, px, blkY, point) is { } itp) return itp;
-                        int off = HitOffset(layout, para, point.X - px, point.Y - blkY, out bool ate);
-                        return new TextPointer(para, off) { AtLineEnd = ate };
-                    }
-                    last = para; by += h;
-                    break;
+                    var layout = BuildTextLayout(para, slot.ParaWidth);
+                    if (HitInlineTable(para, layout, slot.ParaX, slot.Y, point) is { } itp) return itp;
+                    int off = HitOffset(layout, para, point.X - slot.ParaX, point.Y - slot.Y, out bool ate);
+                    return new TextPointer(para, off) { AtLineEnd = ate };
                 }
-                case ImageBlock cimg: by += CellImageSize(cimg, innerW).h; break;
-                case DividerBlock: by += DividerHeight; break;
-                case TableBlock nt:
-                {
-                    var tl = LayoutTable(nt, ox, blkY);
-                    if (point.Y >= blkY && point.Y <= blkY + tl.TotalHeight)
-                        foreach (var (r, c, rect) in tl.AnchorRects)
-                            if (rect.Contains(point))
-                            {
-                                var cell = nt.Cells[r][c];
-                                var tp = HitTestBlockList(cell.Blocks, rect.X + CellPad,
-                                    rect.Y + CellPad + CellContentOffsetY(cell, rect),
-                                    Math.Max(10, rect.Width - 2 * CellPad), point);
-                                if (tp != null) return tp;
-                            }
-                    by += tl.TotalHeight;
-                    break;
-                }
+                last = para;
+            }
+            else if (b is TableBlock nt && slot.Table is { } tl)
+            {
+                if (point.Y >= slot.Y && point.Y <= slot.Y + slot.Height)
+                    foreach (var (r, c, rect) in tl.AnchorRects)
+                        if (rect.Contains(point))
+                        {
+                            var cell = nt.Cells[r][c];
+                            var tp = HitTestBlockList(cell.Blocks, rect.X + CellPad,
+                                rect.Y + CellPad + CellContentOffsetY(cell, rect),
+                                Math.Max(10, rect.Width - 2 * CellPad), point);
+                            if (tp != null) return tp;
+                        }
             }
         }
         return last != null ? new TextPointer(last, GetParagraphLength(last)) : null;
@@ -1996,44 +1986,36 @@ public partial class RichEditor
     private (double X, double Y, double Height, double LineTop, double LineBottom)? CaretInBlockList(System.Collections.Generic.IList<Block> blocks, double ox, double oy, double innerW, TextPointer tp)
     {
         double by = 0;
+        List<int>? ord = null;
         foreach (var b in blocks)
         {
-            double blkY = oy + by;
-            switch (b)
+            // Position and size come from the shared walk (NextCellSlot) — this loop only decides what
+            // to do with the block it lands on.
+            var slot = NextCellSlot(b, ox, oy + by, innerW, ref ord);
+            by += slot.Height;
+
+            if (b is Paragraph para)
             {
-                case Paragraph para:
+                if (ReferenceEquals(para, tp.Paragraph))
                 {
-                    double pl = CellParaLeft(para); // must match the draw/hit-test walks
-                    double px = ox + pl;
-                    double pw = Math.Max(10, innerW - pl);
-                    if (ReferenceEquals(para, tp.Paragraph))
-                    {
-                        var layout = BuildTextLayout(para, pw);
-                        var (cx, cy, ch, clt, clb) = CaretInLayout(layout, para, tp.Offset, tp.AtLineEnd);
-                        return (px + cx, blkY + cy, ch, blkY + clt, blkY + clb);
-                    }
-                    if (HasInlineTable(para))
-                    {
-                        var layout = BuildTextLayout(para, pw);
-                        if (CaretInInlineTable(para, layout, px, blkY, tp) is { } itres) return itres;
-                    }
-                    by += ParagraphHeight(para, pw);
-                    break;
+                    var layout = BuildTextLayout(para, slot.ParaWidth);
+                    var (cx, cy, ch, clt, clb) = CaretInLayout(layout, para, tp.Offset, tp.AtLineEnd);
+                    return (slot.ParaX + cx, slot.Y + cy, ch, slot.Y + clt, slot.Y + clb);
                 }
-                case ImageBlock cimg: by += CellImageSize(cimg, innerW).h; break;
-                case DividerBlock: by += DividerHeight; break;
-                case TableBlock nt:
+                if (HasInlineTable(para))
                 {
-                    var tl = LayoutTable(nt, ox, blkY);
-                    foreach (var (r, c, rect) in tl.AnchorRects)
-                    {
-                        var res = CaretInBlockList(nt.Cells[r][c].Blocks, rect.X + CellPad,
-                            rect.Y + CellPad + CellContentOffsetY(nt.Cells[r][c], rect),
-                            Math.Max(10, rect.Width - 2 * CellPad), tp);
-                        if (res != null) return res;
-                    }
-                    by += tl.TotalHeight;
-                    break;
+                    var layout = BuildTextLayout(para, slot.ParaWidth);
+                    if (CaretInInlineTable(para, layout, slot.ParaX, slot.Y, tp) is { } itres) return itres;
+                }
+            }
+            else if (b is TableBlock nt && slot.Table is { } tl)
+            {
+                foreach (var (r, c, rect) in tl.AnchorRects)
+                {
+                    var res = CaretInBlockList(nt.Cells[r][c].Blocks, rect.X + CellPad,
+                        rect.Y + CellPad + CellContentOffsetY(nt.Cells[r][c], rect),
+                        Math.Max(10, rect.Width - 2 * CellPad), tp);
+                    if (res != null) return res;
                 }
             }
         }
