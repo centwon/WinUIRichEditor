@@ -73,9 +73,29 @@ public partial class RichEditor
         {
             _textChangedPending = false;
             TextChanged?.Invoke(this, EventArgs.Empty);
+            NotifyAutomation(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.TextPatternOnTextChanged);
         }
         if (SelectionMovedSinceLastSnapshot())
+        {
             SelectionChanged?.Invoke(this, EventArgs.Empty);
+            NotifyAutomation(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.TextPatternOnTextSelectionChanged);
+        }
+    }
+
+    // Tells a screen reader that the text or the selection moved.
+    //
+    // RichEditorAutomationPeer implements ITextProvider — Narrator/NVDA can ASK for the text, the caret
+    // and the selection — but nothing ever told them to ask again, so the peer only ever answered
+    // at the moments UIA happened to poll. Announcing a typed character or an arrow-key caret move is
+    // exactly what these two events are for, and they are the pair every editable-text control raises.
+    //
+    // ListenerExists is not an optimization detail here: without an assistive client attached, creating
+    // the peer at all is pure cost on a path that runs after every keystroke.
+    private void NotifyAutomation(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents which)
+    {
+        if (!Microsoft.UI.Xaml.Automation.Peers.AutomationPeer.ListenerExists(which)) return;
+        try { (_automationPeer ?? OnCreateAutomationPeer()).RaiseAutomationEvent(which); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
     // Fired from the Document DP callback when the whole document instance is replaced.

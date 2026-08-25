@@ -394,9 +394,12 @@ public class TableBlock : Block
     /// <paramref name="c1"/>] into a standalone table, preserving column widths, row heights, cell content,
     /// and any merge whose anchor sits inside the rectangle (clamped to the sub-grid). A merge cut by the
     /// rectangle boundary (its anchor lies outside) degrades to plain 1×1 cells so the result stays a
-    /// consistent grid. Coordinates are clamped to the grid.</summary>
+    /// consistent grid. Coordinates are clamped to the grid.
+    /// <para>An empty grid (no rows or no columns) extracts to an empty table: clamping into a grid with
+    /// no cells has no meaningful answer, and <c>Math.Clamp(x, 0, -1)</c> throws.</para></summary>
     public TableBlock Extract(int r0, int c0, int r1, int c1)
     {
+        if (Rows <= 0 || Columns <= 0) return new TableBlock(0, 0);
         EnsureSpanConsistency();
         r0 = System.Math.Clamp(r0, 0, Rows - 1); r1 = System.Math.Clamp(r1, 0, Rows - 1);
         c0 = System.Math.Clamp(c0, 0, Columns - 1); c1 = System.Math.Clamp(c1, 0, Columns - 1);

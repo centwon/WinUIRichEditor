@@ -47,7 +47,12 @@ public partial class RichEditor
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = XamlRoot,
         };
-        var result = await dlg.ShowAsync();
+        // ShowAsync throws when another ContentDialog is already open — and every caller invokes this as
+        // `_ = EditHyperlinkAsync()`, so the throw would die in an unobserved Task with nothing on screen
+        // and nothing in the fault channel. Same fire-and-forget hole the toolbar's file actions had.
+        ContentDialogResult result;
+        try { result = await dlg.ShowAsync(); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
         if (result == ContentDialogResult.Primary) SetHyperlink(box.Text);
         else if (result == ContentDialogResult.Secondary) SetHyperlink(null);
     }

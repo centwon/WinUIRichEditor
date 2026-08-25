@@ -715,14 +715,18 @@ public partial class RichEditor
     internal void ConvertInlineTableToBlock(Paragraph host, InlineTable it)
     {
         if (Document == null) return;
-        int idx = Document.Blocks.IndexOf(host);
+        // The host's own container, not Document.Blocks — an inline table inside a table cell used to
+        // hit IndexOf == -1 and the command did nothing (a cell holding a nested table is rule #4).
+        // Same fix, same reason, as ConvertInlineImageToBlock.
+        if (BlockContainerOf(host) is not { } container) return;
+        int idx = container.IndexOf(host);
         if (idx < 0) return;
 
         PushUndo(null);
         var tb = (TableBlock)it.Table.Clone();
         host.Inlines.Remove(it);
         if (host.Inlines.Count == 0) host.Inlines.Add(new Run { Text = "" });
-        Document.Blocks.Insert(idx + 1, tb);
+        container.Insert(idx + 1, tb);
         UpdateParents(Document);
 
         _selectedInline = null;

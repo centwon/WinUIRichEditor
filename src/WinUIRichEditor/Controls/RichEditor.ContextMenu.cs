@@ -92,6 +92,13 @@ public partial class RichEditor
 
         foreach (var (img, rect) in BlockImageRects())
             if (rect.Contains(ipt)) { hitBlockImage = img; break; }
+        // A block image inside a TABLE CELL is not in the block layout map — it has its own registry,
+        // filled from the rect it was actually DRAWN at. The pointer path (TryBeginImageInteraction)
+        // and the handle path (BlockImageHandleRects) both consult it; this one did not, so a cell
+        // image could be clicked, selected, dragged and resized, and still right-clicked as plain text.
+        if (hitBlockImage == null)
+            foreach (var (img, rect) in _cellImageRects)
+                if (rect.Contains(ipt)) { hitBlockImage = img; break; }
         if (hitBlockImage == null)
             foreach (var (img, v) in _inlineImageRects)
                 if (v.rect.Contains(ipt)) { hitInlineImage = (v.p, img); break; }
