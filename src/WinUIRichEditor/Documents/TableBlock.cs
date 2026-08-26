@@ -65,6 +65,25 @@ public class TableBlock : Block
 
     private TableCell NewCell() => new TableCell { Parent = this };
 
+    // A table with its size declared but NO grid materialised — for the callers that fill every slot
+    // themselves. `new TableBlock(0, 0)` runs InitializeCells over empty ranges, so this allocates the
+    // four (empty) lists and nothing else.
+    //
+    // Clone and Extract used to ask for a fully built rows×cols grid and then discard all of it: each
+    // slot arrives as a TableCell carrying a Paragraph carrying a Run, three objects per cell, none of
+    // which survives the next few lines. Measured (Release, same-session A/B) on a table-heavy document
+    // of 2000 cells: the discarded construction was 0.343ms and 1020KB of Clone's 1.486ms and 2606KB —
+    // ~40% of both. Clone runs at every undo checkpoint (UndoManager.PushState), so that was ~1MB of
+    // pure garbage per keystroke group. A prose document with one small table pays ~1%, which is why
+    // this never surfaced in the general perf probes.
+    private static TableBlock Skeleton(int rows, int cols)
+    {
+        var tb = new TableBlock(0, 0);
+        tb.Rows = rows;
+        tb.Columns = cols;
+        return tb;
+    }
+
     // ---- Span helpers ------------------------------------------------------
 
     private bool InBounds(int r, int c) => r >= 0 && r < Rows && c >= 0 && c < Columns;
@@ -406,23 +425,30 @@ public class TableBlock : Block
         if (r1 < r0) (r0, r1) = (r1, r0);
         if (c1 < c0) (c0, c1) = (c1, c0);
         int rows = r1 - r0 + 1, cols = c1 - c0 + 1;
-        var sub = new TableBlock(rows, cols);
+        var sub = Skeleton(rows, cols);
 
-        sub.ColumnWidths.Clear();
         for (int c = c0; c <= c1; c++) sub.ColumnWidths.Add(c < ColumnWidths.Count ? ColumnWidths[c] : 100);
-        sub.RowHeights.Clear();
         for (int r = r0; r <= r1; r++) sub.RowHeights.Add(r < RowHeights.Count ? RowHeights[r] : 0);
 
-        // Clone every cell (anchor or covered) into place as a plain 1×1 cell first.
+        // Clone every cell (anchor or covered) into place as a plain 1×1 cell first. Rows are BUILT here
+        // rather than assigned into a pre-made grid — see Skeleton for why there is no grid to assign into.
         for (int r = r0; r <= r1; r++)
+        {
+            var row = new List<TableCell>(cols);
+            var colSpans = new List<int>(cols);
+            var rowSpans = new List<int>(cols);
             for (int c = c0; c <= c1; c++)
             {
                 var cell = Cells[r][c].Clone() as TableCell ?? new TableCell();
                 cell.Parent = sub;
-                sub.Cells[r - r0][c - c0] = cell;
-                sub.ColSpans[r - r0][c - c0] = 1;
-                sub.RowSpans[r - r0][c - c0] = 1;
+                row.Add(cell);
+                colSpans.Add(1);
+                rowSpans.Add(1);
             }
+            sub.Cells.Add(row);
+            sub.ColSpans.Add(colSpans);
+            sub.RowSpans.Add(rowSpans);
+        }
 
         // Re-apply merges for anchors inside the rectangle, clamped to the sub-grid (SetSpan stamps the
         // covered cells). Covered cells whose anchor lies outside stay independent 1×1 cells.
@@ -440,20 +466,18 @@ public class TableBlock : Block
     public override TextElement Clone()
     {
         EnsureSpanConsistency();
-        var tb = new TableBlock(Rows, Columns);
+        // Skeleton, not `new TableBlock(Rows, Columns)`: every slot that constructor builds was cleared
+        // away on the next four lines. See Skeleton for the measurement.
+        var tb = Skeleton(Rows, Columns);
         tb.Indent = Indent;
         tb.MarginTop = MarginTop;
         tb.MarginBottom = MarginBottom;
-        tb.Cells.Clear();
-        tb.ColSpans.Clear();
-        tb.RowSpans.Clear();
-        tb.ColumnWidths.Clear();
         foreach (var w in ColumnWidths) tb.ColumnWidths.Add(w);
         foreach (var h in RowHeights) tb.RowHeights.Add(h);
 
         for (int r = 0; r < Rows; r++)
         {
-            var row = new List<TableCell>();
+            var row = new List<TableCell>(Columns);
             for (int c = 0; c < Columns; c++)
             {
                 var cClone = Cells[r][c].Clone() as TableCell ?? new TableCell();
