@@ -127,11 +127,92 @@ public class PerfProbeTests
             return $"300-paragraph doc: blocks={doc.Blocks.Count}, heavy layout cache holds {ed.LayoutCacheCount} entries";
         }));
 
+        lines.AddRange(CloneCostReport());
+
         string ws = $"process working set = {Environment.WorkingSet / 1024 / 1024}MB";
 
         lines.Add(ws);
         // Also to a file: the test runner's captured output is easy to lose in build noise.
         System.IO.File.WriteAllLines(
             Environment.GetEnvironmentVariable("RICHEDITOR_PERF_REPORT") ?? "perf-report.txt", lines);
+    }
+
+    // ---- FlowDocument.Clone: the undo-checkpoint path ---------------------------------------------
+    //
+    // Kept because this is where an audit claim was settled with a number instead of an argument, and
+    // because the shape is easy to reintroduce. TableBlock.Clone/Extract once asked the public
+    // constructor for a full rows×cols grid — a TableCell holding a Paragraph holding a Run, per slot —
+    // and discarded every bit of it. Clone runs at every undo checkpoint (UndoManager.PushState).
+    //
+    // BYTES ARE THE SIGNAL HERE, NOT MILLISECONDS. Allocation is deterministic and comparable across
+    // runs; the timings are not — when this was measured, the unchanged no-table control drifted 16%
+    // between two runs minutes apart, which is the same "the machine got slower, not the code" trap the
+    // roadmap records. Compare the KB column against a previous report; treat ms as texture only.
+    //
+    // Measured when the waste was removed (Release):
+    //   prose 2000, no table            610.4 ->  610.4 KB   (untouched: the control)
+    //   prose 2000 + one 4x4 table      630.8 ->  623.1 KB   (~1%: why general probes never saw it)
+    //   prose 200 + 20x (10x10)        2605.8 -> 1576.1 KB   (-40%)
+    //   one 50x20 table                1245.6 ->  739.0 KB   (-41%)
+    // Each drop matched the separately-priced discarded construction to within ~1%.
+    private static System.Collections.Generic.List<string> CloneCostReport()
+    {
+        var lines = new System.Collections.Generic.List<string>();
+
+        FlowDocument Prose(int paragraphs)
+        {
+            var doc = new FlowDocument();
+            var rnd = new Random(1234);
+            for (int i = 0; i < paragraphs; i++)
+            {
+                var p = new Paragraph();
+                var sb = new StringBuilder();
+                for (int w = 0; w < 10; w++) sb.Append("word").Append(rnd.Next(1000)).Append(' ');
+                p.Inlines.Add(new Run { Text = sb.ToString(), FontSize = 10 });
+                doc.Blocks.Add(p);
+            }
+            return doc;
+        }
+
+        TableBlock Table(int rows, int cols)
+        {
+            var tb = new TableBlock(rows, cols);
+            foreach (var row in tb.Cells)
+                foreach (var cell in row)
+                {
+                    cell.Blocks.Clear();
+                    cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "c", FontSize = 10 } } });
+                }
+            return tb;
+        }
+
+        void Row(string name, FlowDocument doc)
+        {
+            const int iterations = 20;
+            doc.Clone();                                   // warm: JIT + first touch
+            GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < iterations; i++) doc.Clone();
+            sw.Stop();
+            long bytes = (GC.GetAllocatedBytesForCurrentThread() - before) / iterations;
+            lines.Add($"clone  {name,-30} {sw.Elapsed.TotalMilliseconds / iterations,7:F3}ms  {bytes / 1024.0,9:F1}KB");
+        }
+
+        Row("prose 2000, no table", Prose(2000));
+
+        var withSmall = Prose(2000);
+        withSmall.Blocks.Add(Table(4, 4));
+        Row("prose 2000 + 4x4", withSmall);
+
+        var heavy = Prose(200);
+        for (int t = 0; t < 20; t++) heavy.Blocks.Add(Table(10, 10));
+        Row("prose 200 + 20x(10x10)", heavy);
+
+        var big = new FlowDocument();
+        big.Blocks.Add(Table(50, 20));
+        Row("one 50x20 table", big);
+
+        return lines;
     }
 }
