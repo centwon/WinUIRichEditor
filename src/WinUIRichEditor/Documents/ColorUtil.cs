@@ -13,8 +13,12 @@ namespace WinUIRichEditor.Documents;
 /// CSS-valid <c>#RRGGBB</c>/<c>rgba()</c> for HTML export.</summary>
 internal static class ColorUtil
 {
+    // Channels accept CSS's two spellings — 0..255 numbers and 0%..100% percentages — because both are
+    // legal in the same position and an unparsed colour silently becomes "no colour". Percentages are
+    // rare from browsers (they serialize computed styles as integers) and normal in hand-written CSS.
+    private const string Chan = @"([0-9]*\.?[0-9]+%?)";
     private static readonly Regex RgbRx = new(
-        @"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9]*\.?[0-9]+)\s*)?\)",
+        @"rgba?\(\s*" + Chan + @"\s*,\s*" + Chan + @"\s*,\s*" + Chan + @"\s*(?:,\s*" + Chan + @"\s*)?\)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Parses a CSS/hex color string, or returns <see langword="null"/> when empty/unrecognized.</summary>
@@ -30,8 +34,8 @@ internal static class ColorUtil
             byte g = ClampByte(rgb.Groups[2].Value);
             byte b = ClampByte(rgb.Groups[3].Value);
             byte a = 255;
-            if (rgb.Groups[4].Success && double.TryParse(rgb.Groups[4].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var af))
-                a = (byte)Math.Clamp((int)Math.Round(af * 255), 0, 255);
+            if (rgb.Groups[4].Success && TryNumber(rgb.Groups[4].Value, out var af, out bool alphaPct))
+                a = (byte)Math.Clamp((int)Math.Round(alphaPct ? af * 2.55 : af * 255), 0, 255);
             return Color.FromArgb(a, r, g, b);
         }
 
@@ -60,7 +64,20 @@ internal static class ColorUtil
 
     private static byte Hex(string s, int i) => Convert.ToByte(s.Substring(i, 2), 16);
     private static byte Dup(char c) => Convert.ToByte(new string(c, 2), 16);
-    private static byte ClampByte(string s) => (byte)Math.Clamp(int.Parse(s, CultureInfo.InvariantCulture), 0, 255);
+    // One rgb() channel: "200" is absolute, "78%" is a fraction of 255. TryParse (not Parse) because the
+    // regex allows a bare "." and a value far past int range through.
+    private static byte ClampByte(string s)
+        => TryNumber(s, out double v, out bool pct)
+            ? (byte)Math.Clamp((int)Math.Round(pct ? v * 2.55 : v), 0, 255)
+            : (byte)0;
+
+    // Parses a channel/alpha token, reporting whether it carried a '%'.
+    private static bool TryNumber(string s, out double value, out bool percent)
+    {
+        percent = s.EndsWith("%", StringComparison.Ordinal);
+        return double.TryParse(percent ? s.Substring(0, s.Length - 1) : s,
+            NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
 
     private static Color? Named(string name)
     {

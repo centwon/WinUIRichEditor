@@ -6,6 +6,62 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 외부 감사 보고서 검증 (2026-08-26) — 수정 13건
+
+외부 도구가 만든 31개 항목 감사 보고서(2026-08-17)를 **코드와 1:1 대조**했다.
+**확인 11 / 반증 4 / 기각 7 / 부분사실·미수정 3 / 성능 보류 6.** 여기에 검증 중 **보고서가 놓친 결함
+2건**을 더 찾아, 코드 수정은 13건이다. 항목별 판정과 기각 근거는 `Project_Roadmap.md`의
+"외부 감사 보고서 전수 검증" 절 — **원본 보고서는 리포에 두지 않는다**(주장의 3분의 2가 사실이 아닌 데다
+실린 "수정 코드" 중 하나는 적용하면 회귀라, 남겨 두는 것 자체가 위험하다).
+
+- **표 열 리사이즈가 좁은 열에서 앱을 죽였다** — 내부 경계 드래그의 `Math.Clamp(diff, minDiff, maxDiff)`가
+  두 열의 합이 `2×minW`(40px)보다 좁으면 **경계가 뒤집혀** `ArgumentException`을 던졌다. 20px 미만 열은
+  예외적인 상태가 아니다: HTML은 양수인 `<td width>`를 그대로, RTF는 16px 이상을 그대로, `.flow`/JSON은
+  파일에 적힌 값을 그대로 들여오고, **중첩 표의 자체 하한은 15px**다. `ClampColumnDelta`(순수 함수)로
+  분리하고, 하한을 만족시킬 수 없을 때는 "총합 유지 + 양쪽 음수 금지"로 물러난다.
+- **`TableBlock.Extract`가 빈 격자에서 던졌다** — `Math.Clamp(0, 0, Rows-1)` = `Clamp(0, 0, -1)`.
+- **RTF에서 `-`가 파라미터가 아닌 자리를 파라미터로 먹었다** — 제어어 파라미터는 `-` **다음에 숫자**여야
+  하는데 부호만 보고 소비해 `int.Parse("-")`가 던졌고, 토큰 루프에 복구가 없어 **그 뒤 문서 전체가
+  사라졌다**(`{\rtf1\ansi\fs-x hello}` → 빈 문서. Word는 `\fs` + 텍스트 `-x hello`로 읽는다).
+  ⚠ **자릿수 초과 파라미터는 그대로 던진다** — 그건 `TryParse`/`LoadRtf`의 손상 판정 신호다.
+- **RTF가 비트맵만 가진 이미지를 통째로 버렸다** — `Image` 세터는 설계상 `RawBytes`를 지우고, 그때
+  `DocumentSerializer`와 HTML writer는 **PNG로 인코딩해 살린다**. RTF의 이미지 분기 **4곳**만 그 폴백이
+  없어 `.rtf` 저장과 **모든 클립보드 복사**에서 그림이 없어졌다(Word·HWP가 선호하는 플레이버가 RTF다).
+- **Backspace/Delete가 서로게이트 페어를 반으로 잘랐다** — `"a😀"`에서 Backspace 한 번이
+  `[0061 D83D]`(짝 없는 상위 서로게이트)를 남겼다(실측). 좌우 화살표도 같은 이유로 **페어 가운데에
+  캐럿을 세울 수 있었다**. `StepOffset`(순수 함수)으로 넷을 통일 — 코드 포인트 단위.
+- **디바이스 재생성 때 이미지 캐시를 비우지 않았다** — `CreateResources`(디바이스 유실 후 복귀)는
+  device-bound인 레이아웃을 버리면서 **똑같이 device-bound인 `CanvasBitmap`은 그대로 뒀다**. 옛 디바이스의
+  비트맵을 새 세션에 그리면 `E_INVALIDARG`다. `NewDevice`일 때만 비운다(`DpiChanged`는 디바이스가 같다).
+- **표 셀 안 블록 이미지를 우클릭하면 텍스트 메뉴가 떴다** — 포인터 경로와 핸들 경로는 `_cellImageRects`를
+  보는데 우클릭 히트테스트만 안 봤다. 즉 **선택·드래그·리사이즈는 되는데 우클릭만 안 됐다**.
+- **셀 안에서 블록↔인라인 변환이 조용히 아무것도 안 했다** — `ConvertInlineImageToBlock`·
+  `ConvertInlineTableToBlock`·`ConvertImageBlockToInline`이 삽입 위치를 `Document.Blocks.IndexOf(...)`로
+  찾아 셀에서는 −1이었다. `MergeContainerOf`를 `Block`까지 받도록 넓혀 `BlockContainerOf`로 통일
+  (규칙 #3/#4: 컨테이너는 일반화된다). 셀 안 인라인 이미지의 폭 상한도 문서 폭이 아니라 **셀 폭**
+  (`ParagraphWrapWidth`)으로 — 240px 인라인 이미지가 100px 열을 넘쳐 나갔다.
+  ⚠ `ConvertTableBlockToInline`은 그대로 `Document.Blocks`를 쓴다: 메뉴 항목 자체가
+  `tb.Parent is FlowDocument`로 게이트돼 중첩 표에는 애초에 제시되지 않는다(의도된 설계).
+  > **셋 중 둘만 고쳤다가 사용자 실기에서 걸렸다.** inline→block만 고치고 block→inline을 빠뜨렸는데,
+  > 사용자가 셀 이미지에 "글자처럼 취급"을 눌러 보고 **아무 일도 안 일어나는 것**을 보고했다.
+  > 로드맵이 반복해서 적어 온 "같은 계열의 남은 한 쌍"에 그대로 걸린 것이다 —
+  > **한 방향을 고치면 반대 방향을 반드시 함께 볼 것.**
+- **CSS 퍼센트 색상을 못 읽었다** — `rgb(100%, 0%, 0%)`·`rgba(0,0,0,50%)`가 `null`이 됐다(= 색 없음).
+- **스크린 리더에 텍스트·선택 변경을 알리지 않았다** — `RichEditorAutomationPeer`는 `ITextProvider`를
+  구현해 놓고 `TextPatternOnTextChanged`/`TextPatternOnTextSelectionChanged`를 한 번도 올리지 않아,
+  내레이터/NVDA가 캐럿 이동을 추적할 수 없었다. `ListenerExists` 게이트 뒤에서 올린다.
+- **대화상자가 이미 열려 있으면 하이퍼링크·대체 텍스트 편집이 조용히 사라졌다** — `ShowAsync()`가 던지는데
+  호출부가 전부 `_ = EditHyperlinkAsync()`(fire-and-forget)라 관측되지 않은 Task로 소멸했다. 툴바 파일
+  액션이 이미 같은 구멍을 메꿨던 idiom(try/catch + `RichEditorDiagnostics.Report`)을 적용.
+  ⚠ **자동 검증 없음** — 두 메서드 모두 `XamlRoot == null`이면 `ShowAsync` 전에 반환해 헤드리스로는
+  도달하지 않고, 진짜 모달 대화상자를 띄우면 테스트가 멈춘다.
+  > 여기서도 **쌍의 반쪽이 빠져 있었다**: 보고서는 하이퍼링크만 지적했고, 열 줄 아래
+  > `SaveImageBytesAsync`는 원래 가드가 있는데 `EditImageAltTextAsync`만 없었다.
+
+빌드 0/0, 테스트 **324 → 343**, 퍼즈 2000시드 클린. 신규 19개는 전부 **반증 확인 완료**(각 수정을
+되돌리면 해당 테스트만 실패). ⚠️ **자동 검증이 없는 3건**(디바이스 유실 · 셀 이미지 우클릭 ·
+UIA 알림)은 각각 디바이스 유실 재현·포인터 주입·보조기술 클라이언트가 필요해 **실기 확인 대상**이다.
+
 ### Changed — 문서 순서 걷기 4개를 하나로 (리팩토링, 동작 변경 없음)
 
 문서의 문단 순서를 만드는 코드가 **넷**이었다 — `RichEditor.ParagraphsInBlocks`,

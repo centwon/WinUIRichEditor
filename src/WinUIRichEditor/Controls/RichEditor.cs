@@ -127,7 +127,22 @@ public partial class RichEditor : ContentControl
 
         _images.OnReady += () => _canvas.Invalidate();
         _scroll.SizeChanged += (_, _) => OnViewportResized();
-        _canvas.CreateResources += (_, _) => { ClearLayoutCache(); RelayoutToViewport(); };
+        _canvas.CreateResources += (_, args) =>
+        {
+            // A NEW device (lost device after a sleep/resume, a driver reset, a display change)
+            // invalidates every device-bound resource we hold. ClearLayoutCache drops the layouts and
+            // marker layouts for exactly that reason — and the decoded CanvasBitmaps in _images are
+            // just as device-bound: drawing one created on the lost device into the new device's
+            // session raises E_INVALIDARG ("objects used together must be created by the same
+            // CanvasDevice"). Two halves of one invariant; only one of them was being honoured.
+            // Prune with an empty live set is ImageCache's documented "clear" (the in-flight decodes,
+            // which were also issued against the old device, self-dispose on completion).
+            // FirstTime has nothing cached yet and DpiChanged keeps the device, so neither needs it.
+            if (args.Reason == Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesReason.NewDevice)
+                _images.Prune(new HashSet<object>());
+            ClearLayoutCache();
+            RelayoutToViewport();
+        };
 
         SetupInput();
     }

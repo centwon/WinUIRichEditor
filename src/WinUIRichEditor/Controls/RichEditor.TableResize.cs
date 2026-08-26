@@ -148,9 +148,7 @@ public partial class RichEditor
         else
         {
             // Internal edge: redistribute between the two adjacent columns, total fixed.
-            double minDiff = -(_initColW - minW);
-            double maxDiff = _initNextColW - minW;
-            diff = Math.Clamp(diff, minDiff, maxDiff);
+            diff = ClampColumnDelta(diff, _initColW, _initNextColW, minW);
             tb.ColumnWidths[_resizingColIndex] = _initColW + diff;
             tb.ColumnWidths[_resizingColIndex + 1] = _initNextColW - diff;
         }
@@ -159,6 +157,23 @@ public partial class RichEditor
         // move during a drag re-measure every table in the document.
         InvalidateTableMeasure(tb);
         RelayoutToViewport();
+    }
+
+    // How far an internal column boundary may move, given the two adjacent columns' start widths.
+    // Normally each side keeps `minW`, which also means a sub-minimum column is snapped UP to the floor.
+    //
+    // The floor is unsatisfiable when the two together are narrower than 2*minW, and then the naive
+    // bounds INVERT (min > max) — which Math.Clamp answers with ArgumentException, i.e. the drag crashed
+    // the app instead of degrading. Sub-minimum widths are not exotic: HTML import keeps any positive
+    // <td width>, RTF keeps anything >= 16px, `.flow`/JSON keep whatever the file says, and
+    // InsertTable's own floor for a NESTED table is 15. Fall back to "keep the total, keep both sides
+    // non-negative" there.
+    internal static double ClampColumnDelta(double diff, double initColW, double initNextColW, double minW)
+    {
+        double minDiff = -(initColW - minW);
+        double maxDiff = initNextColW - minW;
+        if (minDiff > maxDiff) { minDiff = -initColW; maxDiff = initNextColW; }
+        return Math.Clamp(diff, minDiff, maxDiff);
     }
 
     private bool EndColumnResize(PointerRoutedEventArgs e)

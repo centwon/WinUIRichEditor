@@ -314,7 +314,17 @@ internal sealed class RtfParser
         while (_i < _s.Length && char.IsLetter(_s[_i])) _i++;
         string word = _s.Substring(start, _i - start);
         int? param = null;
-        if (_i < _s.Length && (_s[_i] == '-' || char.IsDigit(_s[_i])))
+        // A control word's parameter is an optional '-' followed by DIGITS. A '-' with no digit after it
+        // is not a parameter at all — the control word simply ends there and the '-' is literal text.
+        // Consuming it as one produced the substring "-", and int.Parse("-") throws out of a token loop
+        // that has no per-word recovery: `{\rtf1\ansi\fs-x hello}` — brace-balanced, complete, and
+        // readable by Word as `\fs` followed by the text "-x hello" — came back as an EMPTY document
+        // here, so every character after the stray sign was lost.
+        // A parameter that IS digits but too long for an int still throws, deliberately: that is the
+        // damaged-input signal TryParse and LoadRtf are built on (see TryParse's UnclosedGroups note).
+        bool hasParam = _i < _s.Length &&
+            (char.IsDigit(_s[_i]) || (_s[_i] == '-' && _i + 1 < _s.Length && char.IsDigit(_s[_i + 1])));
+        if (hasParam)
         {
             int ns = _i;
             if (_s[_i] == '-') _i++;
@@ -1346,9 +1356,9 @@ internal sealed class RtfWriter
         {
             case Paragraph p: WriteParagraph(p, ordered); break;
             case TableBlock tb: WriteTable(tb); break;
-            case ImageBlock ib when ib.RawBytes != null:
+            case ImageBlock ib when PictBytes(ib.RawBytes, ib.MimeType, ib.Image) is { } pic:
                 _body.Append(@"\pard ");
-                WritePict(ib.RawBytes, ib.MimeType, ib.Width, ib.Height);
+                WritePict(pic.bytes, pic.mime, ib.Width, ib.Height);
                 _body.Append(@"\par").Append('\n');
                 break;
             case DividerBlock:
@@ -1539,7 +1549,8 @@ internal sealed class RtfWriter
         foreach (var inline in p.Inlines)
         {
             if (inline is Run r && !string.IsNullOrEmpty(r.Text)) { WriteRun(r, heading, headingSize); wrote = true; }
-            else if (inline is InlineImage img && img.RawBytes != null) { WritePict(img.RawBytes, img.MimeType, img.Width, img.Height); wrote = true; }
+            else if (inline is InlineImage img && PictBytes(img.RawBytes, img.MimeType, img.Image) is { } ipic)
+            { WritePict(ipic.bytes, ipic.mime, img.Width, img.Height); wrote = true; }
             else if (inline is InlineTable itbl)
             {
                 // An INLINE table ("treat as character") lives in the paragraph's text flow, but RTF has
@@ -1696,8 +1707,8 @@ internal sealed class RtfWriter
                         ReopenCell(cpara); // the rest of this paragraph belongs to THIS cell, not the inner table
                     }
                     else if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r, heading, headingSize);
-                    else if (inline is InlineImage cii && cii.RawBytes != null)
-                        WritePict(cii.RawBytes, cii.MimeType, cii.Width, cii.Height);
+                    else if (inline is InlineImage cii && PictBytes(cii.RawBytes, cii.MimeType, cii.Image) is { } cipic)
+                        WritePict(cipic.bytes, cipic.mime, cii.Width, cii.Height);
                 }
             }
             else if (blk is TableBlock nested)
@@ -1707,11 +1718,11 @@ internal sealed class RtfWriter
                 wroteNested = true;
                 ReopenCell();
             }
-            else if (blk is ImageBlock cib && cib.RawBytes != null)
+            else if (blk is ImageBlock cib && PictBytes(cib.RawBytes, cib.MimeType, cib.Image) is { } cbpic)
             {
                 if (!first) _body.Append(@"\par ");
                 first = false;
-                WritePict(cib.RawBytes, cib.MimeType, cib.Width, cib.Height);
+                WritePict(cbpic.bytes, cbpic.mime, cib.Width, cib.Height);
             }
             else if (blk is DividerBlock)
             {
@@ -1782,6 +1793,18 @@ internal sealed class RtfWriter
     }
 
     // {\*\shppict{\pict ...}} ??the modern wrapper our parser un-skips; bytes go out as hex, size in twips.
+    // The bytes to write for an image element. RawBytes are the source of truth; an image that was set
+    // as a decoded bitmap instead (the `Image` setter clears RawBytes by design) is PNG-encoded — the
+    // same fallback DocumentSerializer.PoolImage and HtmlDocumentFormatter.ImgTag have always applied.
+    // RTF was the one writer missing it, so such a picture vanished from .rtf saves AND from every
+    // clipboard copy, since the RTF flavour is the one Word and HWP prefer.
+    private static (byte[] bytes, string? mime)? PictBytes(byte[]? rawBytes, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp)
+    {
+        if (rawBytes != null) return (rawBytes, mime);
+        var encoded = ImageEncoder.ToPngBytes(bmp);
+        return encoded == null ? null : (encoded, "image/png");
+    }
+
     private void WritePict(byte[] bytes, string? mime, double w, double h)
     {
         _body.Append(@"{\*\shppict{\pict");

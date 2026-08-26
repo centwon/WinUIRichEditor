@@ -913,6 +913,28 @@ public partial class RichEditor
         CollapseSelectionToCaret();
     }
 
+    // One caret step through a paragraph's plain text.
+    //
+    // A UTF-16 surrogate pair — every character above U+FFFF: emoji, extended CJK, many historic
+    // scripts — occupies TWO chars but ONE caret position. Stepping by a single char parked the caret
+    // between the halves, and Backspace then deleted one half: "a😀" became [0061 D83D] (measured), an
+    // unpaired surrogate that renders as a replacement glyph and is carried into every format the
+    // document is then saved to. Inline objects need no special case — U+FFFC is not a surrogate.
+    //
+    // Deliberately code POINTS, not grapheme clusters: a combining mark or a ZWJ emoji sequence still
+    // deletes one code point at a time, which is what a caret-per-code-point model can express and
+    // never produces an invalid string.
+    internal static int StepOffset(string text, int offset, bool forward)
+    {
+        if (forward)
+        {
+            if (offset < 0 || offset >= text.Length) return offset;
+            return offset + (offset + 1 < text.Length && char.IsSurrogatePair(text[offset], text[offset + 1]) ? 2 : 1);
+        }
+        if (offset <= 0 || offset > text.Length) return offset;
+        return offset - (offset >= 2 && char.IsSurrogatePair(text[offset - 2], text[offset - 1]) ? 2 : 1);
+    }
+
     // PushUndo runs only once an edit is certain — a no-op keypress (Backspace at the document start,
     // Delete at the end) must not leave an empty undo step or fire a phantom TextChanged.
     private void Backspace()
@@ -922,8 +944,9 @@ public partial class RichEditor
         if (_caret.Offset > 0)
         {
             PushUndo("del");
-            DeleteLocalText(p, _caret.Offset - 1, 1);
-            _caret = new TextPointer(p, _caret.Offset - 1);
+            int to = StepOffset(BuildPlain(p), _caret.Offset, forward: false);
+            DeleteLocalText(p, to, _caret.Offset - to);
+            _caret = new TextPointer(p, to);
             CollapseSelectionToCaret();
             AfterEdit();
         }
@@ -941,7 +964,8 @@ public partial class RichEditor
         if (_caret.Offset < len)
         {
             PushUndo("del");
-            DeleteLocalText(p, _caret.Offset, 1);
+            int to = StepOffset(BuildPlain(p), _caret.Offset, forward: true);
+            DeleteLocalText(p, _caret.Offset, to - _caret.Offset);
             CollapseSelectionToCaret();
             AfterEdit();
         }
@@ -959,12 +983,15 @@ public partial class RichEditor
         if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "", Parent = p });
     }
 
-    // The block container that can merge/split paragraph siblings for p: Document.Blocks for a top-level
-    // paragraph, the cell's block list for a cell paragraph (rule #3: containers generalize). The container
-    // boundary is also the merge boundary — cell paragraphs never merge across cells. Look at the actual
-    // adjacent block in the container — NOT AllParagraphs, whose flattened order would pick a preceding
-    // table's last cell as "previous".
-    private static IList<Block>? MergeContainerOf(Paragraph p) => p.Parent switch
+    // The block list that OWNS a block: Document.Blocks at the top level, the cell's own list inside a
+    // table (rule #3: containers generalize). Takes a Block, not a Paragraph — the block↔inline image
+    // conversions need the same lookup for an ImageBlock, and hard-coding Document.Blocks there is what
+    // made those commands silently do nothing inside a cell.
+    //
+    // For the merge/split callers this container boundary is also the MERGE boundary — cell paragraphs
+    // never merge across cells. They must look at the actual adjacent block in this list, NOT at
+    // AllParagraphs, whose flattened order would offer a preceding table's last cell as "previous".
+    private static IList<Block>? BlockContainerOf(Block b) => b.Parent switch
     {
         FlowDocument d => d.Blocks,
         TableCell tc => tc.Blocks,
@@ -975,7 +1002,7 @@ public partial class RichEditor
     {
         if (Document == null) return;
         var cur = _caret.Paragraph!;
-        if (MergeContainerOf(cur) is not { } container) return;
+        if (BlockContainerOf(cur) is not { } container) return;
         int idx = container.IndexOf(cur);
         if (idx <= 0 || container[idx - 1] is not Paragraph prev) return; // prev block is an image/table — no merge
         PushUndo("del"); // after validation; keeps coalescing with the char-delete run
@@ -993,7 +1020,7 @@ public partial class RichEditor
     {
         if (Document == null) return;
         var cur = _caret.Paragraph!;
-        if (MergeContainerOf(cur) is not { } container) return;
+        if (BlockContainerOf(cur) is not { } container) return;
         int idx = container.IndexOf(cur);
         if (idx < 0 || idx + 1 >= container.Count || container[idx + 1] is not Paragraph next) return;
         PushUndo("del"); // after validation; keeps coalescing with the char-delete run
@@ -1012,7 +1039,7 @@ public partial class RichEditor
         if (Document == null || _caret.Paragraph == null) return;
         // A hard break needs a splittable container; validate BEFORE PushUndo so an impossible split
         // doesn't leave an empty undo step / a phantom modified flag (same rule as Backspace).
-        if (!soft && !HasSelection && MergeContainerOf(_caret.Paragraph) == null) return;
+        if (!soft && !HasSelection && BlockContainerOf(_caret.Paragraph) == null) return;
         PushUndo(null);
         if (HasSelection) DeleteSelection();
         // Enter also completes the token before the caret (Word/HWP auto-link on line commit).
@@ -1302,7 +1329,8 @@ public partial class RichEditor
             UpdateDesiredX(); ApplyArrowSelection(shift); return;
         }
 
-        if (_caret.Offset > 0) { _caret = new TextPointer(p, _caret.Offset - 1); UpdateDesiredX(); ApplyArrowSelection(shift); return; }
+        // StepOffset, not -1: a surrogate pair is one caret position (see StepOffset).
+        if (_caret.Offset > 0) { _caret = new TextPointer(p, StepOffset(BuildPlain(p), _caret.Offset, forward: false)); UpdateDesiredX(); ApplyArrowSelection(shift); return; }
 
         // Paragraph start. Inside an inline-table cell: prev cell, or exit just before the table.
         if (FindInlineTableHost(p) is { } ctx)
@@ -1337,7 +1365,7 @@ public partial class RichEditor
             UpdateDesiredX(); ApplyArrowSelection(shift); return;
         }
 
-        if (_caret.Offset < len) { _caret = new TextPointer(p, _caret.Offset + 1); UpdateDesiredX(); ApplyArrowSelection(shift); return; }
+        if (_caret.Offset < len) { _caret = new TextPointer(p, StepOffset(BuildPlain(p), _caret.Offset, forward: true)); UpdateDesiredX(); ApplyArrowSelection(shift); return; }
 
         // Paragraph end. Inside an inline-table cell: next cell, or exit just after the table.
         if (FindInlineTableHost(p) is { } ctx)
@@ -1378,10 +1406,10 @@ public partial class RichEditor
 
     // The block immediately before/after p among its SIBLINGS — Document.Blocks for a top-level
     // paragraph, the cell's block list for a cell paragraph (the same container generalization as
-    // MergeContainerOf). Works at any nesting depth, unlike AdjacentTopLevelBlock.
+    // BlockContainerOf). Works at any nesting depth, unlike AdjacentTopLevelBlock.
     private static Block? AdjacentSiblingBlock(Paragraph p, bool forward)
     {
-        if (MergeContainerOf(p) is not { } container) return null;
+        if (BlockContainerOf(p) is not { } container) return null;
         int bi = container.IndexOf(p);
         if (bi < 0) return null;
         int at = forward ? bi + 1 : bi - 1;

@@ -166,7 +166,13 @@ public partial class RichEditor
             DefaultButton = Microsoft.UI.Xaml.Controls.ContentDialogButton.Primary,
             XamlRoot = XamlRoot,
         };
-        if (await dlg.ShowAsync() != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary) return;
+        // Guarded for the same reason as EditHyperlinkAsync's dialog: this is called as
+        // `_ = EditImageAltTextAsync(...)`, and ShowAsync throws if a dialog is already open.
+        // (SaveImageBytesAsync, ten lines below, has always had this guard — the pair was half-done.)
+        Microsoft.UI.Xaml.Controls.ContentDialogResult result;
+        try { result = await dlg.ShowAsync(); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
+        if (result != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary) return;
         string? alt = string.IsNullOrWhiteSpace(box.Text) ? null : box.Text.Trim();
         PushUndo(null);
         if (block != null) block.AltText = alt;
@@ -250,30 +256,41 @@ public partial class RichEditor
 
     // ---- block <-> inline image toggle (HWP "treat as character") ---------
 
-    // Converts a top-level block image into an inline image embedded in an adjacent paragraph (capped to
-    // the modest inline size so it flows within the line). Mirrors ConvertTableBlockToInline.
+    // Converts a block image into an inline image embedded in an adjacent paragraph OF THE SAME
+    // CONTAINER (capped to the modest inline size so it flows within the line).
+    //
+    // "Adjacent" and "same container" are the whole point: resolving the index against Document.Blocks
+    // returned -1 for an image inside a table cell, so "글자처럼 취급" on a cell image did nothing at all
+    // — and the image menu offers that toggle for cell images, which are selectable and resizable.
+    // (ConvertTableBlockToInline keeps hard-coding Document.Blocks on purpose: its menu entry is gated
+    // on `tb.Parent is FlowDocument`, so a nested table is never offered the toggle in the first place.)
     internal void ConvertImageBlockToInline(ImageBlock src)
     {
         if (Document == null || src.RawBytes is not { } bytes) return;
-        int idx = Document.Blocks.IndexOf(src);
+        if (BlockContainerOf(src) is not { } container) return;
+        int idx = container.IndexOf(src);
         if (idx < 0) return;
 
         Paragraph? anchor = null;
         bool atEnd = true;
-        if (idx > 0 && Document.Blocks[idx - 1] is Paragraph prev) anchor = prev;
+        if (idx > 0 && container[idx - 1] is Paragraph prev) anchor = prev;
         else
-            for (int i = idx + 1; i < Document.Blocks.Count && anchor == null; i++)
-                if (Document.Blocks[i] is Paragraph next) { anchor = next; atEnd = false; }
+            for (int i = idx + 1; i < container.Count && anchor == null; i++)
+                if (container[i] is Paragraph next) { anchor = next; atEnd = false; }
         if (anchor == null) return;
 
         PushUndo(null);
         double w = src.Width, h = src.Height;
-        double maxW = Math.Max(40, Math.Min(_layoutWidth - 40, 240));
+        // Inside a cell the cap must be the CELL's content width — the document width would let a 240px
+        // inline image spill out of a narrow cell box. ParagraphWrapWidth is the single source both the
+        // draw and the caret walks already use for exactly this question.
+        double avail = FindCell(anchor) != null ? ParagraphWrapWidth(anchor) : _layoutWidth - 40;
+        double maxW = Math.Max(40, Math.Min(avail, 240));
         if (w > maxW) { h *= maxW / w; w = maxW; }
         var inl = new InlineImage { Width = w, Height = h };
         inl.SetImageData(bytes, src.MimeType ?? ImageMime.Detect(bytes));
 
-        Document.Blocks.Remove(src);
+        container.Remove(src);
         if (atEnd) anchor.Inlines.Add(inl); else anchor.Inlines.Insert(0, inl);
         if (ReferenceEquals(_selectedBlock, src)) _selectedBlock = null;
         UpdateParents(Document);
@@ -290,7 +307,12 @@ public partial class RichEditor
     internal void ConvertInlineImageToBlock(Paragraph host, InlineImage src)
     {
         if (Document == null || src.RawBytes is not { } bytes) return;
-        int idx = Document.Blocks.IndexOf(host);
+        // The host paragraph's own container, not Document.Blocks: inside a table cell IndexOf returned
+        // -1 and the command silently did nothing, even though the right-click that offers it fires on
+        // cell inline images too (DrawInlineObjects registers them from the shared paragraph walk) and
+        // cells are legitimate block containers (rule #3/#4).
+        if (BlockContainerOf(host) is not { } container) return;
+        int idx = container.IndexOf(host);
         if (idx < 0) return;
 
         PushUndo(null);
@@ -302,7 +324,7 @@ public partial class RichEditor
 
         host.Inlines.Remove(src);
         if (host.Inlines.Count == 0) host.Inlines.Add(new Run { Text = "" });
-        Document.Blocks.Insert(idx + 1, blk);
+        container.Insert(idx + 1, blk);
         UpdateParents(Document);
 
         _selectedInline = null;

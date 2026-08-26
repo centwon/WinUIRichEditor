@@ -713,7 +713,7 @@ public partial class RichEditor
         // The plain-text path stays for a caret whose parent chain isn't wired to either container.
         // NOT InsertText there: every caller already pushed the undo snapshot (and deleted the
         // selection), so InsertText's own PushUndo(null) would split one paste into two undo steps.
-        if (MergeContainerOf(p) is not { } container || p.Parent is not { } owner)
+        if (BlockContainerOf(p) is not { } container || p.Parent is not { } owner)
         {
             InsertPlainNoUndo(PlainTextOf(pd));
             return;
