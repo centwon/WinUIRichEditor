@@ -135,33 +135,18 @@ internal class UndoManager
         return (int)System.Math.Min(total, int.MaxValue);
     }
 
-    // Document-order paragraph walk shared by GetGlobalIndex / GetPointerFromGlobalIndex — fully
-    // recursive through table cells (logical/anchor cells), nested tables and inline tables, mirroring
-    // the editor's caret paragraph order. Both directions use the SAME walk so a caret parked in any
-    // nested structure restores to the matching paragraph after undo/redo (the old walk only saw each
-    // top-level cell's first paragraph, so nested carets snapped to the document start). Non-paragraph
-    // blocks and each table itself still take one index, keeping positions stable across snapshots.
+    // Document-order paragraph walk shared by GetGlobalIndex / GetPointerFromGlobalIndex. The order and
+    // the numbering are BlockWalk's — non-paragraph blocks and each table itself take one index, which is
+    // what keeps positions stable across snapshots. Both directions use the SAME walk so a caret parked in
+    // any nested structure restores to the matching paragraph after undo/redo (an older walk only saw each
+    // top-level cell's first paragraph, so nested carets snapped to the document start).
     // The visitor returns true to stop the walk.
     private static bool WalkParagraphs(IEnumerable<Block> blocks, ref int index, Func<Paragraph, int, bool> visit)
     {
-        foreach (var block in blocks)
+        foreach (var block in BlockWalk.DocumentOrder(blocks))
         {
-            if (block is Paragraph p)
-            {
-                if (visit(p, index)) return true;
-                index++;
-                foreach (var inl in p.Inlines)
-                    if (inl is InlineTable it)
-                        foreach (var (_, _, cell) in it.Table.LogicalCells())
-                            if (WalkParagraphs(cell.Blocks, ref index, visit)) return true;
-            }
-            else if (block is TableBlock tb)
-            {
-                index++;
-                foreach (var (_, _, cell) in tb.LogicalCells())
-                    if (WalkParagraphs(cell.Blocks, ref index, visit)) return true;
-            }
-            else index++;
+            if (block is Paragraph p && visit(p, index)) return true;
+            index++;
         }
         return false;
     }

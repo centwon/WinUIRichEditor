@@ -392,29 +392,10 @@ public class TextRange
     // exactly one level deep (a TOP-LEVEL table's cells), so a paragraph in a nested or inline table
     // read as "not in this document": TopLevelBlockOf returned null, which made Delete() skip removing
     // the top-level blocks a selection spanned, and RemoveParagraphFromDocument silently did nothing.
-    // Recurses through logical (anchor) cells, mirroring CollectParagraphs so the two agree on order
-    // and membership.
-    private static bool BlockHolds(Block b, Paragraph p)
-    {
-        if (ReferenceEquals(b, p)) return true;
-        switch (b)
-        {
-            case TableBlock tb:
-                foreach (var (_, _, cell) in tb.LogicalCells())
-                    foreach (var cb in cell.Blocks)
-                        if (BlockHolds(cb, p)) return true;
-                return false;
-            case Paragraph para:
-                foreach (var inl in para.Inlines)
-                    if (inl is InlineTable it)
-                        foreach (var (_, _, cell) in it.Table.LogicalCells())
-                            foreach (var cb in cell.Blocks)
-                                if (BlockHolds(cb, p)) return true;
-                return false;
-            default:
-                return false;
-        }
-    }
+    // Membership must agree with CollectParagraphs on order and on which cells count, so it comes from
+    // the same walk. (This was a third copy of the recursion, and the roadmap's note that "these workers
+    // may have more copies" was written after one of them was found a level short.)
+    private static bool BlockHolds(Block b, Paragraph p) => BlockWalk.Holds(b, p);
 
     private FlowDocument? GetFlowDocument(TextElement element)
     {
@@ -501,24 +482,10 @@ public class TextRange
         return result;
     }
 
-    // Mirror of the control's ParagraphsInBlocks: fully recursive through table cells (nested tables) and
-    // through inline tables hanging off a paragraph's inlines, using logical (anchor) cells only so the
-    // index-based range loops agree with the control's order on merged tables.
+    // The control's paragraph order, which the index-based range loops must agree with on merged tables.
+    // It is BlockWalk's now — this was a hand-kept mirror of RichEditor.ParagraphsInBlocks.
     private static void CollectParagraphs(IEnumerable<Block> blocks, List<Paragraph> result)
     {
-        foreach (var block in blocks)
-        {
-            if (block is Paragraph p)
-            {
-                result.Add(p);
-                foreach (var inl in p.Inlines)
-                    if (inl is InlineTable it)
-                        foreach (var (_, _, cell) in it.Table.LogicalCells())
-                            CollectParagraphs(cell.Blocks, result);
-            }
-            else if (block is TableBlock tb)
-                foreach (var (_, _, cell) in tb.LogicalCells())
-                    CollectParagraphs(cell.Blocks, result);
-        }
+        foreach (var p in BlockWalk.Paragraphs(blocks)) result.Add(p);
     }
 }

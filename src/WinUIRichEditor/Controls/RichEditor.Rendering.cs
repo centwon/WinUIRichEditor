@@ -75,6 +75,48 @@ public partial class RichEditor
         DrawTableDrawRubberBand(ds); // "draw table" overlay, on top of content
     }
 
+    // Everything painted for ONE paragraph, in the order it has to go down. Shared by the top-level walk
+    // (DrawContentWalk) and the cell walk (DrawCellBlockList).
+    //
+    // These were two copies, and the cell copy was missing something the top-level one drew THREE times:
+    // the list markers, then the paragraph's own fill, then the quote bar. Every one of them was found by
+    // a human looking at the demo — no model or formatter test can see this class of defect, because
+    // nothing about the model is wrong and the page still renders. The roadmap's standing contract
+    // ("문단 레벨 속성을 새로 살리면 최상위 루프와 DrawCellBlockList 둘 다 볼 것") was the code asking a
+    // person to hold an invariant it can hold itself. One function now holds it.
+    //
+    // `leftLimit` is the left edge the quote bar may not cross: 0 at the top level, where the bar sits out
+    // in the page margin, and the cell's content-box left inside a cell, which has no margin to sit in —
+    // unclamped it would straddle the cell border.
+    private void DrawParagraphContent(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout,
+        double px, double y, double pw, double h, double leftLimit, int orderedStart)
+    {
+        // Fill and quote bar go down BEFORE the run backgrounds and the text, or they paint over them.
+        if (p.Background is { } bg)
+            ds.FillRectangle(new Rect(px, y, pw, h), bg);
+        if (p.IsQuote)
+            ds.FillRectangle(new Rect(Math.Max(leftLimit, px - 10), y, 3, h), QuoteBarColor);
+
+        DrawRunBackgrounds(ds, p, layout, px, y);
+        DrawFindHighlights(ds, p, layout, px, y);
+        DrawSelectionHighlight(ds, p, layout, px, y);
+
+        if (p.ListType != ListKind.None)
+        {
+            int orderedIndex = orderedStart; // numbering consumed before this paragraph
+            // BuildPlain only here: it is the marker walk's only consumer, and hoisting it to the caller
+            // cost a StringBuilder + string per VISIBLE paragraph per frame — on every caret blink and
+            // every pointer move of a drag-selection, for documents with no lists at all.
+            DrawListMarkers(ds, p, layout, BuildPlain(p), px, y, ref orderedIndex);
+        }
+
+        ds.DrawTextLayout(layout, (float)px, (float)y, EffectiveTextColor);
+        DrawInlineObjects(ds, p, layout, px, y);
+        DrawCompositionUnderline(ds, p, layout, px, y);
+        DrawCaret(ds, p, layout, px, y);
+        DrawDropPreview(ds, p, layout, px, y);
+    }
+
     // Hard-line count of a list paragraph (its marker count), for advancing the ordered-list numbering
     // past paragraphs the clip culled without building their text.
     private static int HardLineCount(Paragraph p)
@@ -107,31 +149,9 @@ public partial class RichEditor
             {
                 double px = ParaLeft(paragraph);
                 double pWidth = Math.Max(10, width - 20 - px - paragraph.MarginRight);
-
-                string fullText = BuildPlain(paragraph);
                 var layout = BuildTextLayout(paragraph, pWidth);
-
-                if (paragraph.Background is { } bg)
-                    ds.FillRectangle(new Rect(px, y, pWidth, h), bg);
-
-                if (paragraph.IsQuote)
-                    ds.FillRectangle(new Rect(Math.Max(0, px - 10), y, 3, h), QuoteBarColor);
-
-                DrawRunBackgrounds(ds, paragraph, layout, px, y);
-                DrawFindHighlights(ds, paragraph, layout, px, y);
-                DrawSelectionHighlight(ds, paragraph, layout, px, y);
-
-                if (paragraph.ListType != ListKind.None)
-                {
-                    int orderedIndex = orderedStart; // numbering consumed before this block (from the map)
-                    DrawListMarkers(ds, paragraph, layout, fullText, px, y, ref orderedIndex);
-                }
-
-                ds.DrawTextLayout(layout, (float)px, (float)y, EffectiveTextColor);
-                DrawInlineObjects(ds, paragraph, layout, px, y);
-                DrawCompositionUnderline(ds, paragraph, layout, px, y);
-                DrawCaret(ds, paragraph, layout, px, y);
-                DrawDropPreview(ds, paragraph, layout, px, y);
+                // leftLimit 0: at the top level the quote bar sits 10px out in the page margin.
+                DrawParagraphContent(ds, paragraph, layout, px, y, pWidth, h, leftLimit: 0, orderedStart);
             }
             else if (block is ImageBlock img)
             {
@@ -154,7 +174,7 @@ public partial class RichEditor
             {
                 double startX = listIndent + tb.Indent;
                 var tl = LayoutTable(tb, startX, y);
-                DrawTableBlock(ds, tb, startX, y);
+                DrawTableBlock(ds, tb, startX, y, tl);
                 RecordTopLevelTableRect(tb, y, tl);
                 DrawTableSelectionChrome(ds, tb, startX, y, tl);
             }
