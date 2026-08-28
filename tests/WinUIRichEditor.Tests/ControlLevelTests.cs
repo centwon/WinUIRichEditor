@@ -39,8 +39,11 @@ public class ControlLevelTests
 
     // The contract TryParse exists for. It was verified upstream and, until this file, had no equivalent
     // here — the roadmap said so explicitly, and the reason given was that control tests were not possible.
+    // All three fixtures are TRUNCATION, which is the damage this contract is about. A fourth used to
+    // sit here — `\fs99999999999999999999`, an overflowing parameter that aborted the parse — but an
+    // over-wide parameter is a malformed token, not a damaged document, and the parser now reads past
+    // it (see ExternalAuditTests.RtfWithAnOverflowingParameter_IsNotDamage for the converged contract).
     [Theory]
-    [InlineData(@"{\rtf1\ansi\fs99999999999999999999 x\par}")]  // aborts the parse
     [InlineData(@"{\rtf1\ansi {\*\broken")]                      // truncated mid-group
     [InlineData(@"{\rtf1\ansi\trowd\cellx1000 a\cell")]          // truncated mid-table
     [InlineData(@"{\rtf1\ansi hello there")]                     // truncated after readable text

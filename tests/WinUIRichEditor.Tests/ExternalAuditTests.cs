@@ -99,14 +99,33 @@ public class ExternalAuditTests
         Assert.Contains("hello", PlainText(doc));
     }
 
-    // The control: a parameter that IS digits but overflows an int stays the damaged-input signal that
-    // TryParse and LoadRtf are built on. Narrowing the tokenizer must not narrow that.
+    // An over-wide parameter is a malformed TOKEN, not a damaged DOCUMENT.
+    //
+    // This assertion used to be the opposite — overflow threw, and that throw was the damage signal
+    // TryParse/LoadRtf were built on. Converged with the upstream peer, whose reasoning wins: the spec
+    // caps parameters at 32 bits so nothing valid is lost, and refusing to OPEN a complete, readable,
+    // brace-balanced file over one out-of-range number is a false positive. It also contradicted the
+    // fix directly above, which exists precisely so one bad token cannot cost the whole document.
+    // Real damage is truncation, and UnclosedGroups still catches that (see the theory below).
     [Fact]
-    public void RtfWithAnOverflowingParameter_IsStillDamaged()
+    public void RtfWithAnOverflowingParameter_IsNotDamage()
     {
-        Assert.False(RtfDocumentFormatter.TryParse(
-            @"{\rtf1\ansi\fs99999999999999999999 x\par}", out _, out string? error));
-        Assert.NotNull(error);
+        Assert.True(RtfDocumentFormatter.TryParse(
+            @"{\rtf1\ansi\fs99999999999999999999 x\par}", out var doc, out string? error));
+        Assert.Null(error);
+        Assert.Contains("x", PlainText(doc));
+    }
+
+    // ...and the signal that still means damage. Truncation is the failure TryParse was created for:
+    // it does not throw, so a half-copied file used to look like a clean parse of a shorter document.
+    [Theory]
+    [InlineData(@"{\rtf1\ansi {\*\broken")]
+    [InlineData(@"{\rtf1\ansi\trowd\cellx1000 a\cell")]
+    [InlineData(@"{\rtf1\ansi hello there")]
+    public void TruncatedRtf_IsStillDamage(string truncated)
+    {
+        Assert.False(RtfDocumentFormatter.TryParse(truncated, out _, out string? error));
+        Assert.Contains("truncated", error!);
     }
 
     // ---- colours: CSS percentage channels --------------------------------------------------------

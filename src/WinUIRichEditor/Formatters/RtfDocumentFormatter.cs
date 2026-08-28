@@ -314,14 +314,22 @@ internal sealed class RtfParser
         while (_i < _s.Length && char.IsLetter(_s[_i])) _i++;
         string word = _s.Substring(start, _i - start);
         int? param = null;
-        // A control word's parameter is an optional '-' followed by DIGITS. A '-' with no digit after it
-        // is not a parameter at all — the control word simply ends there and the '-' is literal text.
-        // Consuming it as one produced the substring "-", and int.Parse("-") throws out of a token loop
-        // that has no per-word recovery: `{\rtf1\ansi\fs-x hello}` — brace-balanced, complete, and
-        // readable by Word as `\fs` followed by the text "-x hello" — came back as an EMPTY document
-        // here, so every character after the stray sign was lost.
-        // A parameter that IS digits but too long for an int still throws, deliberately: that is the
-        // damaged-input signal TryParse and LoadRtf are built on (see TryParse's UnclosedGroups note).
+        // A control word's parameter is an optional '-' followed by DIGITS, and NEITHER half of that may
+        // abort the parse. The token loop has no per-word recovery, so anything thrown here costs every
+        // character after it.
+        //
+        // 1. A '-' with no digit after it is not a parameter at all — the control word ends there and the
+        //    '-' is literal text. Consuming it produced the substring "-", and int.Parse("-") threw:
+        //    `{\rtf1\ansi\fs-x hello}` — brace-balanced, complete, and read by Word as `\fs` followed by
+        //    the text "-x hello" — came back as an EMPTY document. (Upstream still consumes the '-' here,
+        //    so the character silently disappears from its output: a backport candidate.)
+        // 2. Digits too long for an int are treated as ABSENT, which every keyword already handles. The
+        //    spec caps parameters at 32 bits, so nothing valid is lost — `\cellx99999999999` is simply a
+        //    malformed token, and a malformed TOKEN is not a damaged DOCUMENT. This repo used to throw
+        //    here on purpose, to give TryParse/LoadRtf a damage signal, and that was inconsistent with
+        //    (1): it refused to open a complete, readable file over one out-of-range number. Real damage
+        //    is truncation, and UnclosedGroups still catches that. Converged with the upstream peer,
+        //    whose reasoning this is.
         bool hasParam = _i < _s.Length &&
             (char.IsDigit(_s[_i]) || (_s[_i] == '-' && _i + 1 < _s.Length && char.IsDigit(_s[_i + 1])));
         if (hasParam)
@@ -329,7 +337,8 @@ internal sealed class RtfParser
             int ns = _i;
             if (_s[_i] == '-') _i++;
             while (_i < _s.Length && char.IsDigit(_s[_i])) _i++;
-            param = int.Parse(_s.Substring(ns, _i - ns), CultureInfo.InvariantCulture);
+            if (int.TryParse(_s.AsSpan(ns, _i - ns), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+                param = parsed;
         }
         if (_i < _s.Length && _s[_i] == ' ') _i++;
 
