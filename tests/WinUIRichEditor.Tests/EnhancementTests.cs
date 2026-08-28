@@ -1251,23 +1251,34 @@ public class EnhancementTests
     // blank over the original. TryParse separates the two. (LoadRtf's half of this is control-level and
     // out of reach here — see DocumentFuzzTests on why the model layer is what tests can hold.)
 
-    // A control word's parameter is int.Parse'd; a digit run too long for int overflows mid-parse.
+    // Truncation is THE damage this method exists for: it does not throw, so a half-copied file read as
+    // a clean parse of a shorter document and the next save wrote that shorter version over the original.
+    //
+    // The fixture used to be `\fs99999999999999999999` — an overflowing parameter, which threw. That is
+    // no longer damage (see ExternalAuditTests.RtfWithAnOverflowingParameter_IsNotDamage): a malformed
+    // token is not a damaged document, and the parser now salvages the rest. Truncation is the signal.
     [Fact]
     public void RtfTryParse_ReportsDamagedInput()
     {
         Assert.False(RtfDocumentFormatter.TryParse(
-            @"{\rtf1\ansi\fs99999999999999999999 x\par}", out var doc, out string? error));
+            @"{\rtf1\ansi hello {\*\broken", out var doc, out string? error));
         Assert.NotNull(error);
         Assert.Empty(doc.Blocks); // failure yields an empty document, never a half-read one
     }
 
-    // The old contract: Parse() still swallows. Paste relies on it (it falls through to HTML/plain on an
-    // empty result), so changing it would reroute a working path.
+    // Parse() stays lenient — that is the whole reason the two entry points exist. It used to express
+    // that as "damaged input yields an empty document, and paste falls through to HTML/plain on empty";
+    // now it expresses it the better way, by keeping what is readable. Paste's fallthrough is unaffected:
+    // input that is not RTF at all still produces nothing to paste.
     [Fact]
-    public void RtfParse_StillReturnsEmptyOnDamagedInput()
+    public void RtfParse_SalvagesWhatIsReadable()
     {
         var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
-        Assert.Empty(doc.Blocks);
+        Assert.Contains("x", PlainText(doc), System.StringComparison.Ordinal);
+
+        // Truncated input keeps its readable prefix rather than throwing it away.
+        Assert.Contains("hello", PlainText(RtfDocumentFormatter.Parse(@"{\rtf1\ansi hello {\*\broken")),
+            System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1319,9 +1330,18 @@ public class EnhancementTests
 
     // ---- swallowed-fault diagnostics --------------------------------------
     //
-    // These live in THIS class deliberately: RichEditorDiagnostics is process-global state, xUnit runs
-    // test CLASSES in parallel, and the damaged-RTF parses above are the other things that raise faults.
-    // Keeping them in one class makes them sequential; the per-site filtering below covers the rest.
+    // These live in THIS class deliberately: RichEditorDiagnostics is process-global state and xUnit runs
+    // test CLASSES in parallel. Keeping the fault raisers in one class makes them sequential; the
+    // per-site filtering below covers the rest.
+    //
+    // The fault source is a bad hex colour, not damaged RTF, and that change is worth recording: after
+    // the overflow contract converged with the upstream peer, NOTHING malformed makes the RTF parser
+    // throw any more — every input probed (overflow, bad hex escape, truncation, out-of-range colour /
+    // cellx / font size, oversized \pict) now parses to a readable document. That is the point of the
+    // convergence, and it left these tests without a fault to observe. ColorUtil.ParseHex is a better
+    // source anyway: it is a real swallow site, it is deterministic, and it does not couple the
+    // diagnostics contract to the RTF damage contract — which is exactly the coupling that broke here.
+    private const string BadColour = "#ZZZZZZ";
 
     private static List<RichEditorFaultEventArgs> CaptureFaults(System.Action body)
     {
@@ -1337,8 +1357,8 @@ public class EnhancementTests
     [Fact]
     public void Diagnostics_ReportsASwallowedFault()
     {
-        var faults = CaptureFaults(() => RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}"));
-        var f = Assert.Single(faults, e => e.File == "RtfDocumentFormatter.cs");
+        var faults = CaptureFaults(() => ColorUtil.Parse(BadColour));
+        var f = Assert.Single(faults, e => e.File == "ColorUtil.cs");
         Assert.NotNull(f.Exception);
         Assert.True(f.Line > 0);
         Assert.NotEmpty(f.Member);
@@ -1347,30 +1367,29 @@ public class EnhancementTests
 
     // Several wired sites sit in the render / caret-metrics paths, where a persistent fault would fire
     // many times a second. Without this the hook would bury everything else and be unusable there.
+    // Dedupe is per SITE, not per exception instance — three different bad colours still report once.
     [Fact]
     public void Diagnostics_ReportsEachDistinctFaultOnce()
     {
-        const string damaged = @"{\rtf1\ansi\fs99999999999999999999 x\par}";
         var faults = CaptureFaults(() =>
         {
-            RtfDocumentFormatter.Parse(damaged);
-            RtfDocumentFormatter.Parse(damaged);
-            RtfDocumentFormatter.Parse(damaged);
+            ColorUtil.Parse(BadColour);
+            ColorUtil.Parse("#YYYYYY");
+            ColorUtil.Parse("#XXXXXX");
         });
-        Assert.Single(faults, e => e.File == "RtfDocumentFormatter.cs");
+        Assert.Single(faults, e => e.File == "ColorUtil.cs");
     }
 
     [Fact]
     public void Diagnostics_ResetReArmsReporting()
     {
-        const string damaged = @"{\rtf1\ansi\fs99999999999999999999 x\par}";
         var faults = CaptureFaults(() =>
         {
-            RtfDocumentFormatter.Parse(damaged);
+            ColorUtil.Parse(BadColour);
             RichEditorDiagnostics.Reset();
-            RtfDocumentFormatter.Parse(damaged);
+            ColorUtil.Parse(BadColour);
         });
-        Assert.Equal(2, faults.Count(e => e.File == "RtfDocumentFormatter.cs"));
+        Assert.Equal(2, faults.Count(e => e.File == "ColorUtil.cs"));
     }
 
     // The fallback has already run by the time the event fires; letting a handler's exception escape
@@ -1383,8 +1402,7 @@ public class EnhancementTests
         RichEditorDiagnostics.Fault += Bad;
         try
         {
-            var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
-            Assert.Empty(doc.Blocks); // the fallback still happened
+            Assert.Null(ColorUtil.Parse(BadColour)); // the fallback still happened
         }
         finally { RichEditorDiagnostics.Fault -= Bad; RichEditorDiagnostics.Reset(); }
     }
@@ -1394,7 +1412,6 @@ public class EnhancementTests
     public void Diagnostics_IsInertWithoutSubscribers()
     {
         RichEditorDiagnostics.Reset();
-        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\fs99999999999999999999 x\par}");
-        Assert.Empty(doc.Blocks);
+        Assert.Null(ColorUtil.Parse(BadColour));
     }
 }
