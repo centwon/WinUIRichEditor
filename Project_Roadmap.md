@@ -783,6 +783,9 @@ estcell`을 버리고 중첩 셀 텍스트를 이어 붙인다.
   (`PW_RENDERFULLCONTENT`)로 캡처. ⚠ 데모 exe는 `bin\x64\Debug\...`에 나온다(`bin\Debug\...`의
   옛 exe를 잡으면 어제 빌드를 띄운다).
 - **NuGet 소비자 스모크**: 아래 "1.0.0 릴리스" 절에 스캐폴드 레시피와 함정 3가지.
+  ⚠️ 함정 ④(1.1.1에서 밟음): **패키지의 XML 문서는 소비자 출력 폴더로 복사되지 않는다**
+  (`CopyDocumentationFilesFromPackages` 기본 off — IntelliSense는 패키지 폴더에서 읽는다).
+  출력에서 찾으면 문서를 담고 있는 패키지가 "문서 없음"으로 실패한다. **복원된 패키지**에서 볼 것.
 - **테스트 실행**: `dotnet test <csproj>`(빌드 포함). `--no-build`는 다른 출력 경로의 스테일 DLL을 돌린다.
 - **창 캡처**: `tools\capture-window.ps1 -ProcessName WinUIRichEditor.Demo -Out shot.png`.
   WinUI 3는 일반 `WM_PRINT` 밖에서 합성하므로 `PW_RENDERFULLCONTENT`(플래그 2)여야 캔버스가 나온다.
