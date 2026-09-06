@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using WinUIRichEditor.Documents;
 
@@ -9,8 +9,9 @@ internal readonly struct UndoState
     public FlowDocument Document { get; }
     public int CaretGlobalIndex { get; }
     public int CaretOffset { get; }
-    /// <summary>Approximate retained size of this snapshot's text (image bytes are reference-shared by
-    /// Clone, so they're excluded). Used to bound total undo memory.</summary>
+    /// <summary>Approximate retained size of this snapshot: its element count times a measured
+    /// per-element cost (the text and any image bytes are shared with the live document, so they are not
+    /// charged). Used to bound total undo memory.</summary>
     public int ApproxBytes { get; }
 
     public UndoState(FlowDocument document, int caretGlobalIndex, int caretOffset, int approxBytes)
@@ -42,8 +43,17 @@ internal class UndoManager
     // full MaxStackSize steps; large documents (each snapshot is a full deep clone) are trimmed sooner so
     // undo history can't dominate memory — while always keeping at least MinSteps so undo stays useful.
     private const int MaxStackSize = 50;
-    private const long MaxBytes = 64L * 1024 * 1024; // ~64MB of text snapshots
+    private const long DefaultMaxBytes = 64L * 1024 * 1024;
     private const int MinSteps = 3;
+
+    private readonly long _maxBytes;
+
+    /// <summary>Creates a history bounded by the default memory budget.</summary>
+    public UndoManager() : this(DefaultMaxBytes) { }
+
+    /// <summary>Creates a history with an explicit byte budget. The parameter exists for tests: the real
+    /// budget is large enough that filling it needs a document too big to build in one.</summary>
+    public UndoManager(long maxBytes) => _maxBytes = maxBytes > 0 ? maxBytes : DefaultMaxBytes;
 
     public void PushState(FlowDocument? currentDoc, TextPointer? currentCaret)
     {
@@ -78,7 +88,7 @@ internal class UndoManager
     }
 
     // Keeps the newest states within both the count and byte budgets (but never fewer than MinSteps).
-    private static void Trim(Stack<UndoState> stack)
+    private void Trim(Stack<UndoState> stack)
     {
         if (stack.Count <= MinSteps) return;
         var arr = stack.ToArray(); // index 0 = newest (top)
@@ -87,7 +97,7 @@ internal class UndoManager
         for (int i = 0; i < arr.Length; i++)
         {
             bytes += arr[i].ApproxBytes;
-            bool withinBudget = keep < MaxStackSize && (bytes <= MaxBytes || keep < MinSteps);
+            bool withinBudget = keep < MaxStackSize && (bytes <= _maxBytes || keep < MinSteps);
             if (!withinBudget) break;
             keep++;
         }
@@ -96,43 +106,58 @@ internal class UndoManager
         for (int i = keep - 1; i >= 0; i--) stack.Push(arr[i]); // re-push oldest-kept first
     }
 
-    // Approximate retained text size of a snapshot (UTF-16 chars + small per-element overhead). Image
-    // RawBytes are excluded because Clone reference-shares them, so they don't grow with history depth.
+    // What one snapshot actually retains, which is NOT what this used to compute.
+    //
+    // The old estimate charged 2 bytes per character of text. Measured, that is wrong in BOTH
+    // directions, because Clone copies the object graph and SHARES the strings: the text already
+    // exists, and a snapshot adds only the elements that point at it. UndoBudgetProbeTests measured the
+    // same document at 2 and at 60 characters per paragraph and got byte-for-byte the same retention
+    // (899 KB per checkpoint, 3000 paragraphs) while the old estimate differed 2.3x between them.
+    // Against real retention it undercharged an ordinary document ~1.5x and overcharged a text-heavy
+    // one ~25x — so the budget trimmed history that cost nothing and kept history that cost a lot.
+    //
+    // The cost tracks the ELEMENT COUNT at a stable ~155 bytes per block/inline across every shape
+    // measured (155 paragraph-dominated, 120 inline-dominated; 40000 elements retained 6037 KB).
+    // Images stay excluded for the original reason: Clone reference-shares their bytes.
+    //
+    // Re-measure with UndoBudgetProbeTests if the model classes or the runtime change — the constant is
+    // an observation, not a rule.
+    private const int BytesPerElement = 155;
+
     internal static int EstimateBytes(FlowDocument doc) // internal: covered directly by the test suite
+        => (int)System.Math.Min((long)ElementCount(doc) * BytesPerElement, int.MaxValue);
+
+    // Blocks and inlines at any depth. A cell counts as an element itself, and an inline table's cells
+    // hold real content that is deep-cloned with the snapshot — charging a flat placeholder for one made
+    // a document whose content lives in inline tables look tiny, which is the exact case the budget
+    // exists for. WalkParagraphs already recurses this way.
+    internal static int ElementCount(FlowDocument doc)
     {
-        long total = 0;
+        int n = 0;
         void Walk(IEnumerable<Block> blocks)
         {
             foreach (var b in blocks)
             {
-                total += 48; // per-block overhead
+                n++;
                 if (b is Paragraph p)
                 {
+                    n += p.Inlines.Count;
                     foreach (var inl in p.Inlines)
-                    {
-                        if (inl is Run r) total += 40 + (long)(r.Text?.Length ?? 0) * 2;
-                        else total += 24; // inline image/table placeholder (image bytes are shared)
-                        // An inline table's cells hold real content and are deep-cloned with the
-                        // snapshot, so they must be counted too — charging a flat 24 made a document
-                        // whose text lives in inline tables look tiny, and the byte budget below then
-                        // never trimmed it (the exact case the budget exists for). WalkParagraphs
-                        // already recurses this way.
                         if (inl is InlineTable it)
                             foreach (var row in it.Table.Cells)
                                 foreach (var cell in row)
-                                    Walk(cell.Blocks);
-                    }
+                                { n++; Walk(cell.Blocks); }
                 }
                 else if (b is TableBlock tb)
                 {
                     foreach (var row in tb.Cells)
                         foreach (var cell in row)
-                            Walk(cell.Blocks);
+                        { n++; Walk(cell.Blocks); }
                 }
             }
         }
         Walk(doc.Blocks);
-        return (int)System.Math.Min(total, int.MaxValue);
+        return n;
     }
 
     // Document-order paragraph walk shared by GetGlobalIndex / GetPointerFromGlobalIndex. The order and
