@@ -745,6 +745,25 @@ estcell`을 버리고 중첩 셀 텍스트를 이어 붙인다.
   AnyCPU(`bin/Debug`)와 x64(`bin/x64/Debug`) 양쪽에 나오는데 **데모는 AnyCPU 쪽을 참조**한다. 데모
   csproj만 빌드하면 "성공"이라 보고하면서 옛 라이브러리를 그대로 들고 간다 — 반드시 데모 출력 폴더의
   `WinUIRichEditor.dll` **타임스탬프로 확인**할 것.
+- **AOT 동등성 스윕**(`tools/fault-sweep.ps1`, 2026-09-06 신설) — **AOT는 렌더되지만 동등하지 않을 수 있다**는
+  것이 1.1.0이 깨진 채 나간 이유다(줄 메트릭). 같은 편집 순서를 **JIT와 AOT 게시본에 각각** 돌려
+  ① 라이브러리가 보고한 fault 집합 ② `Ctrl+A`/`Ctrl+C`로 되읽은 **문서 텍스트**를 비교한다.
+  데모의 `--faultlog=<경로>`(App 레벨 구독)가 채널이고, 삼킴 지점은 **전부 보고**하므로 로그가 곧
+  "발동한 폴백의 집합"이다(진단은 지점당 1회 보고).
+  ```
+  dotnet publish samples/.../WinUIRichEditor.Demo.csproj -c Release -r win-x64 --self-contained true \
+    -p:Platform=x64 -p:PublishAot=true -p:PublishTrimmed=true
+  tools\fault-sweep.ps1 -Exe <jit exe> -Log C:\tmp\faults-jit.txt   # 대조군
+  tools\fault-sweep.ps1 -Exe <publish\...exe> -Log C:\tmp\faults-aot.txt
+  ```
+  **2026-09-06 실측**: AOT 전용 fault는 `LineMetricsOf`(non-blittable 배열, 폴백 정상 발동) **하나뿐**이고
+  문서는 `control`·`toolbar` 두 페이지에서 **바이트 동일**(711자). 다른 조용한 AOT 저하는 없었다.
+  > ⚠️ **키만 주입하면 아무 데도 안 간다.** 데모의 컨트롤 페이지는 `FocusEditor()`를 부르지 않아
+  > 클릭 전엔 캔버스에 키보드 포커스가 없다 — 첫 두 번의 스윕이 **입력 0인 세션을 재고도 "fault 없음"으로
+  > 정상처럼 보였다**(렌더만으로도 AOT fault는 뜬다). 그래서 phase 0에 **마우스 클릭 주입**이 있다.
+  > 되읽은 문서가 비면 비교는 **공허하다** — 스크립트가 그 경우 경고를 찍는다(빈 파일 둘은 "동일"하다).
+  > `tools/uia-probe/drive-demo.ps1`에는 아직 이 클릭이 없다 — 그 스크립트의 숫자는 누군가 먼저
+  > 클릭했다는 전제에 기대고 있다.
 - **UIA 알림 측정**(`tools/uia-probe`) — 스크린 리더가 캐럿·텍스트 변경을 따라오는지를 **숫자로** 본다.
   데모 실행 → `dotnet run --project tools/uia-probe -- 22` → 다른 셸에서 `tools/uia-probe/drive-demo.ps1`.
   솔루션에 없으므로 CI는 건드리지 않는다. **내레이터로는 이 검증을 못 한다**(소리뿐, 로그 없음).
