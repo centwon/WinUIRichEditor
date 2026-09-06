@@ -4,7 +4,45 @@ All notable changes to WinUIRichEditor. This project is a WinUI 3 + Win2D port o
 the format follows [Keep a Changelog](https://keepachangelog.com/). The public API is frozen as of 1.0.0
 and follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.1] - 2026-09-06
+
+**1.1.0은 Native AOT에서 깨진 채 나갔다. 그것이 이 릴리스의 이유다.** `CanvasTextLayout.LineMetrics`가
+AOT에서 마샬링에 실패하는데 이 API를 쓰는 8곳이 전부 "줄 없음"으로 폴백해서, AOT 빌드는 **줄바꿈을
+넘는 세로 캐럿 이동이 동작하지 않고**, 글머리표가 베이스라인 정렬을 잃고, 페이지네이션이 모든 문단을
+한 줄로 쟀다. **빌드도 되고 렌더도 되니 멀쩡해 보였고**, 1.1.0의 릴리스 노트도 "AOT 재실측"을 통과로
+적었다 — 게시와 렌더만 봤기 때문이다.
+
+기능 추가는 없다. 나머지는 외부 감사 보고서 31건 검증에서 나온 **수정 13건**(표 열 리사이즈·`Extract`
+크래시, RTF 토큰화가 문서를 통째로 날리던 것, 서로게이트 페어 분할, 셀 이미지 우클릭, 셀 안 블록↔인라인
+변환, UIA 알림 부재 등), 문서에서 빠진 문단을 붙잡던 곁캐시(메모리), 언두 체크포인트 할당 −40%(표가
+지배적인 문서), 그리고 게시 어셈블리에 박히던 빌드 머신 절대 경로 제거다.
+
+### ⚠️ 이 버전으로 올릴 때 확인할 것
+- **Breaking 없음. 공개 표면은 변화조차 없다** — `PublicAPI.Shipped.txt` 567줄 그대로, `Unshipped` 비어
+  있음. 1.1.0에서 올라오는 데 코드 수정은 필요 없다.
+- **Native AOT로 게시하는 소비자는 올릴 것.** 1.1.0 AOT 빌드는 위 줄 메트릭이 없는 상태로 동작한다.
+  JIT 빌드는 영향 없다(이 API가 AOT에서만 실패한다).
+- **동작 변경**: 자릿수가 int를 넘는 RTF 제어어 파라미터는 더 이상 "손상"이 아니다. `TryParse`가
+  거부하던 일부 파일이 열린다(손상 판정은 이제 **절단**만 본다 — `UnclosedGroups`). 상류와 수렴한
+  결정이고, 근거는 malformed **토큰**이 damaged **문서**가 아니라는 것이다.
+- **동작 변경**: `RichEditorDiagnostics.Fault`가 보고하는 fault의 **원천이 바뀌었다.** 손상 RTF는 이제
+  던지지 않으므로 그것을 fault 원천으로 쓰던 호스트 테스트는 다른 입력을 써야 한다(잘못된 hex 색 등).
+- 최소 요구 `Microsoft.WindowsAppSDK.WinUI`는 **2.2.1 그대로**다.
+
+### 이번 릴리스의 검증
+- 테스트 **304 → 391**, 빌드 0 warn / 0 err, 퍼즈 4000시드 클린.
+- **AOT 동등성 실측**(신규 `tools/fault-sweep.ps1`): 같은 편집 순서를 JIT와 AOT 게시본에 주입해
+  fault 집합과 되읽은 문서를 비교 — AOT 전용 fault는 줄 메트릭 폴백 **하나뿐**이고 문서는 두 페이지에서
+  **바이트 동일**. 1.1.0이 놓친 것이 정확히 이 비교였다.
+- 언두/찾기 축에 검증 44개 신설(그 전엔 `Undo()`·`FindNext` 등을 **호출하는 테스트가 하나도 없었다**).
+- UIA 알림을 실제 클라이언트로 실측(화살표 9회 → Selection 9 / Changed 0, 타이핑 3자 → Changed 3).
+- **NuGet 소비자 스모크 15/15** — 별도 unpackaged WinUI 3 앱이 로컬 feed에서 `PackageReference`로
+  1.1.1을 복원해 빌드·실행. 이 릴리스가 바꾼 것들을 소비자 쪽에서 직접 확인: 절단 RTF는 여전히 거부,
+  **자릿수 초과는 이제 통과**, 손상 입력이 열린 문서를 지킴, 언두/redo, 찾기/바꾸기, 중첩 표
+  `GetPlainText`, 진단 훅, 툴바·뷰 생성, 복원된 패키지의 XML 문서, 어셈블리 버전.
+  > ⚠️ 함정 하나 추가: **패키지의 XML 문서는 소비자 출력 폴더로 복사되지 않는다**
+  > (`CopyDocumentationFilesFromPackages` 기본 off — IntelliSense는 패키지 폴더에서 읽는다).
+  > 출력에서 찾으면 문서를 담고 있는 패키지가 "문서 없음"으로 실패한다.
 
 ### Tests — 언두/되돌리기와 찾기/바꾸기: 0% 커버였던 두 축 (2026-09-06)
 
