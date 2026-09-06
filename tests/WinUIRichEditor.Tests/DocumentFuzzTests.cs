@@ -151,6 +151,73 @@ public class DocumentFuzzTests
                 (failures.Count > 12 ? $"\n\n… and {failures.Count - 12} more" : ""));
     }
 
+    // The history axis. Undo restores a SNAPSHOT, and a snapshot is a Clone, so walking a random edit
+    // sequence backwards checks two things at once: that every earlier state comes back, and that Clone
+    // is faithful enough for that to be true. A property Clone drops is invisible in normal editing —
+    // it only surfaces when an undo brings back a document that has quietly lost it, which is the worst
+    // moment to find out.
+    //
+    // Until this test the fuzz never touched the history at all: it made edits and never took one back.
+    // (Upstream's fuzz drives Undo/Redo through the control, which Avalonia's headless mode allows. Here
+    // the manager is driven directly — same coverage of the model half, no runtime needed.)
+    [Fact]
+    public void UndoWalksBackThroughEveryEarlierShapeOfTheDocument()
+    {
+        const int Steps = 20; // under both history bounds, so nothing is trimmed out from under the walk
+        var failures = new List<string>();
+
+        for (int seed = 0; seed < Seeds; seed++)
+        {
+            var rng = new Random(seed);
+            var doc = SeedDocument(rng);
+            var undo = new WinUIRichEditor.Controls.UndoManager();
+            var shapes = new List<string> { Shape(doc) };
+            var ops = new List<string>();
+
+            for (int step = 0; step < Steps; step++)
+            {
+                var caret = AnyCaret(doc);
+                if (caret == null) break; // no paragraph to anchor a checkpoint to; nothing to record
+                undo.PushState(doc, caret); // the control checkpoints BEFORE the edit
+                ops.Add(ApplyRandomOp(doc, rng));
+                shapes.Add(Shape(doc));
+            }
+
+            for (int i = shapes.Count - 1; i >= 1; i--)
+            {
+                var state = undo.Undo(doc, AnyCaret(doc) ?? new TextPointer(null, 0));
+                if (state == null)
+                {
+                    failures.Add($"seed {seed}: the history ran out {shapes.Count - i} step(s) back, " +
+                                 $"with {i} still to undo (last op '{ops[i - 1]}')");
+                    break;
+                }
+                doc = state.Value.Document;
+                string got = Shape(doc);
+                if (got != shapes[i - 1])
+                {
+                    failures.Add($"seed {seed}: undoing '{ops[i - 1]}' did not restore the state before it.\n" +
+                                 Diff(shapes[i - 1], got));
+                    break;
+                }
+            }
+        }
+
+        if (failures.Count > 0)
+            throw new Xunit.Sdk.XunitException(
+                $"{failures.Count} failure(s) over {Seeds} seeds:\n\n" + string.Join("\n\n", failures.Take(6)) +
+                (failures.Count > 6 ? $"\n\n… and {failures.Count - 6} more" : ""));
+    }
+
+    // Any paragraph will do as the checkpoint's caret — this axis is about the document coming back, not
+    // about where the caret lands (UndoHistoryTests pins that, at every depth).
+    private static TextPointer? AnyCaret(FlowDocument doc)
+    {
+        foreach (var block in BlockWalk.DocumentOrder(doc.Blocks))
+            if (block is Paragraph p) return new TextPointer(p, 0);
+        return null;
+    }
+
     private static (string, Func<FlowDocument, FlowDocument>)[] RoundTrips() => new (string, Func<FlowDocument, FlowDocument>)[]
     {
         ("json", d => DocumentSerializer.Deserialize(DocumentSerializer.Serialize(d))),

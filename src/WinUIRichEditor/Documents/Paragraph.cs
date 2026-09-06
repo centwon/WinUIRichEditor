@@ -112,24 +112,14 @@ public class Paragraph : Block
     }
 
     /// <inheritdoc/>
+    /// <remarks>The format fields come from <see cref="CopyFormatFrom"/> — the ONE list — because this
+    /// used to be a second hand-written copy of it. A paragraph property added without updating both
+    /// lists survives normal editing and then disappears at the first undo, since an undo state is a
+    /// clone; that is the same failure <see cref="CloneFormat"/>'s note records for the split path.</remarks>
     public override TextElement Clone()
     {
-        var p = new Paragraph
-        {
-            MarginTop = this.MarginTop,
-            MarginBottom = this.MarginBottom,
-            MarginRight = this.MarginRight,
-            TextAlignment = this.TextAlignment,
-            LineHeight = this.LineHeight,
-            LineSpacing = this.LineSpacing,
-            ListType = this.ListType,
-            ListMarker = this.ListMarker,
-            HeadingLevel = this.HeadingLevel,
-            Background = this.Background,
-            Indent = this.Indent,
-            IsQuote = this.IsQuote,
-            ListLevel = this.ListLevel
-        };
+        var p = new Paragraph();
+        p.CopyFormatFrom(this);
         foreach (var inline in Inlines)
         {
             var inlineClone = inline.Clone() as Inline;
