@@ -419,30 +419,61 @@ public class EnhancementTests
 
     // ---- 4th review (2026-07-23) regressions ------------------------------------------------------
 
-    // The undo history's byte budget must see content held inside an INLINE table. It used to charge a
-    // flat placeholder for the whole inline table, so a document whose text lives in one looked tiny and
-    // the 64MB cap never trimmed it — the exact case the budget was added for.
+    // The undo history's budget must see content held inside an INLINE table. It used to charge a flat
+    // placeholder for the whole inline table, so a document whose content lives in one looked tiny and
+    // the cap never trimmed it — the exact case the budget was added for.
+    //
+    // ⚠ This test asserted the wrong thing until 2026-09-07: it grew the cell's TEXT and demanded the
+    // estimate grow with it. Measurement killed that premise — Clone shares the strings, so 5000
+    // characters cost a snapshot nothing, and the same document at 2 and 60 characters per paragraph
+    // retains byte-for-byte the same. What a snapshot costs is ELEMENTS, so that is what is asserted
+    // here now (see UndoBudgetProbeTests for the measurement the constant comes from).
     [Fact]
     public void UndoEstimateCountsInlineTableContent()
     {
-        static FlowDocument WithCellText(string text)
+        static FlowDocument WithCellParagraphs(int count)
         {
             var doc = new FlowDocument();
             var host = new Paragraph();
             var it = new InlineTable { Table = new TableBlock(1, 1) };
-            it.Table.Cells[0][0].Para.Inlines.Clear();
-            it.Table.Cells[0][0].Para.Inlines.Add(new Run { Text = text });
+            var cell = it.Table.Cells[0][0];
+            cell.Blocks.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                var p = new Paragraph();
+                p.Inlines.Add(new Run { Text = "x" });
+                cell.Blocks.Add(p);
+            }
             host.Inlines.Add(it);
             doc.Blocks.Add(host);
             return doc;
         }
 
-        int small = Controls.UndoManager.EstimateBytes(WithCellText("x"));
-        int large = Controls.UndoManager.EstimateBytes(WithCellText(new string('x', 5000)));
+        int small = Controls.UndoManager.EstimateBytes(WithCellParagraphs(1));
+        int large = Controls.UndoManager.EstimateBytes(WithCellParagraphs(50));
 
-        // Text inside the inline table must move the estimate, and by roughly its UTF-16 size.
-        Assert.True(large > small, "inline-table cell text was not counted");
-        Assert.True(large - small >= 9000, $"expected ~10000 bytes of growth, got {large - small}");
+        // 49 extra paragraphs + 49 extra runs inside the inline table have to reach the estimate. A flat
+        // placeholder for the table (the old defect) makes these two identical.
+        Assert.True(large > small, "inline-table cell content was not counted");
+        Assert.True(large - small >= 98 * 100, $"expected ~98 elements of growth, got {large - small} bytes");
+    }
+
+    // The other half of the same contract: text length must NOT move the estimate, because the snapshot
+    // does not retain it. Without this, charging per character could come back and look correct.
+    [Fact]
+    public void UndoEstimateIgnoresTextLength()
+    {
+        static FlowDocument WithText(string text)
+        {
+            var doc = new FlowDocument();
+            var p = new Paragraph();
+            p.Inlines.Add(new Run { Text = text });
+            doc.Blocks.Add(p);
+            return doc;
+        }
+
+        Assert.Equal(Controls.UndoManager.EstimateBytes(WithText("x")),
+                     Controls.UndoManager.EstimateBytes(WithText(new string('x', 100_000))));
     }
 
     // CloneFormat is the single source for "same paragraph formatting, new paragraph". SplitByNewlines

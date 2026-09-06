@@ -244,11 +244,13 @@ public class UndoHistoryTests
         Assert.Equal(50, depth);
     }
 
-    // The byte budget, and the floor that keeps undo useful under it. Snapshots of ~24MB blow the 64MB
-    // budget after two, but the manager must still keep three steps — a large document that trimmed to
-    // one would leave the user with an undo key that undoes almost nothing.
+    // The byte budget, and the floor that keeps undo useful under it. Three snapshots blow the budget
+    // given here, but the manager must still keep three steps — a large document that trimmed to one
+    // would leave the user with an undo key that undoes almost nothing.
     //
-    // The text is one big string and Clone shares the reference, so this costs 24MB once, not per step.
+    // The budget is a constructor parameter because the real one (64MB) needs a document of roughly
+    // 430,000 elements to fill, which is not something to build in a unit test. The POLICY is what is
+    // under test; the constant is measured elsewhere (UndoBudgetProbeTests).
     //
     // ⚠ SIX pushes, not four, and the number is load-bearing. Trim returns early while the stack is at
     // or below the floor, so a four-push run lands on three steps whether or not the budget loop honours
@@ -258,15 +260,17 @@ public class UndoHistoryTests
     [Fact]
     public void TheByteBudget_TrimsTheHistory_ButNeverBelowThreeSteps()
     {
-        var big = Doc(new string('x', 12_000_000)); // ~24MB by EstimateBytes' count
-        Assert.True(UndoManager.EstimateBytes(big) > 20 * 1024 * 1024);
+        var doc = Doc("a", "b", "c", "d", "e");           // 5 paragraphs + 5 runs = 10 elements
+        int perSnapshot = UndoManager.EstimateBytes(doc);
+        Assert.True(perSnapshot > 0);
 
-        var undo = new UndoManager();
-        var caret = CaretOn(big, TextOf(AllParagraphs(big).Single()));
-        for (int i = 0; i < 6; i++) undo.PushState(big, caret);
+        // Room for two snapshots, not three: the floor is the only thing that can keep the third.
+        var undo = new UndoManager(maxBytes: perSnapshot * 2 + 1);
+        var caret = CaretOn(doc, "a");
+        for (int i = 0; i < 6; i++) undo.PushState(doc, caret);
 
         int depth = 0;
-        while (undo.Undo(big, caret) != null) depth++;
+        while (undo.Undo(doc, caret) != null) depth++;
 
         Assert.Equal(3, depth);
     }
