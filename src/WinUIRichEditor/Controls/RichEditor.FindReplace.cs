@@ -12,7 +12,7 @@ public partial class RichEditor
 {
     /// <summary>Identifies the <see cref="AllowFindReplace"/> dependency property.</summary>
     public static readonly DependencyProperty AllowFindReplaceProperty = DependencyProperty.Register(
-        nameof(AllowFindReplace), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
+        nameof(AllowFindReplace), typeof(bool), typeof(RichEditor), new PropertyMetadata(true, OnToolbarFlagChanged));
 
     /// <summary>Enables find/replace (set false to disable in read-only presets).</summary>
     public bool AllowFindReplace
