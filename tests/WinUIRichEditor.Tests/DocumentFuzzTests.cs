@@ -501,7 +501,8 @@ public class DocumentFuzzTests
 
     // ---- invariants ----------------------------------------------------------------------------
 
-    private static void CheckInvariants(FlowDocument doc)
+    // internal: ControlCommandFuzzTests checks the same invariants after every editor command.
+    internal static void CheckInvariants(FlowDocument doc)
     {
         foreach (var b in doc.Blocks)
         {
@@ -601,7 +602,7 @@ public class DocumentFuzzTests
 
     // ---- shape (format-independent structural signature) ---------------------------------------
 
-    private static string Shape(FlowDocument doc)
+    internal static string Shape(FlowDocument doc)
     {
         var sb = new StringBuilder();
         foreach (var b in doc.Blocks) ShapeBlock(sb, b);
@@ -738,7 +739,7 @@ public class DocumentFuzzTests
 
     // Only the neighbourhood of the FIRST divergence — a whole fuzzed document's shape is unreadable,
     // and the first difference is where the non-idempotent step actually happened.
-    private static string Diff(string a, string b)
+    internal static string Diff(string a, string b)
     {
         int i = 0;
         while (i < a.Length && i < b.Length && a[i] == b[i]) i++;

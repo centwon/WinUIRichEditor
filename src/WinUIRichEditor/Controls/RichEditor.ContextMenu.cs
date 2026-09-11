@@ -570,12 +570,12 @@ public partial class RichEditor
         sub.Items.Add(Sep());
         // ── Rows ──
         Add(Loc("InsertRowAbove"), () => TableInsertRow(tb, r), r >= 0, RichEditorIcon.InsertRowAbove);
-        Add(Loc("InsertRowBelow"), () => TableInsertRow(tb, r + 1), r >= 0, RichEditorIcon.InsertRowBelow);
+        Add(Loc("InsertRowBelow"), () => TableInsertRow(tb, RowBelowIndex(tb, r, c)), r >= 0, RichEditorIcon.InsertRowBelow);
         Add(Loc("DeleteRow"), () => TableDeleteRow(tb, r), r >= 0 && tb.Rows > 1, RichEditorIcon.DeleteRow);
         sub.Items.Add(Sep());
         // ── Columns ──
         Add(Loc("InsertColumnLeft"), () => TableInsertColumn(tb, c), c >= 0, RichEditorIcon.InsertColumnLeft);
-        Add(Loc("InsertColumnRight"), () => TableInsertColumn(tb, c + 1), c >= 0, RichEditorIcon.InsertColumnRight);
+        Add(Loc("InsertColumnRight"), () => TableInsertColumn(tb, ColumnRightIndex(tb, r, c)), c >= 0, RichEditorIcon.InsertColumnRight);
         Add(Loc("DeleteColumn"), () => TableDeleteColumn(tb, c), c >= 0 && tb.Columns > 1, RichEditorIcon.DeleteColumn);
         sub.Items.Add(Sep());
         // ── Merge / split ──
