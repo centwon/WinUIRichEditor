@@ -496,6 +496,27 @@ public partial class RichEditor
 
     // ---- Phase 5: table-structure operations (right-click menu) ------------
 
+    // Where the caret may land in cell (r,c). A covered cell is not in LogicalCells(), so nothing renders
+    // it, no click can reach it and no formatter walks it — a caret parked there types into a paragraph
+    // the document cannot show. FocusCell does this redirect for the navigation paths; the four row/column
+    // operations below set the caret on a fixed slot and need it too, because inserting inside a merge
+    // extends it over the new cells, and deleting next to one can clamp onto a covered slot.
+    // (Same name and body as upstream, which had already fixed this; the port's command fuzz found it
+    // at 2000 seeds.)
+    private static Paragraph CellCaretTarget(TableBlock tb, int r, int c)
+    {
+        if (!tb.IsCovered(r, c)) return tb.Cells[r][c].Para;
+        var (ar, ac) = tb.AnchorOf(r, c);
+        return tb.Cells[ar][ac].Para;
+    }
+
+    // Where "insert row below" / "insert column right" put the new row or column for the cell at (r,c):
+    // past the WHOLE cell, merge included (Word's behaviour). The menu used to pass r + 1 / c + 1, which on
+    // a merged cell is INSIDE the merge — InsertRow grows the merge over the new row, so the new cells showed
+    // up only beside the merged cell, never under it (reported from a live check; upstream has the same +1).
+    internal static int RowBelowIndex(TableBlock tb, int r, int c) => r + Math.Max(1, tb.SpanOf(r, c).rs);
+    internal static int ColumnRightIndex(TableBlock tb, int r, int c) => c + Math.Max(1, tb.SpanOf(r, c).cs);
+
     private void TableInsertRow(TableBlock tb, int at)
     {
         if (Document == null || at < 0) return;
@@ -503,7 +524,7 @@ public partial class RichEditor
         tb.InsertRow(at);
         UpdateParents(Document);
         int ar = Math.Clamp(at, 0, tb.Rows - 1);
-        SetCaretToCell(tb.Cells[ar][0].Para);
+        SetCaretToCell(CellCaretTarget(tb, ar, 0));
         AfterStructuralEdit(tb);
     }
 
@@ -514,7 +535,7 @@ public partial class RichEditor
         tb.DeleteRow(at);
         UpdateParents(Document);
         int nr = Math.Clamp(at, 0, tb.Rows - 1);
-        SetCaretToCell(tb.Cells[nr][0].Para);
+        SetCaretToCell(CellCaretTarget(tb, nr, 0));
         AfterStructuralEdit(tb);
     }
 
@@ -525,7 +546,7 @@ public partial class RichEditor
         tb.InsertColumn(at);
         UpdateParents(Document);
         int ac = Math.Clamp(at, 0, tb.Columns - 1);
-        SetCaretToCell(tb.Cells[0][ac].Para);
+        SetCaretToCell(CellCaretTarget(tb, 0, ac));
         AfterStructuralEdit(tb);
     }
 
@@ -536,7 +557,7 @@ public partial class RichEditor
         tb.DeleteColumn(at);
         UpdateParents(Document);
         int nc = Math.Clamp(at, 0, tb.Columns - 1);
-        SetCaretToCell(tb.Cells[0][nc].Para);
+        SetCaretToCell(CellCaretTarget(tb, 0, nc));
         AfterStructuralEdit(tb);
     }
 

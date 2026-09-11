@@ -40,6 +40,13 @@ public partial class RichEditor : ContentControl
 
     private static bool RunSizeIsBodyDefault(Run r) => r.FontSize <= 0 || Math.Abs(r.FontSize - BodyFontSizePt) < 0.01;
 
+    // The size (pt) a run is DRAWN at — the one rule, used by CreateLayout to draw it and by GetCaretFormat
+    // to report it, so the toolbar cannot show a size the text is not shown at (and IncreaseFontSize, which
+    // steps from the reported size, cannot shrink text it means to grow). In a heading an unstyled run takes
+    // the heading's size; otherwise an unset size (≤ 0) falls back to DefaultFontSize.
+    private static double DrawnRunSize(Run r, bool heading, double headingSize, double defaultSize)
+        => heading && RunSizeIsBodyDefault(r) ? headingSize : r.FontSize <= 0 ? defaultSize : r.FontSize;
+
     // Left x where a paragraph's text starts: base indent + manual indent + nesting + (list marker gap).
     private static double ParaLeft(Paragraph p)
         => 10 + p.Indent + p.ListLevel * 20 + (p.ListType != ListKind.None ? ListMarkerWidth : 0);
@@ -498,8 +505,7 @@ public partial class RichEditor : ContentControl
             {
                 var family = string.IsNullOrEmpty(r.FontFamily) ? defaultFamily : r.FontFamily!;
                 var weight = heading ? FontWeights.Bold : r.FontWeight;
-                double size = r.FontSize <= 0 ? defaultSize : r.FontSize;
-                if (heading && RunSizeIsBodyDefault(r)) size = headingSize;
+                double size = DrawnRunSize(r, heading, headingSize, defaultSize);
                 if (size > maxRunPt) maxRunPt = size;
 
                 layout.SetFontFamily(pos, len, family);

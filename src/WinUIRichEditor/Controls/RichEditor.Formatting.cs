@@ -58,14 +58,43 @@ public partial class RichEditor
         CancelFormatPainter();
     }
 
-    /// <summary>Toggles bold on the current selection (or the caret word).</summary>
-    public void ToggleBold() => ApplyStyleToSelection(r => r.FontWeight = r.FontWeight.IsBold() ? FontWeights.Normal : FontWeights.Bold);
-    /// <summary>Toggles italic on the current selection (or the caret word).</summary>
-    public void ToggleItalic() => ApplyStyleToSelection(r => r.FontStyle = r.FontStyle == FontStyle.Italic ? FontStyle.Normal : FontStyle.Italic);
-    /// <summary>Toggles underline.</summary>
-    public void ToggleUnderline() => ApplyStyleToSelection(r => r.TextDecorations ^= TextDecorationFlags.Underline);
-    /// <summary>Toggles strikethrough.</summary>
-    public void ToggleStrikethrough() => ApplyStyleToSelection(r => r.TextDecorations ^= TextDecorationFlags.Strikethrough);
+    /// <summary>Toggles bold on the current selection (or the caret word), Word-style: turns it off only
+    /// when every character already has it, otherwise turns it on for all of them.</summary>
+    public void ToggleBold() => ToggleCharacterFormat(
+        r => r.FontWeight.IsBold(), (r, on) => r.FontWeight = on ? FontWeights.Bold : FontWeights.Normal);
+    /// <summary>Toggles italic on the current selection (or the caret word), Word-style (see <see cref="ToggleBold"/>).</summary>
+    public void ToggleItalic() => ToggleCharacterFormat(
+        r => r.FontStyle == FontStyle.Italic, (r, on) => r.FontStyle = on ? FontStyle.Italic : FontStyle.Normal);
+    /// <summary>Toggles underline, Word-style (see <see cref="ToggleBold"/>).</summary>
+    public void ToggleUnderline() => ToggleCharacterFormat(
+        r => r.TextDecorations.HasFlag(TextDecorationFlags.Underline), (r, on) => SetDecoration(r, TextDecorationFlags.Underline, on));
+    /// <summary>Toggles strikethrough, Word-style (see <see cref="ToggleBold"/>).</summary>
+    public void ToggleStrikethrough() => ToggleCharacterFormat(
+        r => r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough), (r, on) => SetDecoration(r, TextDecorationFlags.Strikethrough, on));
+
+    private static void SetDecoration(Run r, TextDecorationFlags flag, bool on)
+        => r.TextDecorations = on ? r.TextDecorations | flag : r.TextDecorations & ~flag;
+
+    // Word's rule for the character toggles: OFF only when every character in the target already has the
+    // format, otherwise ON for all of them. Flipping each run on its own (what this did until 2026-09-11,
+    // and what upstream still does) turned "plain BOLD plain" into "BOLD plain BOLD". The target is
+    // resolved ONCE and handed to the apply step, so the check and the change cannot disagree about which
+    // text they mean. With no text to look at (a pending caret style), the caret's own format decides —
+    // pending styles included, which is what makes two presses before typing cancel out.
+    private void ToggleCharacterFormat(Func<Run, bool> has, Action<Run, bool> set)
+    {
+        if (IsReadOnly) return;
+        var target = ResolveStyleTarget();
+        bool allOn;
+        if (target.Pending) allOn = CaretFormatRun() is { } shown && has(shown);
+        else
+        {
+            var runs = TargetRuns(target).ToList();
+            allOn = runs.Count > 0 && runs.All(has);
+        }
+        bool on = !allOn;
+        ApplyStyleToSelection(r => set(r, on), target);
+    }
     /// <summary>Sets the font size (pt) of the current selection (or the caret word).</summary>
     public void SetFontSize(double size) => ApplyStyleToSelection(r => r.FontSize = size);
 
@@ -393,42 +422,72 @@ public partial class RichEditor
         return result;
     }
 
-    private void ApplyStyleToSelection(Action<Run> styleAction)
+    // What a character command acts on, decided once: a rectangular cell block, a text range (the
+    // selection, or the word at a collapsed caret), or — no word at the caret — a pending style for the
+    // next typed text. Shared by ApplyStyleToSelection and the toggles' "is it all on already?" check.
+    private readonly record struct StyleTarget(
+        (TableBlock tb, int r0, int c0, int r1, int c1)? Cells, TextRange? Range, bool Pending);
+
+    private StyleTarget ResolveStyleTarget()
+    {
+        // A rectangular table-cell block selection (drag across cells): style every selected cell in
+        // full. The linear TextRange path only partially styles the first/last cell (from/to the drag
+        // offsets) and, because it walks cells in row-major order, bleeds into cells outside the
+        // selected column band — so multi-cell formatting wouldn't match the highlighted rectangle.
+        if (CellBlockSelection() is { } cb) return new StyleTarget(cb, null, false);
+        if (HasSelection) return new StyleTarget(null, new TextRange(_selStart, _selEnd), false);
+        if (_caret.Paragraph is not { } p) return new StyleTarget(null, null, false);
+        string plain = BuildPlain(p);
+        int off = Math.Clamp(_caret.Offset, 0, plain.Length);
+        static bool IsWord(char ch) => char.IsLetterOrDigit(ch) || ch == '_';
+        bool inWord = (off < plain.Length && IsWord(plain[off])) || (off > 0 && IsWord(plain[off - 1]));
+        if (!inWord) return new StyleTarget(null, null, true);
+        var (ws, we) = WordBoundsAt(plain, off);
+        return new StyleTarget(null, new TextRange(new TextPointer(p, ws), new TextPointer(p, we)), false);
+    }
+
+    // The runs a resolved target covers, read WITHOUT touching the document: GetRichRuns walks the same
+    // paragraphs ApplyPropertyValue does and returns clones (ApplyPropertyValue itself would split runs
+    // before the undo checkpoint), and a cell block is every run of every selected cell, as
+    // ApplyStyleToCellRange styles them. Empty runs and GetRichRuns' "\n" paragraph separators hold no
+    // visible character, so they get no say in a toggle.
+    private IEnumerable<Run> TargetRuns(StyleTarget t)
+    {
+        if (t.Cells is { } cb)
+        {
+            foreach (var (r, c, cell) in cb.tb.LogicalCells())
+            {
+                if (r < cb.r0 || r > cb.r1 || c < cb.c0 || c > cb.c1) continue;
+                foreach (var p in ParagraphsInBlocks(cell.Blocks))
+                    foreach (var inl in p.Inlines)
+                        if (inl is Run run && !string.IsNullOrEmpty(run.Text)) yield return run;
+            }
+        }
+        else if (t.Range is { } range)
+        {
+            foreach (var run in range.GetRichRuns())
+                if (!string.IsNullOrEmpty(run.Text) && run.Text != "\n") yield return run;
+        }
+    }
+
+    private void ApplyStyleToSelection(Action<Run> styleAction, StyleTarget? resolved = null)
     {
         if (IsReadOnly) return;
-        // A rectangular table-cell block selection (drag across cells): style every selected cell in
-        // full. The linear TextRange path below only partially styles the first/last cell (from/to the
-        // drag offsets) and, because it walks cells in row-major order, bleeds into cells outside the
-        // selected column band — so multi-cell formatting wouldn't match the highlighted rectangle.
-        if (CellBlockSelection() is { } cb)
+        var target = resolved ?? ResolveStyleTarget();
+        if (target.Cells is { } cb)
         {
             PushUndo(null);
             ApplyStyleToCellRange(cb.tb, cb.r0, cb.c0, cb.r1, cb.c1, styleAction);
-            AfterFormat();
-            return;
         }
-        if (HasSelection)
+        else if (target.Range is { } range)
         {
             PushUndo(null);
-            new TextRange(_selStart, _selEnd).ApplyPropertyValue(styleAction);
+            range.ApplyPropertyValue(styleAction);
         }
-        else if (_caret.Paragraph is { } p)
+        else if (target.Pending)
         {
-            string plain = BuildPlain(p);
-            int off = Math.Clamp(_caret.Offset, 0, plain.Length);
-            static bool IsWord(char ch) => char.IsLetterOrDigit(ch) || ch == '_';
-            bool inWord = (off < plain.Length && IsWord(plain[off])) || (off > 0 && IsWord(plain[off - 1]));
-            if (inWord)
-            {
-                var (ws, we) = WordBoundsAt(plain, off);
-                PushUndo(null);
-                new TextRange(new TextPointer(p, ws), new TextPointer(p, we)).ApplyPropertyValue(styleAction);
-            }
-            else
-            {
-                // Pending: applies to the next typed text (the undo checkpoint comes with that typing).
-                (_pendingCaretStyles ??= new List<Action<Run>>()).Add(styleAction);
-            }
+            // Pending: applies to the next typed text (the undo checkpoint comes with that typing).
+            (_pendingCaretStyles ??= new List<Action<Run>>()).Add(styleAction);
         }
         AfterFormat();
     }

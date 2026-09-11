@@ -125,8 +125,11 @@ public partial class RichEditor
         return last;
     }
 
-    /// <summary>Returns the formatting snapshot at the current caret position for toolbar state display.</summary>
-    public CaretFormat GetCaretFormat()
+    // The run whose character format the caret shows: the one just before the caret (else the
+    // paragraph's first run), with any pending caret format (a toggle at an empty position) previewed on
+    // a clone so the document stays untouched. Shared with the character toggles, which decide on/off
+    // from exactly what the toolbar is showing.
+    private Run? CaretFormatRun()
     {
         var p = _caret.Paragraph;
         Run? run = null;
@@ -135,13 +138,22 @@ public partial class RichEditor
             run = RunAtOffset(p, _caret.Offset > 0 ? _caret.Offset - 1 : 0);
             if (run == null) foreach (var inl in p.Inlines) if (inl is Run r0) { run = r0; break; }
         }
-        // A pending caret format (toggle at an empty position) previews on a clone so the document stays untouched.
         if (_pendingCaretStyles is { Count: > 0 } pend)
         {
             var probe = run != null ? (Run)run.Clone() : new Run();
             foreach (var a in pend) a(probe);
             run = probe;
         }
+        return run;
+    }
+
+    /// <summary>Returns the formatting snapshot at the current caret position for toolbar state display.</summary>
+    public CaretFormat GetCaretFormat()
+    {
+        var p = _caret.Paragraph;
+        var run = CaretFormatRun();
+        bool heading = p is { HeadingLevel: >= 1 and <= 6 };
+        double headingSize = heading ? HeadingFontSize(p!.HeadingLevel) : 0;
         bool underline = run != null && (run.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(run.NavigateUri));
         bool strike = run != null && run.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough);
         return new CaretFormat(
@@ -149,7 +161,12 @@ public partial class RichEditor
             run?.FontStyle == FontStyle.Italic,
             underline,
             strike,
-            run != null && run.FontSize > 0 ? run.FontSize : BodyFontSizePt,
+            // The size the text is DRAWN at, by the renderer's own rule (DrawnRunSize): the toolbar shows it
+            // and IncreaseFontSize steps from it. Reporting the run's raw size showed 10 for unset text drawn
+            // at the host's DefaultFontSize (14) and for an H1 drawn at 20 — and "larger" then SHRANK both,
+            // to 10.5. (DefaultFontSize's contract also names "the toolbar's displayed fallback size".)
+            run != null ? DrawnRunSize(run, heading, headingSize, DefaultFontSize)
+                        : heading ? headingSize : DefaultFontSize,
             run?.FontFamily,
             p?.TextAlignment ?? TextAlignment.Left,
             p?.ListType ?? ListKind.None,
