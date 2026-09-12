@@ -23,7 +23,7 @@ and follows [Semantic Versioning](https://semver.org/).
 - 같은 뿌리의 두 곳도 고쳤다: `CurrentLinkUri`가 이미지 옆에서 문단 끝의 먼 링크를 돌려주던 것, 이미지 앞 캐럿 높이가
   마지막 run 크기를 따르던 것.
 
-공개 표면 불변. 테스트 `ControlCaretFormatTests` 20 + 캐럿 높이 1, **571 → 592**, 반증 14종 전부 의도한 테스트만 실패.
+공개 표면 불변. 테스트 `ControlCaretFormatTests` 21 + 캐럿 높이 1, **571 → 593**, 반증 15종 전부 의도한 테스트만 실패.
 
 ### Fixed — 제목 안에서 크기를 직접 지정한 글자의 캐럿 크기 (2026-09-12)
 

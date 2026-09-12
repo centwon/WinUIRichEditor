@@ -245,6 +245,20 @@ public class ControlCaretFormatTests
         Assert.True(ed.GetCaretFormat().Underline);
     });
 
+    // At a link's end the caret is in the link's WORD, and that word is what Ctrl+U styles — all of it drawn
+    // underlined, so nothing to do. The typed-text format (plain there) must not decide it: judged by that,
+    // the toggle set a hidden underline flag on the link. (Added upstream first — its PR #28 — where the
+    // same perturbation found no test; ported back.)
+    [Fact]
+    public void CtrlU_AtALinksEnd_LeavesTheLinkAlone() => UiThread.Run(() =>
+    {
+        var ed = Editor(Para(Link("link"), Plain(" after")));
+        Caret(ed, Paras(ed)[0], 4);
+        ed.ToggleUnderline();
+        Assert.False(ed.CanUndo);
+        Assert.Equal(TextDecorationFlags.None, RunAt(Paras(ed)[0], 1).TextDecorations);
+    });
+
     // Across a link and plain text the plain part is what changes: the link counts as underlined (it is
     // shown so), the rest is not, so the toggle turns underline ON.
     [Fact]
