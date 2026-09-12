@@ -32,7 +32,7 @@ public partial class RichEditor
         var p = HasSelection ? _selStart.Paragraph : _caret.Paragraph;
         if (p == null) return;
         int off = HasSelection ? _selStart.Offset : _caret.Offset;
-        var src = RunAtOffset(p, off) ?? RunAtOffset(p, Math.Max(0, off - 1));
+        var src = RunAtOffset(p, off) ?? RunAtOffset(p, Math.Max(0, off - 1)) ?? TypingSource(p, off).Run;
         if (src == null) return;
         _painterFmt = (src.FontWeight, src.FontStyle, src.TextDecorations, src.FontSize, src.FontFamily, src.Foreground, src.Background);
         RaiseStatusChanged();
@@ -61,13 +61,15 @@ public partial class RichEditor
     /// <summary>Toggles bold on the current selection (or the caret word), Word-style: turns it off only
     /// when every character already has it, otherwise turns it on for all of them.</summary>
     public void ToggleBold() => ToggleCharacterFormat(
-        r => r.FontWeight.IsBold(), (r, on) => r.FontWeight = on ? FontWeights.Bold : FontWeights.Normal);
+        r => r.FontWeight.IsBold(), (r, on) => r.FontWeight = on ? FontWeights.Bold : FontWeights.Normal,
+        forced: (_, p) => p.HeadingLevel is >= 1 and <= 6); // a heading is drawn bold (DrawnBold)
     /// <summary>Toggles italic on the current selection (or the caret word), Word-style (see <see cref="ToggleBold"/>).</summary>
     public void ToggleItalic() => ToggleCharacterFormat(
         r => r.FontStyle == FontStyle.Italic, (r, on) => r.FontStyle = on ? FontStyle.Italic : FontStyle.Normal);
     /// <summary>Toggles underline, Word-style (see <see cref="ToggleBold"/>).</summary>
     public void ToggleUnderline() => ToggleCharacterFormat(
-        r => r.TextDecorations.HasFlag(TextDecorationFlags.Underline), (r, on) => SetDecoration(r, TextDecorationFlags.Underline, on));
+        r => r.TextDecorations.HasFlag(TextDecorationFlags.Underline), (r, on) => SetDecoration(r, TextDecorationFlags.Underline, on),
+        forced: (r, _) => !string.IsNullOrEmpty(r.NavigateUri)); // a link is drawn underlined (DrawnUnderline)
     /// <summary>Toggles strikethrough, Word-style (see <see cref="ToggleBold"/>).</summary>
     public void ToggleStrikethrough() => ToggleCharacterFormat(
         r => r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough), (r, on) => SetDecoration(r, TextDecorationFlags.Strikethrough, on));
@@ -81,16 +83,29 @@ public partial class RichEditor
     // resolved ONCE and handed to the apply step, so the check and the change cannot disagree about which
     // text they mean. With no text to look at (a pending caret style), the caret's own format decides —
     // pending styles included, which is what makes two presses before typing cancel out.
-    private void ToggleCharacterFormat(Func<Run, bool> has, Action<Run, bool> set)
+    //
+    // `forced`: where the renderer draws the format whatever the run says (a heading's bold, a link's
+    // underline). Such text counts as having it — the toggle judges what is SHOWN, as the toolbar reports
+    // it — and when every targeted character is forced the toggle does nothing and records no undo step:
+    // no change it could make would show. It used to flip a hidden flag there, the screen unchanged.
+    private void ToggleCharacterFormat(Func<Run, bool> has, Action<Run, bool> set, Func<Run, Paragraph, bool>? forced = null)
     {
         if (IsReadOnly) return;
         var target = ResolveStyleTarget();
+        bool Shown(Run r, Paragraph p) => has(r) || (forced?.Invoke(r, p) ?? false);
         bool allOn;
-        if (target.Pending) allOn = CaretFormatRun() is { } shown && has(shown);
+        if (target.Pending)
+        {
+            if (_caret.Paragraph is not { } cp) return;
+            var shown = CaretFormatRun() ?? new Run();
+            if (forced?.Invoke(shown, cp) == true) return;
+            allOn = Shown(shown, cp);
+        }
         else
         {
             var runs = TargetRuns(target).ToList();
-            allOn = runs.Count > 0 && runs.All(has);
+            if (forced != null && runs.Count > 0 && runs.All(x => forced(x.Run, x.Para))) return;
+            allOn = runs.Count > 0 && runs.All(x => Shown(x.Run, x.Para));
         }
         bool on = !allOn;
         ApplyStyleToSelection(r => set(r, on), target);
@@ -137,7 +152,10 @@ public partial class RichEditor
     {
         r.FontWeight = FontWeights.Normal;
         r.FontStyle = FontStyle.Normal;
-        r.FontSize = DefaultFontSize;
+        // "Unstyled": in a heading that is the body-default size, which draws at the heading's size
+        // (DrawnRunSize). DefaultFontSize there was an explicit size — with a host default of 14, clearing
+        // an H1 shrank it from 20 to 14.
+        r.FontSize = r.Parent is Paragraph { HeadingLevel: >= 1 and <= 6 } ? BodyFontSizePt : DefaultFontSize;
         r.Foreground = null;
         r.Background = null;
         r.FontFamily = null;
@@ -446,12 +464,12 @@ public partial class RichEditor
         return new StyleTarget(null, new TextRange(new TextPointer(p, ws), new TextPointer(p, we)), false);
     }
 
-    // The runs a resolved target covers, read WITHOUT touching the document: GetRichRuns walks the same
-    // paragraphs ApplyPropertyValue does and returns clones (ApplyPropertyValue itself would split runs
-    // before the undo checkpoint), and a cell block is every run of every selected cell, as
-    // ApplyStyleToCellRange styles them. Empty runs and GetRichRuns' "\n" paragraph separators hold no
-    // visible character, so they get no say in a toggle.
-    private IEnumerable<Run> TargetRuns(StyleTarget t)
+    // The runs a resolved target covers, with their paragraphs (a heading's bold is forced per paragraph),
+    // read WITHOUT touching the document — ApplyPropertyValue would split runs before the undo checkpoint.
+    // A range is walked in the paragraph order ApplyPropertyValue uses; a cell block is every run of every
+    // selected cell, as ApplyStyleToCellRange styles them. A run whose covered part holds no visible
+    // character (empty, or only line breaks) gets no say in a toggle.
+    private IEnumerable<(Run Run, Paragraph Para)> TargetRuns(StyleTarget t)
     {
         if (t.Cells is { } cb)
         {
@@ -460,13 +478,34 @@ public partial class RichEditor
                 if (r < cb.r0 || r > cb.r1 || c < cb.c0 || c > cb.c1) continue;
                 foreach (var p in ParagraphsInBlocks(cell.Blocks))
                     foreach (var inl in p.Inlines)
-                        if (inl is Run run && !string.IsNullOrEmpty(run.Text)) yield return run;
+                        if (inl is Run run && !string.IsNullOrEmpty(run.Text)) yield return (run, p);
             }
         }
         else if (t.Range is { } range)
         {
-            foreach (var run in range.GetRichRuns())
-                if (!string.IsNullOrEmpty(run.Text) && run.Text != "\n") yield return run;
+            var (s, e) = (range.Start, range.End);
+            bool inRange = false;
+            foreach (var p in AllParagraphs())
+            {
+                if (ReferenceEquals(p, s.Paragraph)) inRange = true;
+                if (inRange)
+                {
+                    int a = ReferenceEquals(p, s.Paragraph) ? s.Offset : 0;
+                    int b = ReferenceEquals(p, e.Paragraph) ? e.Offset : int.MaxValue;
+                    int pos = 0;
+                    foreach (var inl in p.Inlines)
+                    {
+                        int len = InlineLen(inl);
+                        if (inl is Run run && len > 0 && pos < b && pos + len > a)
+                        {
+                            int from = Math.Max(a, pos) - pos, to = Math.Min(b, pos + len) - pos;
+                            if (run.Text!.AsSpan(from, to - from).Trim('\n').Length > 0) yield return (run, p);
+                        }
+                        pos += len;
+                    }
+                }
+                if (ReferenceEquals(p, e.Paragraph)) break;
+            }
         }
     }
 

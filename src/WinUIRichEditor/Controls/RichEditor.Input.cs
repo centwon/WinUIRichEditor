@@ -862,25 +862,21 @@ public partial class RichEditor
         AfterEdit();
     }
 
+    // Inserts text at localIndex, formatted by TypingSource — the rule the caret report shows. Next to an
+    // image this used to write a plain new run (the formatting of the text around the image was lost).
     private void TryInsertTextCore(Paragraph p, string text, int localIndex)
     {
-        int pos = 0;
-        for (int i = 0; i < p.Inlines.Count; i++)
+        var (src, into, at, link) = TypingSource(p, localIndex);
+        if (src != null && into >= 0)
         {
-            int len = InlineLen(p.Inlines[i]);
-            if (p.Inlines[i] is Run run && localIndex >= pos && localIndex <= pos + len)
-            {
-                run.Text = (run.Text ?? "").Insert(localIndex - pos, text);
-                return;
-            }
-            if (p.Inlines[i] is not Run && localIndex == pos)
-            {
-                p.Inlines.Insert(i, new Run { Text = text, Parent = p });
-                return;
-            }
-            pos += len;
+            src.Text = (src.Text ?? "").Insert(into, text);
+            return;
         }
-        p.Inlines.Add(new Run { Text = text, Parent = p });
+        var run = src != null ? (Run)src.Clone() : new Run();
+        run.Text = text;
+        run.Parent = p;
+        if (!link) run.NavigateUri = null;
+        p.Inlines.Insert(at, run);
     }
 
     private void DeleteSelection()
@@ -2247,7 +2243,8 @@ public partial class RichEditor
     {
         bool heading = p.HeadingLevel is >= 1 and <= 6;
         double headingSize = heading ? HeadingFontSize(p.HeadingLevel) : 0;
-        var r = RunAtOffset(p, offset);
+        // On an inline object (no character format) the text typed beside it decides — TypingSource.
+        var r = RunAtOffset(p, offset) ?? TypingSource(p, offset).Run;
         return r != null ? DrawnRunSize(r, heading, headingSize, DefaultFontSize)
                          : heading ? headingSize : DefaultFontSize;
     }
