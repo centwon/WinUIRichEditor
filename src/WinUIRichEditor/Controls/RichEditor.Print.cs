@@ -71,19 +71,42 @@ public partial class RichEditor
         using (var ds = rt.CreateDrawingSession())
         {
             ds.Clear(Colors.White);
-            var breaks = EnsurePageBreaks();
-            double docTop = breaks[Math.Clamp(pageIndex, 0, breaks.Count - 1)];
-            using (ds.CreateLayer(1f, new Rect(PagePadX, PagePadY, PaperContentWidth, PaperContentHeight)))
-            {
-                ds.Transform = Matrix3x2.CreateTranslation((float)(PagePadX - DocContentLeft), (float)(PagePadY - docTop));
-                // _printMode gates all geometry recording, so this walk can't pollute hit-test caches.
-                // Clip to this page's doc range so printing/PDF renders O(page), not O(document) per page.
-                DrawContentWalk(ds, docTop - 1, docTop + PaperContentHeight + 1);
-                ds.Transform = Matrix3x2.Identity;
-            }
-            DrawPageMarginChrome(ds, new Rect(0, 0, PaperWidth, PaperHeight), pageIndex, pageCount);
+            DrawPrintPage(ds, pageIndex, pageCount);
         }
         return rt;
+    }
+
+    // One page of the print layout, in paper DIPs (PaperWidth × PaperHeight), drawn UNDER whatever transform
+    // the caller has set: identity into a bitmap for PDF, a fit-to-paper scale into the printer's own session
+    // for the print dialog — where text reaches the printer as text, not pixels. Inside WithPrintLayout only.
+    private void DrawPrintPage(CanvasDrawingSession ds, int pageIndex, int pageCount)
+    {
+        var paperToDevice = ds.Transform;
+        var breaks = EnsurePageBreaks();
+        double docTop = breaks[Math.Clamp(pageIndex, 0, breaks.Count - 1)];
+        using (ds.CreateLayer(1f, new Rect(PagePadX, PagePadY, PaperContentWidth, PaperContentHeight)))
+        {
+            // Document space → paper, then the caller's paper → device (row vectors: left applies first).
+            ds.Transform = Matrix3x2.CreateTranslation((float)(PagePadX - DocContentLeft), (float)(PagePadY - docTop)) * paperToDevice;
+            // _printMode gates all geometry recording, so this walk can't pollute hit-test caches.
+            // Clip to this page's doc range so printing/PDF renders O(page), not O(document) per page.
+            DrawContentWalk(ds, docTop - 1, docTop + PaperContentHeight + 1);
+            ds.Transform = paperToDevice;
+        }
+        DrawPageMarginChrome(ds, new Rect(0, 0, PaperWidth, PaperHeight), pageIndex, pageCount);
+    }
+
+    // The vector print path (RichEditorPrintHelper): `body` runs with the print layout in force and gets the
+    // page count and a page drawer (session, 0-based page) that draws in paper DIPs under the session's
+    // current transform. UI thread.
+    internal void WithPrintPages(Action<int, Action<CanvasDrawingSession, int>> body)
+    {
+        if (Document == null) return;
+        WithPrintLayout(() =>
+        {
+            int count = EnsurePageBreaks().Count;
+            body(count, (ds, i) => DrawPrintPage(ds, i, count));
+        });
     }
 
     // Reads a render target's pixels as top-down 24-bit RGB (PdfWriter's expected format).

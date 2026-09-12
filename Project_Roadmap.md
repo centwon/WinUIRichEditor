@@ -30,6 +30,29 @@
 3. 용량·메모리·성능은 **2026-08-15 전수조사**(바로 아래)에서 훑었다. 남은 것들은 그 절의
    "측정된 한계"에 근거와 함께 적어 뒀다 — 다시 파기 전에 그것부터 읽을 것.
 
+### AOT 인쇄 대화상자 · 벡터 인쇄 · 툴바 벡터 아이콘 (2026-09-12) — 구현, 테스트 593 → 598, 반증 6종
+빌드 0/0, **598/598**(작업 중 OS 클립보드가 막혀 클립보드 경로 11개가 한때 빨갰다 — 풀린 뒤 전부 통과).
+`ToolbarVectorIconAndPrintTests` 5. 벡터 인쇄 결과물(글자 선택 가능 여부)과 아이콘 모양은 실기 확인 대기.
+- **실기 (2026-09-12, 사용자)**: JIT 데모와 **AOT 게시본**(프로세스 경로로 확인) 둘 다 인쇄 대화상자가 열리고 미리보기가
+  문서를 그렸다. 실제 출력(스풀러까지)은 아직 미확인.
+- **AOT 인쇄**: `ShowPrintUIAsync`가 AOT에서 `false`로 물러나던 원인은 인쇄 시스템이 아니라 CsWinRT 투영이었다 —
+  `ShowPrintUIForWindowAsync`의 결과 `IAsyncOperation<bool>` 변환이 리플렉션을 요구하고, 예외가 대화상자가 뜬 **뒤에**
+  났다. `IPrintManagerInterop`을 COM vtable로 직접 부르고 반환 작업도 vtable로 읽는다(`IAsyncInfo.Status` 폴링 →
+  `GetResults`). JIT·AOT 한 경로. 라이브러리에 `AllowUnsafeBlocks`(함수 포인터용). 빌드 0/0, 593/593, 데모 AOT 게시
+  성공(IL2xxx/IL3xxx 경고 0, 15.5MB).
+  - ⚠️ **실기 미확인**: 대화상자·미리보기·실제 인쇄는 자동 검증이 없다. JIT 데모와 AOT 게시본
+  (`samples/WinUIRichEditor.Demo/bin/win-x64/publish/WinUIRichEditor.Demo.exe`) 둘 다 사람이 봐야 한다 — AOT는
+  "렌더되지만 동등하지 않다"(`LineMetrics` 전례).
+  - 데모 툴바 페이지 인쇄: PDF 직행 → "대화상자 먼저, 안 되면 PDF"(보기 페이지와 같게).
+- **벡터 인쇄**: 실기에서 드러난 한계 — 대화상자는 뜨지만 결과가 **150DPI 그림**이었다(PDF 프린터 출력에 글자 없음).
+  Win2D `CanvasPrintDocument`로 바꿔 렌더러가 프린터 세션에 직접 그린다. 페이지 그리기를 `DrawPrintPage`로 떼어 호출자의
+  변환 **위에 합성**하게 했다(용지 맞춤 축소가 그 위에 올라간다) — `ThePrintPageDrawer_…` 테스트가 고정. 인쇄 이벤트가
+  UI 스레드 밖에서 오면 지연(deferral)을 쥐고 UI 스레드로 옮긴다. `SavePdf`는 여전히 이미지 PDF(글꼴 내장 PDF 작성은 별도 큰 일).
+- **아이콘**: 처음엔 Segoe `E898`/`E896`으로 바꿨으나 실기에서 상류 그림과 **다른 모양**(막대 화살표)이었다 → 툴바 17개를
+  상류의 경로 그림으로 직접 그린다(`ToolbarIcons.CreateVector`, 파서 `PathMarkup`). B/I/U/S는 모양 준 글자. 메뉴는 Segoe 유지.
+  - ⚠️ 첫 판의 비활성 흐림은 `IsEnabledChanged`에 걸었다가 테스트가 잡았다 — 로컬 값 설정에 동기로 오지 않는다(트리 밖에선
+    아예 안 온다). `RegisterPropertyChangedCallback(IsEnabledProperty)`로.
+
 ### 감사: 캐럿 서식 보고 (2026-09-12) — 완료, 테스트 571 → 593, 결함 4건 + 같은 뿌리 2 + 동작 결정 3
 "관찰이 0인 공개 멤버" 스캔의 다섯 덩어리 중 하나. `CaretFormat`의 `Align`·`Heading`·`Quote`·`Strike`와 `SetFontFamily`
 등이 테스트 참조 0이었다. 검사 기준 — **오라클**: 캐럿 보고는 툴바가 "다음 타이핑이 쓸 서식"과 "화면"에 대해 하는
