@@ -6,6 +6,18 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — PDF 내보내기(`SavePdf`)도 글자로 나간다 (2026-09-12)
+
+`SavePdf`는 페이지마다 비트맵 한 장이었다(글자 선택·검색 불가). 이제 인쇄와 같은 페이지 그리기를 Direct2D 인쇄 컨트롤로
+Windows 기본 가상 프린터 **"Microsoft Print to PDF"**에 보내고, 작업 출력을 메모리 스트림으로 받는다 — 대화상자도 "다른
+이름으로 저장" 창도 없다. 글자는 글자로(부분 글꼴 + ToUnicode), 용지 크기는 편집기의 페이지 그대로. PDF는 인쇄 컨트롤을
+닫는 순간 완성돼 있다(측정) — 스풀러를 기다리지 않는다.
+
+- 그 프린터나 인쇄 스풀러가 없으면 예전처럼 비트맵 PDF로 쓴다. 툴바의 내보내기 → PDF도 이 경로를 탄다.
+- COM vtable을 함수 포인터로 부른다(인쇄 도우미와 같은 방식) — Native AOT에서도 컴파일되는 경로.
+- 상류(크로스플랫폼)는 같은 목적을 Skia PDF + HarfBuzz 글꼴 추리기로 이뤘다 — 수단은 다르고 결과는 같다(사용자 결정).
+- 공개 표면 불변(`dpi`는 대체 경로에만 쓰인다).
+
 ### Changed — 인쇄가 그림이 아니라 글자로 나간다 (2026-09-12)
 
 `RichEditorPrintHelper.ShowPrintUIAsync`는 페이지마다 150DPI 비트맵을 먼저 그려 PNG로 넘겼다. 그래서 PDF 프린터(Hancom PDF
