@@ -76,6 +76,9 @@
 
     <!-- Native AOT readiness: surface trim/AOT warnings from the library itself. -->
     <IsAotCompatible>true</IsAotCompatible>
+    <!-- For RichEditorPrintHelper: the print dialog is called through its COM vtable with function
+         pointers — the one AOT-safe route (the projection's generic result needs reflection). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Deterministic>true</Deterministic>
 
     <!-- RichEditorDiagnostics reports fault locations via [CallerFilePath], which the compiler bakes in
