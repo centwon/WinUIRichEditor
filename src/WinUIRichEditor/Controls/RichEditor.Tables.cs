@@ -348,7 +348,18 @@ public partial class RichEditor
                 return;
             }
             if (shift) return; // Shift+Tab outside lists/cells: nothing to outdent
+            // Tab completes the token before it the way a typed space does — AutoLinkOnType's contract
+            // names space, tab and Enter. The key inserts four spaces and InsertText auto-links only a single
+            // typed whitespace, so Tab never linked (measured). The link joins the spaces' undo group: their
+            // checkpoint was taken before either.
+            var tabPara = _caret.Paragraph;
+            int tabAt = _caret.Offset;
             InsertText("    ");
+            if (AutoLinkOnType && tabPara != null)
+            {
+                TryAutoLink(tabPara, tabAt);
+                AfterEdit(); // the link changes the paragraph's layout (underline, colour)
+            }
             return;
         }
 
