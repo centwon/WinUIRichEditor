@@ -2239,11 +2239,16 @@ public partial class RichEditor
         return false;
     }
 
-    // The effective font size (pt) of the run at a logical offset (heading override applied).
+    // The font size (pt) the run at a logical offset is DRAWN at — DrawnRunSize, the renderer's own rule,
+    // which also feeds the caret format. This used to return the heading size for ANY run in a heading,
+    // but the renderer draws an explicitly sized run at its own size: an H1's 36pt run got a 20pt caret,
+    // and a 12pt run one taller than its own line box (measured: a 32.0 caret in a 21.3 line box).
     private double RunFontSizeAt(Paragraph p, int offset)
     {
-        if (p.HeadingLevel is >= 1 and <= 6) return HeadingFontSize(p.HeadingLevel);
+        bool heading = p.HeadingLevel is >= 1 and <= 6;
+        double headingSize = heading ? HeadingFontSize(p.HeadingLevel) : 0;
         var r = RunAtOffset(p, offset);
-        return r != null && r.FontSize > 0 ? r.FontSize : DefaultFontSize;
+        return r != null ? DrawnRunSize(r, heading, headingSize, DefaultFontSize)
+                         : heading ? headingSize : DefaultFontSize;
     }
 }
