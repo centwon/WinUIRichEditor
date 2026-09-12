@@ -158,7 +158,7 @@ public partial class RichEditor
     // hyperlink → select/undo → inserts. Flattened vs. the old layout — alignment and margin now live directly
     // under 문단 모양 (no extra nesting level), and list/heading are promoted to top level. Windows-standard
     // clipboard terms (잘라내기/복사/붙여넣기) are kept; only the layout changed.
-    private void BuildTextMenu(MenuFlyout menu, bool hasSel, string? linkUri)
+    internal void BuildTextMenu(MenuFlyout menu, bool hasSel, string? linkUri)
     {
         void Item(MenuFlyoutItemBase i) => menu.Items.Add(i);
         var fmt = GetCaretFormat(); // current caret state → radio/check reflection
@@ -176,11 +176,13 @@ public partial class RichEditor
             // Precise pickers (specific size, text color, highlight, font family) live on the toolbar.
             // Always enabled: without a selection ApplyStyleToSelection targets the caret word, or arms a
             // pending format for the next typed text — same as the slim menu and the keyboard shortcuts.
+            // The four toggles are CHECK items reflecting the caret, like the slim menu's: as plain items
+            // this, the fuller menu, was the one that could not show whether bold was already on.
             Item(Sub(Loc("CharacterFormat"), RichEditorIcon.CharacterFormat,
-                Mi(Loc("Bold"), ToggleBold, true, RichEditorIcon.Bold, "Ctrl+B"),
-                Mi(Loc("Italic"), ToggleItalic, true, RichEditorIcon.Italic, "Ctrl+I"),
-                Mi(Loc("Underline"), ToggleUnderline, true, RichEditorIcon.Underline, "Ctrl+U"),
-                Mi(Loc("Strikethrough"), ToggleStrikethrough, true, RichEditorIcon.Strikethrough, "Ctrl+Shift+X"),
+                BulletToggle(Loc("Bold"), fmt.Bold, ToggleBold, RichEditorShortcuts.Display(ShortcutId.Bold), RichEditorIcon.Bold),
+                BulletToggle(Loc("Italic"), fmt.Italic, ToggleItalic, RichEditorShortcuts.Display(ShortcutId.Italic), RichEditorIcon.Italic),
+                BulletToggle(Loc("Underline"), fmt.Underline, ToggleUnderline, RichEditorShortcuts.Display(ShortcutId.Underline), RichEditorIcon.Underline),
+                BulletToggle(Loc("Strikethrough"), fmt.Strike, ToggleStrikethrough, RichEditorShortcuts.Display(ShortcutId.Strikethrough), RichEditorIcon.Strikethrough),
                 Sep(),
                 Mi(Loc("FontSizeIncrease"), IncreaseFontSize, true, RichEditorIcon.FontSizeIncrease, "Ctrl+Shift+."),
                 Mi(Loc("FontSizeDecrease"), DecreaseFontSize, true, RichEditorIcon.FontSizeDecrease, "Ctrl+Shift+,"),
@@ -287,10 +289,13 @@ public partial class RichEditor
         return sub;
     }
 
-    // A checkable toggle item for a list/quote state (checked reflects the caret paragraph).
-    private static ToggleMenuFlyoutItem BulletToggle(string text, bool isChecked, Action act, string? accel = null)
+    // A checkable toggle item for an on/off caret state — list/quote, or a character format (checked
+    // reflects the caret). The icon is optional: the full 글자 모양 group had icons as plain items and must
+    // keep them now that its items are checkable.
+    private static ToggleMenuFlyoutItem BulletToggle(string text, bool isChecked, Action act, string? accel = null, RichEditorIcon? icon = null)
     {
         var t = new ToggleMenuFlyoutItem { Text = text, IsChecked = isChecked, FontSize = MenuFontSize };
+        if (icon is { } k && MenuIcon(k) is { } ic) t.Icon = ic;
         if (accel != null) t.KeyboardAcceleratorTextOverride = accel;
         t.Click += (_, _) => act();
         return t;
@@ -543,12 +548,20 @@ public partial class RichEditor
         flyout.ShowAt(_canvas, new FlyoutShowOptions { Position = _ctxMenuPos });
     }
 
-    // Menu for a whole inline table selected by its border: block↔inline toggle + delete.
+    // Menu for a whole inline table selected by its border: copy, then block↔inline toggle + delete.
+    // Copy leads for the same reason it leads the image menu: an object wins the right-click even in a
+    // viewer (ChooseContextMenu), and with every item below gated on !IsReadOnly a viewer used to get an
+    // EMPTY flyout. CopyAsync already copies the selected inline table as a whole table.
     private void ShowInlineTableMenu(Point pos, Paragraph host, InlineTable it)
+        => BuildInlineTableMenu(host, it).ShowAt(_canvas, pos);
+
+    internal MenuFlyout BuildInlineTableMenu(Paragraph host, InlineTable it)
     {
         var menu = new MenuFlyout();
+        menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), true, RichEditorIcon.Copy, "Ctrl+C"));
         if (!IsReadOnly)
         {
+            menu.Items.Add(Sep());
             // 표 모양: 글자처럼 취급 (checked while inline) → separator → 표 삭제.
             var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = true, FontSize = MenuFontSize };
             t.Click += (_, _) => ConvertInlineTableToBlock(host, it);
@@ -556,13 +569,13 @@ public partial class RichEditor
             menu.Items.Add(Sep());
             menu.Items.Add(Mi(Loc("DeleteTable"), DeleteSelectedInlineTable, true, RichEditorIcon.DeleteTable));
         }
-        menu.ShowAt(_canvas, pos);
+        return menu;
     }
 
     // The table-structure operations, shown as a "Table" submenu when editing inside a cell.
-    private MenuFlyoutSubItem BuildTableSubmenu(TableBlock tb, int r, int c)
+    internal MenuFlyoutSubItem BuildTableSubmenu(TableBlock tb, int r, int c)
     {
-        var sub = new MenuFlyoutSubItem { Text = Loc("TableOps") };
+        var sub = new MenuFlyoutSubItem { Text = Loc("TableOps"), FontSize = MenuFontSize };
         void Add(string text, Action act, bool enabled = true, RichEditorIcon? icon = null) => sub.Items.Add(Mi(text, act, enabled, icon));
 
         // ── Edit ── Copy the current cell as a 1×1 sub-table (a whole merged cell copies its content), so it
