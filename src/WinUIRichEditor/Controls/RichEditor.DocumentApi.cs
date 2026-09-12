@@ -73,11 +73,13 @@ public partial class RichEditor
     public string ToJson() => Document != null ? DocumentSerializer.Serialize(Document) : "";
 
     /// <summary>Replaces the document with one loaded from the library's JSON format.</summary>
-    /// <exception cref="System.Text.Json.JsonException"><paramref name="json"/> is not valid JSON. A
-    /// damaged file is reported rather than read as an empty document, so the open document is left
-    /// alone instead of being replaced by a blank one the next save would write over the original.
-    /// </exception>
-    public void LoadJson(string json) => LoadDocument(DocumentSerializer.Deserialize(json));
+    /// <exception cref="System.Text.Json.JsonException"><paramref name="json"/> is not valid JSON — or is
+    /// valid JSON that is not a document of this library (an object with no <c>Blocks</c>, such as another
+    /// application's settings file). Either way the input is reported rather than read as an empty
+    /// document, so the open document is left alone instead of being replaced by a blank one the next
+    /// save would write over the original. A literal <c>null</c> reads as an empty document, as
+    /// <see cref="DocumentSerializer.Deserialize"/> documents.</exception>
+    public void LoadJson(string json) => LoadDocument(DocumentSerializer.DeserializeDocument(json));
 
     /// <summary>Serializes the document to JSON on a background thread, keeping the UI responsive for
     /// large documents. A clone is taken on the calling (UI) thread so concurrent edits can't tear the
@@ -92,10 +94,10 @@ public partial class RichEditor
     /// <summary>Parses JSON into a document on a background thread, then swaps it in. Model objects are
     /// built in the background (value-type colors are thread-safe; image decode is deferred to first
     /// render), so only the document swap touches the UI. Call (and await) from the UI thread.</summary>
-    /// <exception cref="System.Text.Json.JsonException"><paramref name="json"/> is not valid JSON
-    /// (see <see cref="LoadJson"/>). The open document is left alone.</exception>
+    /// <exception cref="System.Text.Json.JsonException"><paramref name="json"/> is not valid JSON or not a
+    /// document of this library (see <see cref="LoadJson"/>). The open document is left alone.</exception>
     public async Task LoadJsonAsync(string json)
-        => LoadDocument(await Task.Run(() => DocumentSerializer.Deserialize(json)));
+        => LoadDocument(await Task.Run(() => DocumentSerializer.DeserializeDocument(json)));
 
     /// <summary>Writes the document to <paramref name="destination"/> as a <c>.flow</c> package
     /// (ZIP: document.json + raw image entries, no base64 overhead) on a background thread. A clone is
@@ -109,12 +111,17 @@ public partial class RichEditor
     /// <summary>Reads a <c>.flow</c> package from <paramref name="source"/> on a background thread, then
     /// swaps the document in. Call (and await) from the UI thread.</summary>
     /// <exception cref="System.IO.InvalidDataException"><paramref name="source"/> is not a readable
-    /// <c>.flow</c> package (not a zip, or damaged).</exception>
+    /// <c>.flow</c> package: not a zip, damaged, or a zip with no <c>document.json</c> (a .docx, say).</exception>
     /// <exception cref="System.Text.Json.JsonException">The package's <c>document.json</c> is not valid
-    /// JSON. As with <see cref="LoadJson"/>, a damaged package is reported rather than read as an empty
-    /// document; the open document is left alone.</exception>
+    /// JSON, or not a document of this library. As with <see cref="LoadJson"/>, such input is reported
+    /// rather than read as an empty document; the open document is left alone.</exception>
     public async Task LoadPackageAsync(System.IO.Stream source)
-        => LoadDocument(await Task.Run(() => DocumentPackage.Load(source)));
+        => LoadDocument(await Task.Run(() =>
+        {
+            var (dto, pool) = DocumentPackage.ReadPackage(source);
+            DocumentSerializer.EnsureDocumentShape(dto);
+            return DocumentSerializer.FromDto(dto, pool);
+        }));
 
     /// <summary>Clears the document to a single empty paragraph.</summary>
     public void Clear() => LoadDocument(new FlowDocument());
