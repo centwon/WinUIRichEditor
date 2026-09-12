@@ -273,21 +273,21 @@ public partial class RichEditor
         {
             _caret = tp;
             CollapseSelectionToCaret();
-            if (CurrentLinkUri() is { Length: > 0 })
+            // The link under the POINTER, not the run before the caret (see LinkRunAtPoint).
+            if (LinkRunAtPoint(ptp)?.NavigateUri is { Length: > 0 } link)
             {
                 RestartBlink();
                 SyncIme();
                 InvalidateCanvas();
                 RaiseStatusChanged();
-                _ = OpenLinkAtCaretAsync();
+                _ = OpenUriAsync(link);
                 return;
             }
         }
 
         // Read-only viewer: a PLAIN click on a link opens it (no Ctrl needed — browser convention).
         // Armed here, launched on release only when no drag-selection happened in between.
-        if (IsReadOnly && !Shift && tp.Paragraph != null
-            && RunAtOffset(tp.Paragraph, tp.Offset > 0 ? tp.Offset - 1 : 0)?.NavigateUri is { Length: > 0 } roUri)
+        if (IsReadOnly && !Shift && LinkRunAtPoint(ptp)?.NavigateUri is { Length: > 0 } roUri)
             _pressLink = (roUri, new Point(ptp.X, ptp.Y));
 
         var now = DateTime.UtcNow;
@@ -430,10 +430,8 @@ public partial class RichEditor
         SetCursorShape(onHandle ? InputSystemCursorShape.SizeNorthwestSoutheast : InputSystemCursorShape.IBeam);
     }
 
-    // Whether the document position under the point sits on a hyperlinked run.
-    private bool LinkAtPoint(Point pt)
-        => GetPositionFromPoint(pt) is { Paragraph: { } p } tp
-           && RunAtOffset(p, tp.Offset > 0 ? tp.Offset - 1 : 0)?.NavigateUri is { Length: > 0 };
+    // Whether the character under the point is hyperlinked (see LinkRunAtPoint).
+    private bool LinkAtPoint(Point pt) => LinkRunAtPoint(pt) != null;
 
     private void SetCursorShape(InputSystemCursorShape shape)
     {

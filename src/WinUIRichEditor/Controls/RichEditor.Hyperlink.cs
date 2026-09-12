@@ -82,7 +82,7 @@ public partial class RichEditor
         int start = end;
         while (start > 0 && !char.IsWhiteSpace(plain[start - 1]) && plain[start - 1] != '￼') start--;
         if (end - start < 8) return; // shortest sensible candidate ("http://x", "www.a.bc")
-        string token = plain.Substring(start, end - start).TrimEnd('.', ',', ';', ':', ')', ']', '!', '?', '"', '\'');
+        string token = TrimUrlTail(plain.Substring(start, end - start));
         if (token.Length < 8) return;
 
         bool www = token.StartsWith("www.", StringComparison.OrdinalIgnoreCase);
@@ -99,6 +99,65 @@ public partial class RichEditor
             .ApplyPropertyValue(r => r.NavigateUri = url);
     }
 
+    // Sentence punctuation after a URL is not part of it — but a closing bracket that CLOSES one inside the
+    // URL is: Wikipedia's .../wiki/Foo_(bar). Trimming ')' unconditionally linked ".../Foo_(bar", a different
+    // page (measured; upstream has the same TrimEnd). A closer is dropped only while the token has more
+    // closers than openers, so "(see https://example.com)" still loses its ')'.
+    internal static string TrimUrlTail(string token)
+    {
+        while (token.Length > 0)
+        {
+            char c = token[^1];
+            if (c is '.' or ',' or ';' or ':' or '!' or '?' or '"' or '\'') { token = token[..^1]; continue; }
+            if (c == ')' && Count(token, ')') > Count(token, '(')) { token = token[..^1]; continue; }
+            if (c == ']' && Count(token, ']') > Count(token, '[')) { token = token[..^1]; continue; }
+            break;
+        }
+        return token;
+
+        static int Count(string s, char ch)
+        {
+            int n = 0;
+            foreach (var x in s) if (x == ch) n++;
+            return n;
+        }
+    }
+
+    // The hyperlinked run under a document point: the character UNDER the pointer. Hover, Ctrl+click and the
+    // read-only click all used to ask "is the run before the caret a link" — but the caret a click produces
+    // is the NEAREST character boundary, so the left half of a link's first character landed on the
+    // boundary before it (not a link) and the left half of the character just AFTER a link landed on its
+    // end (a link): a click half a character outside a link opened it, one inside its first character did
+    // not (measured). Upstream hit-tests the character itself (IsInside). This derives the same answer from
+    // the one layout the caret already comes from (core rule #1): pointer left of the caret → the character
+    // before it, right of it → the character at it, and none when that character is on another line — the
+    // pointer is past a line's end or before its start.
+    private Run? LinkRunAtPoint(Windows.Foundation.Point pt)
+    {
+        if (GetPositionFromPoint(pt) is not { Paragraph: { } p } tp) return null;
+        if (CaretToDocPoint(tp) is not { } c || pt.Y < c.LineTop || pt.Y > c.LineBottom) return null;
+        int ch;
+        if (pt.X >= c.X)
+        {
+            if (tp.AtLineEnd || tp.Offset >= GetParagraphLength(p) || BuildPlain(p)[tp.Offset] == '\n') return null;
+            ch = tp.Offset;
+        }
+        else
+        {
+            if (tp.Offset == 0) return null;
+            if (CaretToDocPoint(new TextPointer(p, tp.Offset - 1)) is not { } prev || Math.Abs(prev.LineTop - c.LineTop) > 0.5) return null;
+            ch = tp.Offset - 1;
+        }
+        int pos = 0;
+        foreach (var inl in p.Inlines)
+        {
+            int n = InlineLen(inl);
+            if (ch < pos + n) return inl is Run { NavigateUri: { Length: > 0 } } r ? r : null;
+            pos += n;
+        }
+        return null;
+    }
+
     /// <summary>Launches the hyperlink at the caret in the system browser, if any.</summary>
     public Task OpenLinkAtCaretAsync() => OpenUriAsync(CurrentLinkUri());
 
@@ -106,11 +165,23 @@ public partial class RichEditor
     // plain-click path) pass it in rather than re-reading the caret, which may have moved since.
     internal async Task OpenUriAsync(string? url)
     {
-        if (url is not { Length: > 0 }) return;
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        {
-            try { await Windows.System.Launcher.LaunchUriAsync(uri); }
-            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
-        }
+        if (!IsLaunchableLink(url, out var uri)) return;
+        try { await Windows.System.Launcher.LaunchUriAsync(uri); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+    }
+
+    // Only WEB links are launched. A document's links come from anywhere — a pasted web page, an RTF from
+    // Word or HWP, someone else's file — and the launcher hands any scheme to whatever handler is registered
+    // for it: search-ms:, ms-settings:, ms-msdt: (the Follina handler), an application's own protocol… with
+    // no prompt, from one Ctrl+click, or in a read-only viewer a plain click. This used to launch whatever
+    // Uri.TryCreate accepted. Upstream's OpenUrl already allows http/https only; converged on the same rule
+    // (so mailto: links, too, are left to the host).
+    internal static bool IsLaunchableLink(string? url, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Uri? uri)
+    {
+        uri = null;
+        if (url is not { Length: > 0 } || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u)) return false;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps) return false;
+        uri = u;
+        return true;
     }
 }
