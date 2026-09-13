@@ -61,7 +61,9 @@ public static class DocumentSerializer
     {
         var blocks = new List<BlockDto>();
         foreach (var block in document.Blocks) blocks.Add(BlockToDto(block, images));
-        var dto = new FlowDocumentDto { Version = CurrentSchemaVersion, Blocks = blocks };
+        // The marker only for a document that really carries its heading formats: a host's own model that no
+        // editor has converted yet must stay "legacy" in the file, or it would load back with plain headings.
+        var dto = new FlowDocumentDto { Version = CurrentSchemaVersion, Blocks = blocks, HeadingFormat = document.HeadingFormatsApplied ? 1 : null };
         // Only persist a non-default page setup, so plain (Continuous) documents keep their original format.
         if (document.PageSetup is { IsDefault: false } ps)
             dto.PageSetup = new PageSetupDto
@@ -128,7 +130,7 @@ public static class DocumentSerializer
     // Rebuilds the document from a DTO plus the resolved image pool.
     internal static FlowDocument FromDto(FlowDocumentDto? dto, Dictionary<string, (byte[] Bytes, string Mime)> pool)
     {
-        var doc = new FlowDocument();
+        var doc = new FlowDocument { HeadingFormatsApplied = dto?.HeadingFormat >= 1 };
         if (dto?.Blocks != null)
             foreach (var bd in dto.Blocks)
             {
@@ -145,6 +147,10 @@ public static class DocumentSerializer
                 Footer = psd.Footer,
                 ShowPageNumbers = psd.ShowPageNumbers,
             };
+        // A file without the HeadingFormat marker (older, or upstream's) is read as it is — the marker's
+        // absence stays on the document, and the EDITOR converts it when it receives it (OnDocumentAssigned).
+        // Converting here broke the native formats' contract, a document read back exactly as it was saved
+        // (DocumentFuzzTests caught it on the first run).
         return RunNormalizer.Compact(doc);
     }
 
@@ -489,6 +495,11 @@ internal class FlowDocumentDto
     public Dictionary<string, ImagePoolDto>? Images { get; set; }
     // Optional page setup; absent for plain (Continuous) documents, so the format is unchanged for them.
     public PageSetupDto? PageSetup { get; set; }
+    // 1 = heading formatting is on the runs (bold and the heading size, written when the heading was set).
+    // Absent in files written before 2026-09-12 and by upstream, whose renderers forced both; the EDITOR then
+    // writes them onto the runs once when it receives the document (HeadingStyle.Materialize) — the reader
+    // leaves the model as it was saved. Upstream ignores unknown properties.
+    public int? HeadingFormat { get; set; }
 }
 
 // Enums are serialized as their names (matching the rest of the format), so unknown future values degrade

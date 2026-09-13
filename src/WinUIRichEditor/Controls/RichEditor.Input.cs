@@ -167,6 +167,10 @@ public partial class RichEditor
         _pendingCaretStyles = null;
         if (Document != null)
         {
+            // A document from before heading formats lived on their runs (an older file, upstream's, a host's
+            // own model) gets them now, once — the flag rides along in undo snapshots and saved files, so text
+            // the user un-bolded is never re-bolded. See HeadingStyle.Materialize.
+            HeadingStyle.Materialize(Document);
             UpdateParents(Document);
             var first = FirstParagraph();
             _caret = new TextPointer(first, 0);
@@ -418,9 +422,10 @@ public partial class RichEditor
         if ((Ctrl || IsReadOnly) && LinkAtPoint(pt)) { SetCursorShape(InputSystemCursorShape.Hand); return; }
         if (OverColumnBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeWestEast); return; }
         if (OverRowBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeNorthSouth); return; }
-        // Table block-select cursor: edit only, matching TrySelectTableBlock / TrySelectInlineTable
-        // (OverColumnBoundary / OverRowBoundary already self-gate on IsReadOnly).
-        if (!IsReadOnly && (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt))) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
+        // Table block-select cursor, matching TrySelectTableBlock / TrySelectInlineTable — in a viewer too, where
+        // it is the sign that a click here takes the whole table (OverColumnBoundary / OverRowBoundary, the
+        // resize cursors above, stay edit-only: they self-gate on IsReadOnly).
+        if (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt)) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
         bool onHandle = false;
         if (_selectedBlock is ImageBlock selB)
             foreach (var rect in BlockImageHandleRects(selB)) // top-level map + cell registry
@@ -776,6 +781,8 @@ public partial class RichEditor
             return;
         }
 
+        if (TryCellBlockKey(e.Key, shift, ctrl, alt)) { e.Handled = true; return; }
+
         switch (e.Key)
         {
             case VirtualKey.Left: MoveCaretLeft(shift); e.Handled = true; break;
@@ -792,6 +799,25 @@ public partial class RichEditor
             case VirtualKey.Tab: if (!IsReadOnly) { HandleTab(shift); e.Handled = true; } break;
             case VirtualKey.F3: if (AllowFindReplace && FindAgain(shift)) e.Handled = true; break;
             default: break;
+        }
+    }
+
+    // Cell-block keys (unified with upstream, 2026-09-13). F5 (HWP) selects the caret's cell as a one-cell
+    // block. Shift+arrow on a cell block grows or shrinks it by whole cells (ExtendCellBlock). A plain arrow is
+    // not handled here: it ends the block like any caret move. Split from OnEditorKeyDown so it can be driven
+    // without a KeyRoutedEventArgs (no public constructor) and the live Shift state.
+    private bool TryCellBlockKey(VirtualKey key, bool shift, bool ctrl, bool alt)
+    {
+        if (ctrl || alt) return false;
+        if (key == VirtualKey.F5) return !shift && SelectCellAtCaret();
+        if (!shift || CellBlockSelection() is not { } blk) return false;
+        switch (key)
+        {
+            case VirtualKey.Left: ExtendCellBlock(blk.tb, 0, -1); return true;
+            case VirtualKey.Right: ExtendCellBlock(blk.tb, 0, 1); return true;
+            case VirtualKey.Up: ExtendCellBlock(blk.tb, -1, 0); return true;
+            case VirtualKey.Down: ExtendCellBlock(blk.tb, 1, 0); return true;
+            default: return false;
         }
     }
 
@@ -873,6 +899,9 @@ public partial class RichEditor
             return;
         }
         var run = src != null ? (Run)src.Clone() : new Run();
+        // No text in the paragraph to take a format from: in a heading the typed text gets the heading's
+        // preset, which the caret report and the caret size already assume.
+        if (src == null && HeadingStyle.IsHeading(p.HeadingLevel)) HeadingStyle.ApplyPreset(run, p.HeadingLevel);
         run.Text = text;
         run.Parent = p;
         if (!link) run.NavigateUri = null;
@@ -1081,8 +1110,11 @@ public partial class RichEditor
             inl.Parent = np;
             np.Inlines.Add(inl);
         }
+        // The text carried into the new body paragraph leaves the heading's format behind; a heading left
+        // empty keeps it on its empty run, so typing there still writes heading text.
+        HeadingStyle.Retype(np, p.HeadingLevel, 0, DefaultFontSize);
         if (np.Inlines.Count == 0) np.Inlines.Add(new Run { Text = "" });
-        if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
+        if (p.Inlines.Count == 0) p.Inlines.Add(HeadingStyle.EmptyRun(p.HeadingLevel));
         np.Parent = p.Parent;
         container.Insert(idx + 1, np);
         _caret = new TextPointer(np, 0);
@@ -1135,11 +1167,8 @@ public partial class RichEditor
 
             var (ar, ac) = loc.tb.AnchorOf(loc.r, loc.c);
             AddRange(ParagraphsInBlocks(loc.tb.Cells[ar][ac].Blocks)); // 1: the cell's content
-            for (TableBlock? t = loc.tb; t != null; )                  // 2..: each enclosing table
-            {
+            for (TableBlock? t = loc.tb; t != null; t = EnclosingTableOf(t)) // 2..: each enclosing table
                 AddRange(ParagraphsInBlocks(new[] { (Block)t }));
-                t = t.Parent is TableCell tc && tc.Parent is TableBlock outer ? outer : null;
-            }
             AddRange(AllParagraphs());                                 // last: the whole document
 
             bool Eq((Paragraph s, int so, Paragraph e, int eo) st)
@@ -1170,6 +1199,18 @@ public partial class RichEditor
         _caret = Clone(_selEnd);
         InvalidateCanvas();
         RaiseStatusChanged(); // flush SelectionChanged now, not with the next unrelated input
+    }
+
+    // The table one level further out: a table nested in a cell, or — for an inline table — the table holding the
+    // cell its host paragraph is in (upstream's EnclosingTableOf). Climbing through TableCell parents only stopped at
+    // an inline table, so Ctrl+A went from an inline table straight to the whole document, skipping the table
+    // around it (measured 2026-09-14).
+    private static TableBlock? EnclosingTableOf(TableBlock t)
+    {
+        if (t.Parent is TableCell c && c.Parent is TableBlock outer) return outer;
+        if (t.Parent is InlineTable it && it.Parent is Paragraph host
+            && host.Parent is TableCell hc && hc.Parent is TableBlock ht) return ht;
+        return null;
     }
 
     private void CollapseSelectionToCaret()
@@ -1489,10 +1530,13 @@ public partial class RichEditor
         ClearObjectSelection();
         if (Document != null)
         {
-            int bi = Document.Blocks.IndexOf(blk);
-            if (bi >= 0)
-                for (int i = forward ? bi + 1 : bi - 1; i >= 0 && i < Document.Blocks.Count; i += forward ? 1 : -1)
-                    if (Document.Blocks[i] is Paragraph q)
+            // Its own container — the document, or a table cell (a cell image; a table nested in a cell, which
+            // its border selects since 2026-09-13). Looking in Document.Blocks alone left the caret where it was.
+            var blocks = BlockContainerOf(blk);
+            int bi = blocks?.IndexOf(blk) ?? -1;
+            if (blocks != null && bi >= 0)
+                for (int i = forward ? bi + 1 : bi - 1; i >= 0 && i < blocks.Count; i += forward ? 1 : -1)
+                    if (blocks[i] is Paragraph q)
                     {
                         _caret = new TextPointer(q, forward ? 0 : GetParagraphLength(q));
                         break;
@@ -2245,7 +2289,7 @@ public partial class RichEditor
         double headingSize = heading ? HeadingFontSize(p.HeadingLevel) : 0;
         // On an inline object (no character format) the text typed beside it decides — TypingSource.
         var r = RunAtOffset(p, offset) ?? TypingSource(p, offset).Run;
-        return r != null ? DrawnRunSize(r, heading, headingSize, DefaultFontSize)
+        return r != null ? DrawnRunSize(r, DefaultFontSize)
                          : heading ? headingSize : DefaultFontSize;
     }
 }

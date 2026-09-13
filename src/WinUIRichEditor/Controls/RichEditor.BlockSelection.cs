@@ -63,9 +63,9 @@ public partial class RichEditor
 
     // Selects a whole inline table when its left/top border is clicked (a click inside descends into a
     // cell instead, via HitInlineTable). The grab band reuses the block-table border width.
+    // A viewer too: there the selection is what Copy (Ctrl+C, the right-click menu) takes — the whole table.
     private bool TrySelectInlineTable(Point pt)
     {
-        if (IsReadOnly) return false;
         foreach (var (it, v) in _inlineTableRects)
             if (OnEdgeBorder(v.rect, pt))
             {
@@ -299,7 +299,19 @@ public partial class RichEditor
         PushUndo(null);
         _selectedBlock = null;
         int idx = Document.Blocks.IndexOf(blk);
-        if (idx < 0) { RemoveBlockAnywhere(blk); UpdateParents(Document); AfterEdit(); return; }
+        if (idx < 0)
+        {
+            // A block inside a table cell — an image, or (since its border selects it, 2026-09-13) a table
+            // nested there. The caret moves to that cell: it may have been INSIDE the removed table, and would
+            // otherwise point at a paragraph no longer in the document.
+            var cellBlocks = BlockContainerOf(blk);
+            RemoveBlockAnywhere(blk);
+            UpdateParents(Document);
+            var landing = (cellBlocks != null ? ParagraphsInBlocks(cellBlocks).FirstOrDefault() : null) ?? FirstParagraph();
+            if (landing != null) { _caret = new TextPointer(landing, 0); CollapseSelectionToCaret(); }
+            AfterEdit();
+            return;
+        }
         Document.Blocks.RemoveAt(idx);
         UpdateParents(Document); // re-normalizes so a paragraph borders the gap
 

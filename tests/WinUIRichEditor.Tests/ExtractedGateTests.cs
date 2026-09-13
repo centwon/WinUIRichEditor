@@ -25,7 +25,8 @@ public class ExtractedGateTests
     {
         0 => Kind.BlockImage,
         1 => Kind.InlineImage,
-        _ => Kind.InlineTable,
+        2 => Kind.InlineTable,
+        _ => Kind.BlockTable,
     };
 
     // ---- which context menu a right-click opens -----------------------------------------------------
@@ -33,17 +34,19 @@ public class ExtractedGateTests
     // An object under the pointer wins over any text menu: you right-clicked the image, not the line it
     // sits on. Asserted with every text-state combination underneath, because the object cases must not
     // depend on them at all.
+    // A table's left/top border band counts as the table (2026-09-13): it is where a click selects it.
     [Theory]
-    [InlineData(true, false, false, 0)]
-    [InlineData(false, true, false, 1)]
-    [InlineData(false, false, true, 2)]
-    public void AnObjectUnderThePointer_WinsOverEveryTextMenu(bool block, bool inlineImg, bool inlineTable, int kind)
+    [InlineData(true, false, false, false, 0)]
+    [InlineData(false, true, false, false, 1)]
+    [InlineData(false, false, true, false, 2)]
+    [InlineData(false, false, false, true, 3)]
+    public void AnObjectUnderThePointer_WinsOverEveryTextMenu(bool block, bool inlineImg, bool inlineTable, bool tableEdge, int kind)
     {
         var expected = KindOf(kind);
         foreach (bool readOnly in new[] { false, true })
             foreach (bool hasSel in new[] { false, true })
                 foreach (string? link in new[] { null, "https://example.com/x" })
-                    Assert.Equal(expected, RichEditor.ChooseContextMenu(block, inlineImg, inlineTable, readOnly, hasSel, link));
+                    Assert.Equal(expected, RichEditor.ChooseContextMenu(block, inlineImg, inlineTable, readOnly, hasSel, link, tableEdge));
     }
 
     // The object order among themselves: block image, then inline image, then inline table.
@@ -52,6 +55,7 @@ public class ExtractedGateTests
     {
         Assert.Equal(Kind.BlockImage, RichEditor.ChooseContextMenu(true, true, true, false, false, null));
         Assert.Equal(Kind.InlineImage, RichEditor.ChooseContextMenu(false, true, true, false, false, null));
+        Assert.Equal(Kind.InlineTable, RichEditor.ChooseContextMenu(false, false, true, false, false, null, true));
     }
 
     // A viewer offers copy, never edit — so read-only beats the link menu and the full menu both.

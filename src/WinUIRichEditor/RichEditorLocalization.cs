@@ -126,9 +126,10 @@ public static class RichEditorLocalization
             ["UnmergeCells"] = "Unmerge Cells",
             ["CellVerticalAlign"] = "Cell Vertical Alignment",
             ["VAlignTop"] = "Top",
-            ["VAlignCenter"] = "Center",
+            ["VAlignCenter"] = "Middle", // vertical alignment (Excel/CSS); converged with upstream
             ["VAlignBottom"] = "Bottom",
             ["CopyCell"] = "Copy Cell",
+            ["SelectCell"] = "Select Cell",
             ["DeleteTable"] = "Delete Table",
             ["TableOps"] = "Table",
             // Dialogs
@@ -272,6 +273,7 @@ public static class RichEditorLocalization
             ["VAlignCenter"] = "가운데",
             ["VAlignBottom"] = "아래",
             ["CopyCell"] = "셀 복사",
+            ["SelectCell"] = "셀 선택",
             ["DeleteTable"] = "표 삭제",
             ["TableOps"] = "표",
             // Dialogs

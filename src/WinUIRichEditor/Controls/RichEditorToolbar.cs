@@ -383,6 +383,22 @@ public partial class RichEditorToolbar : UserControl
                 heading.Items.Add(new ComboBoxItem { Content = Loc("BodyText"), Tag = 0 });
                 for (int i = 1; i <= 6; i++) heading.Items.Add(new ComboBoxItem { Content = Loc("Heading" + i), Tag = i });
                 heading.SelectionChanged += (_, _) => { if (!_suppress && heading.SelectedItem is ComboBoxItem ci) Target?.SetHeading((int)ci.Tag); };
+                // Re-picking the level already shown re-applies it — that restores a heading's bold and size
+                // after the user changed them (HeadingStyle.Retype). SelectionChanged cannot see that pick: the
+                // selection does not change. The press records whether the item was ALREADY the selected one and
+                // the release applies only then, so picking a different level is applied once, by SelectionChanged.
+                bool reapply = false;
+                foreach (var item in heading.Items.OfType<ComboBoxItem>())
+                {
+                    item.AddHandler(UIElement.PointerPressedEvent,
+                        new Microsoft.UI.Xaml.Input.PointerEventHandler((s, _) => reapply = ReferenceEquals(heading.SelectedItem, s)), true);
+                    item.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((s, _) =>
+                    {
+                        if (!reapply || s is not ComboBoxItem ci) return;
+                        reapply = false;
+                        Target?.SetHeading((int)ci.Tag);
+                    }), true);
+                }
                 Add(heading);
 
                 var align = MakeCombo(96, Loc("Alignment")); _align = align;

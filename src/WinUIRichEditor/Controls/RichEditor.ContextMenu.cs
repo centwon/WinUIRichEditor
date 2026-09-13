@@ -58,20 +58,22 @@ public partial class RichEditor
     // the part worth pinning and the handler is the part that cannot be tested — it needs a
     // RightTappedRoutedEventArgs, which has no public constructor. The handler now does the hit-testing
     // and the acting; this decides, and it decides from plain values.
-    internal enum ContextMenuKind { BlockImage, InlineImage, InlineTable, ReadOnlyText, Link, Text }
+    internal enum ContextMenuKind { BlockImage, InlineImage, InlineTable, BlockTable, ReadOnlyText, Link, Text }
 
     /// The priority order, which is a contract and not an accident:
-    /// an object under the pointer wins over any text menu (you right-clicked the object, not the line);
+    /// an object under the pointer wins over any text menu (you right-clicked the object, not the line) —
+    /// a table's left/top border band counts as the table, the band a click selects it on;
     /// read-only wins over everything textual (a viewer offers copy, never edit); and the concise link
     /// menu only replaces the full one when there is no selection — with a selection the user is acting
     /// on the selection, not on the link under the pointer.
     internal static ContextMenuKind ChooseContextMenu(
         bool onBlockImage, bool onInlineImage, bool onInlineTableEdge,
-        bool isReadOnly, bool hasSelection, string? linkUri)
+        bool isReadOnly, bool hasSelection, string? linkUri, bool onBlockTableEdge = false)
     {
         if (onBlockImage) return ContextMenuKind.BlockImage;
         if (onInlineImage) return ContextMenuKind.InlineImage;
         if (onInlineTableEdge) return ContextMenuKind.InlineTable;
+        if (onBlockTableEdge) return ContextMenuKind.BlockTable;
         if (isReadOnly) return ContextMenuKind.ReadOnlyText;
         if (!hasSelection && !string.IsNullOrEmpty(linkUri)) return ContextMenuKind.Link;
         return ContextMenuKind.Text;
@@ -80,8 +82,35 @@ public partial class RichEditor
     private void OnCanvasRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         _canvas.Focus(Microsoft.UI.Xaml.FocusState.Pointer);
-        CancelTableDraw(); // a right-click abandons an armed table-draw
         var pos = e.GetPosition(_canvas);             // view space — where the menu opens
+        var menu = BuildContextMenuAt(pos);
+        Compact(menu.Items);
+        if (menu.Items.Count > 0) menu.ShowAt(_canvas, pos);
+        e.Handled = true;
+    }
+
+    // Denser rows, as AvaloniaRichEditor's menu (user request, 2026-09-14): WinUI's default item padding
+    // (11,9,11,10 measured) sizes rows for touch — 37px rows, 9px separators with a 12px font. Upstream's rows
+    // are 10,2,10,2 (18px there, 1px separators; measured in its headless host), so the same numbers here.
+    // Applied to every item, submenu item and separator on the way out, so no builder has to remember it.
+    private static readonly Thickness MenuItemPadding = new(10, 2, 10, 2);
+    private static readonly Thickness MenuSeparatorPadding = new(12, 0, 12, 0);
+
+    private static void Compact(System.Collections.Generic.IList<MenuFlyoutItemBase> items)
+    {
+        foreach (var item in items)
+        {
+            item.Padding = item is MenuFlyoutSeparator ? MenuSeparatorPadding : MenuItemPadding;
+            if (item is MenuFlyoutSubItem sub) Compact(sub.Items);
+        }
+    }
+
+    // Everything a right-click does except opening the flyout — hit-testing, moving the caret or selecting
+    // the object, building the menu — so it can be driven from a plain point: the handler's
+    // RightTappedRoutedEventArgs has no public constructor, which kept this whole path untested.
+    internal MenuFlyout BuildContextMenuAt(Point pos)
+    {
+        CancelTableDraw(); // a right-click abandons an armed table-draw
         _ctxMenuPos = pos;
         var ipt = ViewToDoc(new Point(pos.X, pos.Y)); // doc space — for hit-testing
 
@@ -105,52 +134,90 @@ public partial class RichEditor
         if (hitBlockImage == null && hitInlineImage == null)
             foreach (var (it, v) in _inlineTableRects)
                 if (OnEdgeBorder(v.rect, ipt)) { hitInlineTable = (v.host, it); break; }
+        // A top-level table's left/top border band — where a click selects the table. A right-click there
+        // opened the text menu (the band lies partly outside the grid, and the caret moved to whatever was
+        // nearest), so the table a click had just selected could not be copied from the menu (live check,
+        // 2026-09-13).
+        TableBlock? edgeTable = null;
+        if (hitBlockImage == null && hitInlineImage == null && hitInlineTable == null
+            && OnTableSelectBorder(ipt, out var et)) edgeTable = et;
 
         // Right-clicking outside an existing selection moves the caret there first (Word/VS behavior).
         // Only when no object was hit — those select the object instead.
-        bool onObject = hitBlockImage != null || hitInlineImage != null || hitInlineTable != null;
+        bool onObject = hitBlockImage != null || hitInlineImage != null || hitInlineTable != null || edgeTable != null;
+        // On a link, the caret goes just past the character UNDER the pointer — inside the link — so the link
+        // menu and its caret-based actions (open/edit/remove) act on the link the pointer is on. The nearest
+        // boundary alone put the left half of a link's first character before the link (the text menu) and a
+        // point just past its end at its end (the link menu) — half a character off on both edges, the defect
+        // the click path had (measured 2026-09-13). Upstream hit-tests the character (GetLinkRunAtPoint).
         if (!onObject && !HasSelection && GetPositionFromPoint(ipt) is { } tp)
         {
-            _caret = tp; CollapseSelectionToCaret(); InvalidateCanvas();
+            _caret = LinkHitAtPoint(ipt) is { } hit ? CaretJustPast(hit.p, hit.ch) : tp;
+            CollapseSelectionToCaret(); InvalidateCanvas();
         }
 
-        // The caret may have just moved, so read the selection and the link AFTER it.
+        // The caret may have just moved, so read the selection and the link AFTER it. Without a selection the
+        // link is the one under the pointer; with one, the menu acts on the selection and the link items on
+        // the caret's link, as they always have.
         bool hasSel = HasSelection;
-        string? linkUri = onObject ? null : CurrentLinkUri();
+        string? linkUri = onObject ? null : hasSel ? CurrentLinkUri() : LinkHitAtPoint(ipt)?.run.NavigateUri;
         var kind = ChooseContextMenu(hitBlockImage != null, hitInlineImage != null, hitInlineTable != null,
-                                     IsReadOnly, hasSel, linkUri);
+                                     IsReadOnly, hasSel, linkUri, edgeTable != null);
 
         var menu = new MenuFlyout();
         switch (kind)
         {
             case ContextMenuKind.BlockImage:
                 _selectedInline = null; _selectedBlock = hitBlockImage; CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowImageMenu(pos, hitBlockImage, null); e.Handled = true; return;
+                return BuildImageMenu(hitBlockImage, null);
 
             case ContextMenuKind.InlineImage:
                 _selectedBlock = null; _selectedInline = hitInlineImage; CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowImageMenu(pos, null, hitInlineImage!.Value.img); e.Handled = true; return;
+                return BuildImageMenu(null, hitInlineImage!.Value.img);
 
             case ContextMenuKind.InlineTable:
                 ClearObjectSelection(); _selectedInlineTable = hitInlineTable; CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowInlineTableMenu(pos, hitInlineTable!.Value.host, hitInlineTable.Value.it); e.Handled = true; return;
+                return BuildInlineTableMenu(hitInlineTable!.Value.host, hitInlineTable.Value.it);
+
+            case ContextMenuKind.BlockTable:
+                ClearObjectSelection(); _selectedBlock = edgeTable; CollapseSelectionToCaret(); InvalidateCanvas();
+                return BuildBlockTableMenu(edgeTable!);
 
             case ContextMenuKind.ReadOnlyText: // a viewer: copy + select-all only
-                menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), hasSel, RichEditorIcon.Copy, "Ctrl+C"));
+            {
+                // Right-clicked in a table with nothing selected: Copy takes the TABLE, as right-clicking an
+                // image copies the image. The generic Copy acts on the selection — empty here — so a viewer
+                // got a greyed-out item and no way to take the table (live check, 2026-09-12). The table is
+                // the cell's the caret just moved into (its border band is the BlockTable case above).
+                var table = hasSel ? null
+                    : _caret.Paragraph is { } cp && FindCell(cp) is { } at ? at.tb : null;
+                // ...and it is shown selected, so the viewer sees what Copy will take (live check, 2026-09-13).
+                if (table != null) SelectTableObject(table);
+                else if (HasBlockSelection) { ClearObjectSelection(); InvalidateCanvas(); } // a table shown selected earlier must not linger
+                menu.Items.Add(Mi(Loc("Copy"), () => _ = table != null ? CopyTableToClipboard(table) : CopyAsync(),
+                                  hasSel || table != null, RichEditorIcon.Copy, "Ctrl+C"));
                 menu.Items.Add(Mi(Loc("SelectAll"), SelectAll, true, RichEditorIcon.SelectAll, "Ctrl+A"));
-                break;
+                return menu;
+            }
 
             case ContextMenuKind.Link:
                 BuildLinkMenu(menu, linkUri!);
-                break;
+                return menu;
 
             default:
                 BuildTextMenu(menu, hasSel, linkUri);
-                break;
+                return menu;
         }
+    }
 
-        menu.ShowAt(_canvas, pos);
-        e.Handled = true;
+    // Shows `tb` selected as an object — the chrome a border click draws: a top-level table, a table in a
+    // cell (which has its chrome since 2026-09-13), or an inline table.
+    private void SelectTableObject(TableBlock tb)
+    {
+        ClearObjectSelection();
+        if (tb.Parent is FlowDocument or TableCell) _selectedBlock = tb;
+        else if (tb.Parent is InlineTable it && it.Parent is Paragraph host) _selectedInlineTable = (host, it);
+        InvalidateCanvas();
     }
 
     // The caret-position text menu, shared by top-level paragraphs and table cells.
@@ -158,7 +225,7 @@ public partial class RichEditor
     // hyperlink → select/undo → inserts. Flattened vs. the old layout — alignment and margin now live directly
     // under 문단 모양 (no extra nesting level), and list/heading are promoted to top level. Windows-standard
     // clipboard terms (잘라내기/복사/붙여넣기) are kept; only the layout changed.
-    private void BuildTextMenu(MenuFlyout menu, bool hasSel, string? linkUri)
+    internal void BuildTextMenu(MenuFlyout menu, bool hasSel, string? linkUri)
     {
         void Item(MenuFlyoutItemBase i) => menu.Items.Add(i);
         var fmt = GetCaretFormat(); // current caret state → radio/check reflection
@@ -176,11 +243,13 @@ public partial class RichEditor
             // Precise pickers (specific size, text color, highlight, font family) live on the toolbar.
             // Always enabled: without a selection ApplyStyleToSelection targets the caret word, or arms a
             // pending format for the next typed text — same as the slim menu and the keyboard shortcuts.
+            // The four toggles are CHECK items reflecting the caret, like the slim menu's: as plain items
+            // this, the fuller menu, was the one that could not show whether bold was already on.
             Item(Sub(Loc("CharacterFormat"), RichEditorIcon.CharacterFormat,
-                Mi(Loc("Bold"), ToggleBold, true, RichEditorIcon.Bold, "Ctrl+B"),
-                Mi(Loc("Italic"), ToggleItalic, true, RichEditorIcon.Italic, "Ctrl+I"),
-                Mi(Loc("Underline"), ToggleUnderline, true, RichEditorIcon.Underline, "Ctrl+U"),
-                Mi(Loc("Strikethrough"), ToggleStrikethrough, true, RichEditorIcon.Strikethrough, "Ctrl+Shift+X"),
+                BulletToggle(Loc("Bold"), fmt.Bold, ToggleBold, RichEditorShortcuts.Display(ShortcutId.Bold), RichEditorIcon.Bold),
+                BulletToggle(Loc("Italic"), fmt.Italic, ToggleItalic, RichEditorShortcuts.Display(ShortcutId.Italic), RichEditorIcon.Italic),
+                BulletToggle(Loc("Underline"), fmt.Underline, ToggleUnderline, RichEditorShortcuts.Display(ShortcutId.Underline), RichEditorIcon.Underline),
+                BulletToggle(Loc("Strikethrough"), fmt.Strike, ToggleStrikethrough, RichEditorShortcuts.Display(ShortcutId.Strikethrough), RichEditorIcon.Strikethrough),
                 Sep(),
                 Mi(Loc("FontSizeIncrease"), IncreaseFontSize, true, RichEditorIcon.FontSizeIncrease, "Ctrl+Shift+."),
                 Mi(Loc("FontSizeDecrease"), DecreaseFontSize, true, RichEditorIcon.FontSizeDecrease, "Ctrl+Shift+,"),
@@ -287,10 +356,13 @@ public partial class RichEditor
         return sub;
     }
 
-    // A checkable toggle item for a list/quote state (checked reflects the caret paragraph).
-    private static ToggleMenuFlyoutItem BulletToggle(string text, bool isChecked, Action act, string? accel = null)
+    // A checkable toggle item for an on/off caret state — list/quote, or a character format (checked
+    // reflects the caret). The icon is optional: the full 글자 모양 group had icons as plain items and must
+    // keep them now that its items are checkable.
+    private static ToggleMenuFlyoutItem BulletToggle(string text, bool isChecked, Action act, string? accel = null, RichEditorIcon? icon = null)
     {
         var t = new ToggleMenuFlyoutItem { Text = text, IsChecked = isChecked, FontSize = MenuFontSize };
+        if (icon is { } k && MenuIcon(k) is { } ic) t.Icon = ic;
         if (accel != null) t.KeyboardAcceleratorTextOverride = accel;
         t.Click += (_, _) => act();
         return t;
@@ -431,7 +503,7 @@ public partial class RichEditor
     }
 
     // Image context menu: size presets (fraction of natural), replace, save, margin, block↔inline, delete.
-    private void ShowImageMenu(Point pos, ImageBlock? block, InlineImage? inline)
+    internal MenuFlyout BuildImageMenu(ImageBlock? block, InlineImage? inline)
     {
         string L(string k) => RichEditorLocalization.GetString(k);
         var menu = new MenuFlyout();
@@ -489,7 +561,7 @@ public partial class RichEditor
             menu.Items.Add(Sep());
             Add(L("Delete"), DeleteSelectedObject, true, RichEditorIcon.Delete);
         }
-        menu.ShowAt(_canvas, pos);
+        return menu;
     }
 
     // Cell-background palette flyout (the toolbar's 40 swatches + "none"). Applies to the selected
@@ -543,12 +615,18 @@ public partial class RichEditor
         flyout.ShowAt(_canvas, new FlyoutShowOptions { Position = _ctxMenuPos });
     }
 
-    // Menu for a whole inline table selected by its border: block↔inline toggle + delete.
-    private void ShowInlineTableMenu(Point pos, Paragraph host, InlineTable it)
+    // Menu for a whole inline table selected by its border: copy, then block↔inline toggle + delete.
+    // Copy leads for the same reason it leads the image menu: an object wins the right-click even in a
+    // viewer (ChooseContextMenu), and with every item below gated on !IsReadOnly a viewer used to get an
+    // EMPTY flyout. CopyAsync already copies the selected inline table as a whole table.
+    internal MenuFlyout BuildInlineTableMenu(Paragraph host, InlineTable it)
     {
         var menu = new MenuFlyout();
+        menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), true, RichEditorIcon.Copy, "Ctrl+C"));
         if (!IsReadOnly)
         {
+            menu.Items.Add(Mi(Loc("Cut"), () => _ = CutAsync(), true, RichEditorIcon.Cut, "Ctrl+X"));
+            menu.Items.Add(Sep());
             // 표 모양: 글자처럼 취급 (checked while inline) → separator → 표 삭제.
             var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = true, FontSize = MenuFontSize };
             t.Click += (_, _) => ConvertInlineTableToBlock(host, it);
@@ -556,18 +634,47 @@ public partial class RichEditor
             menu.Items.Add(Sep());
             menu.Items.Add(Mi(Loc("DeleteTable"), DeleteSelectedInlineTable, true, RichEditorIcon.DeleteTable));
         }
-        menu.ShowAt(_canvas, pos);
+        return menu;
+    }
+
+    // Menu for a whole top-level table selected by its border — the block twin of the inline-table menu:
+    // copy and cut take the table (CopyAsync/CutAsync act on the selected object), then 글자처럼 취급
+    // (unchecked: this table is a block) and 표 삭제. A viewer gets Copy alone.
+    internal MenuFlyout BuildBlockTableMenu(TableBlock tb)
+    {
+        var menu = new MenuFlyout();
+        menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), true, RichEditorIcon.Copy, "Ctrl+C"));
+        if (!IsReadOnly)
+        {
+            menu.Items.Add(Mi(Loc("Cut"), () => _ = CutAsync(), true, RichEditorIcon.Cut, "Ctrl+X"));
+            menu.Items.Add(Sep());
+            // 글자처럼 취급 converts a TOP-LEVEL table (ConvertTableBlockToInline anchors to the paragraphs around
+            // it in the document); a table in a cell is offered no toggle that would do nothing.
+            if (tb.Parent is FlowDocument)
+            {
+                var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = false, FontSize = MenuFontSize };
+                t.Click += (_, _) => ConvertTableBlockToInline(tb);
+                menu.Items.Add(t);
+                menu.Items.Add(Sep());
+            }
+            menu.Items.Add(Mi(Loc("DeleteTable"), DeleteSelectedObject, true, RichEditorIcon.DeleteTable));
+        }
+        return menu;
     }
 
     // The table-structure operations, shown as a "Table" submenu when editing inside a cell.
-    private MenuFlyoutSubItem BuildTableSubmenu(TableBlock tb, int r, int c)
+    internal MenuFlyoutSubItem BuildTableSubmenu(TableBlock tb, int r, int c)
     {
-        var sub = new MenuFlyoutSubItem { Text = Loc("TableOps") };
+        var sub = new MenuFlyoutSubItem { Text = Loc("TableOps"), FontSize = MenuFontSize };
         void Add(string text, Action act, bool enabled = true, RichEditorIcon? icon = null) => sub.Items.Add(Mi(text, act, enabled, icon));
 
         // ── Edit ── Copy the current cell as a 1×1 sub-table (a whole merged cell copies its content), so it
         // pastes back as a cell — not just text. A multi-cell rectangle uses the ordinary Copy (Ctrl+C) path.
         Add(Loc("CopyCell"), () => _ = CopyCell(tb, r, c), r >= 0 && c >= 0, RichEditorIcon.Copy);
+        // One-cell block (F5; upstream's "셀 선택"): the cell as a unit — Delete clears it, formatting and the
+        // background take all of it, Copy takes it as a 1×1 table, Shift+arrow grows it by cells.
+        sub.Items.Add(Mi(Loc("SelectCell"), () => { if (r >= 0 && c >= 0) { var (ar, ac) = tb.AnchorOf(r, c); SelectCellAsBlock(tb.Cells[ar][ac]); } },
+                         r >= 0 && c >= 0, null, RichEditorShortcuts.Display(ShortcutId.SelectCell)));
         sub.Items.Add(Sep());
         // ── Rows ──
         Add(Loc("InsertRowAbove"), () => TableInsertRow(tb, r), r >= 0, RichEditorIcon.InsertRowAbove);

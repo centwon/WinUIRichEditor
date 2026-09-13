@@ -80,8 +80,17 @@ public static class HtmlDocumentFormatter
         _prefetchedRemoteImages = null;
         _blockOrMediaMemo = null; // fresh memo per parse
         var doc = LoadHtmlDoc(ref html);
-        try { return RunNormalizer.Compact(BuildDocument(doc, html)); }
+        try { return Finish(BuildDocument(doc, html)); }
         finally { _blockOrMediaMemo = null; } // don't retain the DOM past the parse
+    }
+
+    // The reader writes every heading's bold and size onto its runs (HeadingSize, from the <h1>..<h6> it
+    // came from), so the document is marked as carrying them: the editor must not convert it again — that
+    // would re-bold heading text this library exported un-bolded (font-weight:normal).
+    private static FlowDocument Finish(FlowDocument doc)
+    {
+        doc.HeadingFormatsApplied = true;
+        return RunNormalizer.Compact(doc);
     }
 
     /// <summary>Same as <see cref="ParseHtml(string, bool, bool)"/> but downloads remote (<c>http</c>) images concurrently
@@ -103,7 +112,7 @@ public static class HtmlDocumentFormatter
         _allowTempFileImages = allowTempFileImages;
         _prefetchedRemoteImages = prefetched;
         _blockOrMediaMemo = null; // fresh memo per parse
-        try { return RunNormalizer.Compact(BuildDocument(doc, html)); }
+        try { return Finish(BuildDocument(doc, html)); }
         finally { _prefetchedRemoteImages = null; _blockOrMediaMemo = null; }
     }
 
@@ -825,10 +834,15 @@ public static class HtmlDocumentFormatter
         if (wm.Success)
         {
             string wv = wm.Groups[1].Value.Trim();
-            if (wv.Contains("bold") // bold / bolder
-                || (int.TryParse(wv, System.Globalization.NumberStyles.Integer,
-                        System.Globalization.CultureInfo.InvariantCulture, out int wnum) && wnum >= 600))
+            bool numeric = int.TryParse(wv, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int wnum);
+            if (wv.Contains("bold") || (numeric && wnum >= 600)) // bold / bolder
                 weight = FontWeightValues.Bold;
+            // Normal UN-bolds what an enclosing element made bold — CSS does, and this library's own export
+            // relies on it for un-bolded heading text (<h1> is bold). It was ignored: Google Docs wraps a
+            // paste in <b style="font-weight:normal">, and everything came in bold.
+            else if (wv is "normal" or "lighter" || (numeric && wnum < 600))
+                weight = FontWeightValues.Normal;
         }
         if (s.Contains("font-style:italic") || s.Contains("font-style: italic")) style = FontStyle.Italic;
         if (System.Text.RegularExpressions.Regex.IsMatch(s, "text-decoration[^;]*underline")) underline = true;
@@ -1063,7 +1077,7 @@ public static class HtmlDocumentFormatter
         // when the <table> starts, so on import there is no pending paragraph and the marker's
         // reattachment would otherwise grab whatever paragraph precedes it.
         for (int i = 0; i < p.Inlines.Count; i++)
-            EmitInline(sb, p.Inlines[i], i == 0, i == p.Inlines.Count - 1);
+            EmitInline(sb, p.Inlines[i], i == 0, i == p.Inlines.Count - 1, tag[0] == 'h' ? p.HeadingLevel : 0);
         sb.Append($"</{tag}>");
         if (newlineAfter) sb.Append('\n');
     }
@@ -1197,7 +1211,7 @@ public static class HtmlDocumentFormatter
     // `opensParagraph`/`closesParagraph` mark the first and last inline of their paragraph. The first
     // drives the inline-table marker; the last gates the trailing-space encoding below, because HTML
     // drops whitespace at the end of a block and a space there would not come back.
-    private static void EmitInline(StringBuilder sb, Inline inline, bool opensParagraph = false, bool closesParagraph = false)
+    private static void EmitInline(StringBuilder sb, Inline inline, bool opensParagraph = false, bool closesParagraph = false, int heading = 0)
     {
         if (inline is InlineImage im && (im.RawBytes != null || im.Image != null))
         {
@@ -1221,8 +1235,15 @@ public static class HtmlDocumentFormatter
 
         var styles = new List<string>();
         if (!string.IsNullOrEmpty(r.FontFamily)) styles.Add($"font-family:'{AttrEscape(r.FontFamily).Replace("'", "")}'");
-        if (r.FontSize > 0 && System.Math.Abs(r.FontSize - 10) > 0.01)
+        // A size goes out when it differs from what the reader assumes for this element: the body default,
+        // or inside <h1>..<h6> the heading's size, which the reader gives everything in it. 10pt in a
+        // heading used to be dropped as "the default" and came back at the heading's size.
+        bool inHeading = HeadingStyle.IsHeading(heading);
+        double assumed = inHeading ? HeadingStyle.Size(heading) : 10;
+        if (r.FontSize > 0 && System.Math.Abs(r.FontSize - assumed) > 0.01)
             styles.Add($"font-size:{r.FontSize.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}pt");
+        // <h1>..<h6> is bold to every reader (browsers, Word, this one), so un-bolded heading text says so.
+        if (inHeading && !r.FontWeight.IsBold()) styles.Add("font-weight:normal");
         if (r.Foreground is { } fg) styles.Add($"color:{ColorUtil.ToCss(fg)}");
         if (r.Background is { } bg) styles.Add($"background-color:{ColorUtil.ToCss(bg)}");
 

@@ -281,28 +281,36 @@ public class ControlCaretFormatTests
         Assert.True(ed.GetCaretFormat().Bold);
     });
 
+    // A heading's bold is on its runs (HeadingStyle, user decision 2026-09-12): written when the heading is
+    // set, an ordinary attribute after that. So Ctrl+B takes it off — with an undo step, and the report
+    // follows — and a second press puts it back. It used to do nothing: the renderer forced the bold.
     [Fact]
-    public void CtrlB_OnAHeading_DoesNothing() => UiThread.Run(() =>
+    public void CtrlB_OnAHeading_TurnsItsBoldOff_AndBackOn() => UiThread.Run(() =>
     {
         var ed = Editor(Para(1, Plain("Title")));
         var p = Paras(ed)[0];
         Select(ed, p, 0, p, 5);
         ed.ToggleBold();
-        Assert.False(ed.CanUndo);
+        Assert.True(ed.CanUndo);
         Assert.Equal(400, RunAt(Paras(ed)[0], 1).FontWeight.Weight);
+        Assert.False(ed.GetCaretFormat().Bold);
+        p = Paras(ed)[0];
+        Select(ed, p, 0, p, 5);
+        ed.ToggleBold();
+        Assert.True(RunAt(Paras(ed)[0], 1).FontWeight.Weight >= 600);
     });
 
-    // With no word at the caret the toggle would arm a pending style for the next keystroke — invisible in
-    // a heading, and a hidden bold flag that would surface once the heading is removed. Not armed at all.
+    // With no word at the caret the toggle arms a pending style, in a heading as anywhere: the next
+    // keystroke comes out un-bolded, and the heading's own text is left alone.
     [Fact]
-    public void CtrlB_AtAnEmptyCaretInAHeading_ArmsNothing() => UiThread.Run(() =>
+    public void CtrlB_AtAnEmptyCaretInAHeading_UnboldsTheNextKeystroke() => UiThread.Run(() =>
     {
         var ed = Editor(Para(1, Plain("Title ")));
         Caret(ed, Paras(ed)[0], 6);
         ed.ToggleBold();
-        Assert.Null(T.GetField("_pendingCaretStyles", NP)!.GetValue(ed));
         ed.InsertText("Z");
         Assert.Equal(400, RunAt(Paras(ed)[0], 6).FontWeight.Weight);
+        Assert.True(RunAt(Paras(ed)[0], 0).FontWeight.Weight >= 600);
     });
 
     // Heading plus body: the heading counts as bold (shown so), the body is not, so the toggle turns bold

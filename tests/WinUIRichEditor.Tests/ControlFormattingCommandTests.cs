@@ -517,7 +517,10 @@ public class ControlFormattingCommandTests
         ed.ClearFormatting();
 
         var r = RunAt(p, 0);
-        Assert.Equal(400, r.FontWeight.Weight);
+        // Heading text clears to the heading's own format, as body text clears to the body's: bold at the
+        // H2 size — what the heading wrote onto its text when it was set (HeadingStyle).
+        Assert.Equal(700, r.FontWeight.Weight);
+        Assert.Equal(16, r.FontSize);
         Assert.Equal(Windows.UI.Text.FontStyle.Normal, r.FontStyle);
         Assert.Equal(TextDecorationFlags.None, r.TextDecorations);
         Assert.Null(r.FontFamily);
@@ -589,12 +592,12 @@ public class ControlFormattingCommandTests
         Assert.Equal(24, RunAt(p, 2).FontSize); // the rung above 20 — not 10.5, which shrank it
     });
 
-    // Changing the heading level re-sizes UNSTYLED text (it is drawn at the heading's size), and leaves
-    // text the user sized explicitly alone — "larger" stamps an explicit size, which is why a heading
-    // change after it keeps that size. Pinned after a live check reported "H1 -> H2 does not change the
-    // size": the demo was running a stale library, and the sequence had pressed "larger" first.
+    // Applying a heading writes its size onto every run, each time — a size the user chose in between (here
+    // "larger", which stamps an explicit size) shows, and gives way on the next application. Until 2026-09-13
+    // an explicit size was kept across a level change; the user decided a heading's application restores
+    // the heading's look (HeadingStyle.Retype).
     [Fact]
-    public void SetHeading_ResizesUnstyledText_AndKeepsAnExplicitSize() => UiThread.Run(() =>
+    public void SetHeading_WritesTheLevelsSizeOnEveryRun_EachTime() => UiThread.Run(() =>
     {
         var p = new Paragraph();
         p.Inlines.Add(new Run { Text = "Title" });
@@ -607,10 +610,11 @@ public class ControlFormattingCommandTests
         Assert.Equal(16, ed.GetCaretFormat().FontSize); // follows the level
 
         ed.IncreaseFontSize();                          // explicit 18 now (the ladder's rung above 16)
+        Assert.Equal(18, ed.GetCaretFormat().FontSize); // the change shows...
         ed.SetHeading(1);
-        Assert.Equal(18, ed.GetCaretFormat().FontSize); // not the H1 size: explicit wins over the level
+        Assert.Equal(20, ed.GetCaretFormat().FontSize); // ...until the next application
         ed.SetHeading(3);
-        Assert.Equal(18, ed.GetCaretFormat().FontSize);
+        Assert.Equal(14, ed.GetCaretFormat().FontSize);
     });
 
     [Fact]

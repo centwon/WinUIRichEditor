@@ -35,24 +35,20 @@ public partial class RichEditor : ContentControl
     // device-independent pixels at a 96-DPI baseline (1pt = 4/3 px); convert only at this boundary.
     internal static double PtToPx(double pt) => pt * (4.0 / 3.0);
 
-    internal static double HeadingFontSize(int level)
-        => level switch { 1 => 20, 2 => 16, 3 => 14, 4 => 12, 5 => 11, 6 => 10, _ => BodyFontSizePt };
-
-    private static bool RunSizeIsBodyDefault(Run r) => r.FontSize <= 0 || Math.Abs(r.FontSize - BodyFontSizePt) < 0.01;
+    internal static double HeadingFontSize(int level) => HeadingStyle.Size(level);
 
     // The size (pt) a run is DRAWN at — the one rule, used by CreateLayout to draw it and by GetCaretFormat
     // to report it, so the toolbar cannot show a size the text is not shown at (and IncreaseFontSize, which
-    // steps from the reported size, cannot shrink text it means to grow). In a heading an unstyled run takes
-    // the heading's size; otherwise an unset size (≤ 0) falls back to DefaultFontSize.
-    private static double DrawnRunSize(Run r, bool heading, double headingSize, double defaultSize)
-        => heading && RunSizeIsBodyDefault(r) ? headingSize : r.FontSize <= 0 ? defaultSize : r.FontSize;
+    // steps from the reported size, cannot shrink text it means to grow). An unset size (≤ 0) falls back to
+    // DefaultFontSize. A heading no longer overrides it: its size is on its runs (HeadingStyle).
+    private static double DrawnRunSize(Run r, double defaultSize) => r.FontSize <= 0 ? defaultSize : r.FontSize;
 
     // The attributes the renderer FORCES, whatever the run says — same pairing as DrawnRunSize: CreateLayout
-    // draws with them and GetCaretFormat reports them, so the toolbar shows what is on screen. A heading is
-    // drawn bold; a hyperlink underlined, and link-blue unless it has its own colour (so in-app SetHyperlink
-    // and pasted links look identical).
+    // draws with them and GetCaretFormat reports them, so the toolbar shows what is on screen. A hyperlink is
+    // drawn underlined, and link-blue unless it has its own colour (so in-app SetHyperlink and pasted links
+    // look identical). A heading's bold used to be forced too; it is a run attribute now (HeadingStyle).
     internal static readonly Windows.UI.Color LinkColor = Windows.UI.Color.FromArgb(255, 0, 0, 255);
-    private static bool DrawnBold(Run r, bool heading) => heading || r.FontWeight.IsBold();
+    private static bool DrawnBold(Run r) => r.FontWeight.IsBold();
     private static bool DrawnUnderline(Run r)
         => r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri);
     private static Windows.UI.Color? DrawnForeground(Run r)
@@ -490,9 +486,6 @@ public partial class RichEditor : ContentControl
         string defaultFamily = DefaultFontFamily;
         double defaultSize = DefaultFontSize;
 
-        bool heading = p.HeadingLevel is >= 1 and <= 6;
-        double headingSize = heading ? HeadingFontSize(p.HeadingLevel) : 0;
-
         string plain = BuildPlain(p);
         // `using`: CanvasTextLayout copies the format's state at construction, so the format is dead
         // weight afterwards. Without this the hottest path in the control (every measurement — see
@@ -516,8 +509,8 @@ public partial class RichEditor : ContentControl
             if (inline is Run r && r.Text != null)
             {
                 var family = string.IsNullOrEmpty(r.FontFamily) ? defaultFamily : r.FontFamily!;
-                var weight = heading ? FontWeights.Bold : r.FontWeight;
-                double size = DrawnRunSize(r, heading, headingSize, defaultSize);
+                var weight = r.FontWeight;
+                double size = DrawnRunSize(r, defaultSize);
                 if (size > maxRunPt) maxRunPt = size;
 
                 layout.SetFontFamily(pos, len, family);
@@ -549,7 +542,9 @@ public partial class RichEditor : ContentControl
 
         // Custom line spacing: proportional LineSpacing wins (scales with the paragraph's font; ≤1.0
         // keeps the font's natural metrics so glyphs never clip), else an absolute LineHeight, else auto.
-        double lh = ResolveLineHeight(p, maxRunPt, heading ? headingSize : defaultSize);
+        // With no text to measure, the size the first typed character will get — a heading's preset (as
+        // EmptyLineHeight), else the default.
+        double lh = ResolveLineHeight(p, maxRunPt, p.HeadingLevel is >= 1 and <= 6 ? HeadingFontSize(p.HeadingLevel) : defaultSize);
         if (!double.IsNaN(lh) && lh > 0)
         {
             layout.LineSpacingMode = CanvasLineSpacingMode.Uniform;

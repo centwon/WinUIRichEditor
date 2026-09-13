@@ -213,6 +213,43 @@ public class ControlHyperlinkTests
         Assert.Equal(enabled, open.IsEnabled);
     });
 
+    // ---- the link dialog's OK (the dialog itself — focus, caret in the box — is checked by hand) -------
+
+    // A blank spot has no word to link: the address goes in as the link's text (Word). Arming the link for the
+    // next typed text showed nothing, so the link looked lost (live check, 2026-09-14).
+    [Fact]
+    public void TheLinkDialog_OnABlankSpot_InsertsTheAddressAsTheLink() => UiThread.Run(() =>
+    {
+        var ed = Typing(); // "x |"
+        Call(ed, "ApplyHyperlinkFromDialog", " https://example.com/ ");
+
+        var runs = ed.Document!.Blocks.OfType<Paragraph>().First().Inlines.OfType<Run>().ToList();
+        Assert.Contains(runs, r => r.Text == "https://example.com/" && r.NavigateUri == "https://example.com/");
+        Assert.Equal("x https://example.com/", string.Concat(runs.Select(r => r.Text)));
+
+        ed.Undo(); // one step
+        Assert.Equal("x ", string.Concat(ed.Document!.Blocks.OfType<Paragraph>().First().Inlines.OfType<Run>().Select(r => r.Text)));
+    });
+
+    // Inside a word the word gets the link — nothing is inserted.
+    [Fact]
+    public void TheLinkDialog_InAWord_LinksTheWord_AndInsertsNothing() => UiThread.Run(() =>
+    {
+        var p = new Paragraph();
+        p.Inlines.Add(new Run { Text = "hello world" });
+        var doc = new FlowDocument();
+        doc.Blocks.Add(p);
+        var ed = new RichEditor { Document = doc };
+        var para = ed.Document!.Blocks.OfType<Paragraph>().First();
+        foreach (var f in new[] { "_caret", "_selStart", "_selEnd" }) T.GetField(f, NP)!.SetValue(ed, new TextPointer(para, 2));
+
+        Call(ed, "ApplyHyperlinkFromDialog", "https://example.com/");
+
+        var runs = para.Inlines.OfType<Run>().ToList();
+        Assert.Equal("hello world", string.Concat(runs.Select(r => r.Text)));
+        Assert.Equal("https://example.com/", runs.Single(r => r.Text == "hello").NavigateUri);
+    });
+
     // ---- what a click is on (hosted: this needs a real layout) --------------------------------------
 
     private static readonly Lazy<RichEditor> Hosted = new(() =>
@@ -261,6 +298,31 @@ public class ControlHyperlinkTests
             Assert.True(On(ed, s.x + 1.5, sy), "inside the link's first character");
             Assert.True(On(ed, e.x - 1.5, ey), "inside the link's last character");
             Assert.False(On(ed, e.x + 1.5, ey), "right of the link's last character");
+        });
+    }
+
+    // A right-click decides the same way, and its caret-based actions see the link it decided on. The menu
+    // used to read the link BEFORE the nearest caret boundary: the left half of the first character got the
+    // text menu, 1.5px past the end the link menu (measured 2026-09-13).
+    [Fact]
+    public void ARightClick_OpensTheLinkMenu_ExactlyWhereTheLinkIsDrawn()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var (s, e) = Layout(ed, "aaaa ", " bbbb");
+            double sy = s.y + s.h / 2, ey = e.y + e.h / 2;
+            string openLink = RichEditorLocalization.GetString("OpenLink");
+            MenuFlyoutItem First(double x, double y) => ed.BuildContextMenuAt(new Point(x, y)).Items.OfType<MenuFlyoutItem>().First();
+
+            Assert.NotEqual(openLink, First(s.x - 1.5, sy).Text);
+            var inFirst = First(s.x + 1.5, sy);
+            Assert.Equal(openLink, inFirst.Text);
+            Assert.True(inFirst.IsEnabled, "Open Link disabled: the caret is not on the link the menu is for");
+            Assert.Equal("https://example.com/", ed.CurrentLinkUri());
+            Assert.Equal(openLink, First(e.x - 1.5, ey).Text);
+            Assert.Equal("https://example.com/", ed.CurrentLinkUri());
+            Assert.NotEqual(openLink, First(e.x + 1.5, ey).Text);
         });
     }
 
@@ -338,6 +400,36 @@ public class ControlHyperlinkTests
 
             Assert.True(On(ed, c.x + 1.5, c.y + c.h / 2), "the link's first character on line 2");
             Assert.False(On(ed, c.x - 3, c.y + c.h / 2), "left of line 2's text: the margin, not the link");
+        });
+    }
+
+    // A right-click on the link's last character of line 1 puts the caret just past it — which is also the
+    // soft-wrap boundary. It stays on line 1 (AtLineEnd), after the character the pointer was on, instead of
+    // jumping to the start of line 2.
+    [Fact]
+    public void ARightClick_OnALinksLastCharacterBeforeAWrap_KeepsTheCaretOnThatLine()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var p = new Paragraph();
+            p.Inlines.Add(new Run { Text = string.Concat(Enumerable.Repeat("word ", 200)).TrimEnd(), NavigateUri = "https://example.com/" });
+            var doc = new FlowDocument();
+            doc.Blocks.Add(p);
+            ed.Document = doc;
+            Call(ed, "RelayoutToViewport");
+
+            var first = CaretAt(ed, 0);
+            int lineStart = Enumerable.Range(1, 999).First(o => CaretAt(ed, o).y > first.y + 1);
+            var last = CaretAt(ed, lineStart - 1); // the link's character that ends line 1
+
+            ed.BuildContextMenuAt(new Point(last.x + 1, last.y + last.h / 2));
+
+            var caret = (TextPointer)T.GetField("_caret", NP)!.GetValue(ed)!;
+            Assert.Equal(lineStart, caret.Offset);
+            var box = Call(ed, "CaretToDocPoint", caret)!;
+            Assert.Equal(first.y, (double)box.GetType().GetField("Item2")!.GetValue(box)!, 1);
+            Assert.Equal("https://example.com/", ed.CurrentLinkUri());
         });
     }
 
