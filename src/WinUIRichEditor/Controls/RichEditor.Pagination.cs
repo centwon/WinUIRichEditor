@@ -118,28 +118,66 @@ public partial class RichEditor
     // against the apply->DP-change->capture feedback loop.
     private bool _syncingPageSetup;
 
+    // What the HOST asked for, as opposed to what the open document carries. A document with no page setup
+    // of its own — and a new one (Clear) — starts from this. It used to adopt whatever the DPs held, which
+    // after opening an A5-landscape file was THAT file's setup: the next plain document opened as A5
+    // landscape with its header, and saving it wrote them in (decided 2026-09-12; upstream has the same
+    // adopt-current design). A page DP set by code counts as the host's; values applied from a document do
+    // not (_syncingPageSetup), and neither do the toolbar's paper/orientation pickers, which edit the open
+    // document (EditDocumentPageSetup). Recorded PER PROPERTY: the DP callback is shared with unrelated DPs
+    // (DefaultFontSize…), and snapshotting every page DP there would promote the open document's A5 to a
+    // host default.
+    private readonly Documents.PageSetup _hostPageSetup = new(); // starts equal to the DP defaults
+    private int _documentPageSetupEdit;
+
+    // Runs a page-setup change that edits the OPEN DOCUMENT (the toolbar's pickers), not the host defaults.
+    internal void EditDocumentPageSetup(System.Action change)
+    {
+        _documentPageSetupEdit++;
+        try { change(); }
+        finally { _documentPageSetupEdit--; }
+    }
+
+    private void RecordHostPageSetup(DependencyProperty changed)
+    {
+        if (_syncingPageSetup || _documentPageSetupEdit > 0) return;
+        if (changed == PageSizeProperty) _hostPageSetup.PageSize = PageSize;
+        else if (changed == PageOrientationProperty) _hostPageSetup.Orientation = PageOrientation;
+        else if (changed == ShowPageBoundariesProperty) _hostPageSetup.ShowPageBoundaries = ShowPageBoundaries;
+        else if (changed == PageHeaderProperty) _hostPageSetup.Header = PageHeader;
+        else if (changed == PageFooterProperty) _hostPageSetup.Footer = PageFooter;
+        else if (changed == ShowPageNumbersProperty) _hostPageSetup.ShowPageNumbers = ShowPageNumbers;
+    }
+
     // On Document change: a document that specifies a PageSetup drives the control's page DPs (model ->
-    // control); a document that doesn't adopts the control's current settings (control -> model) so a later
-    // save persists what's shown. Called from OnDocumentChanged before the status flush updates the chrome.
+    // control); a document that doesn't starts from the HOST's setup, which is then captured into it
+    // (control -> model) so a later save persists what's shown. Called from OnDocumentChanged before the
+    // status flush updates the chrome.
     private void SyncPageSetupOnDocumentChanged()
     {
         var doc = Document;
         if (doc == null) return;
-        if (doc.PageSetup is { } ps)
+        if (doc.PageSetup is { } ps) ApplyPageSetup(ps);
+        else
         {
-            _syncingPageSetup = true;
-            try
-            {
-                PageSize = ps.PageSize;
-                PageOrientation = ps.Orientation;
-                ShowPageBoundaries = ps.ShowPageBoundaries;
-                PageHeader = ps.Header;
-                PageFooter = ps.Footer;
-                ShowPageNumbers = ps.ShowPageNumbers;
-            }
-            finally { _syncingPageSetup = false; }
+            ApplyPageSetup(_hostPageSetup);
+            CapturePageSetupToDocument();
         }
-        else CapturePageSetupToDocument();
+    }
+
+    private void ApplyPageSetup(Documents.PageSetup ps)
+    {
+        _syncingPageSetup = true;
+        try
+        {
+            PageSize = ps.PageSize;
+            PageOrientation = ps.Orientation;
+            ShowPageBoundaries = ps.ShowPageBoundaries;
+            PageHeader = ps.Header;
+            PageFooter = ps.Footer;
+            ShowPageNumbers = ps.ShowPageNumbers;
+        }
+        finally { _syncingPageSetup = false; }
     }
 
     // Writes the control's current page DPs into Document.PageSetup (control -> model) so serialization

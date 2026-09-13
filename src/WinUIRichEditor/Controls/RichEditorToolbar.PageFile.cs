@@ -96,7 +96,12 @@ public partial class RichEditorToolbar
         _orient = MakeCombo(86, Loc("OrientationTip"));
         _orient.Items.Add(new ComboBoxItem { Content = Loc("OrientPortrait"), Tag = RichEditorPageOrientation.Portrait });
         _orient.Items.Add(new ComboBoxItem { Content = Loc("OrientLandscape"), Tag = RichEditorPageOrientation.Landscape });
-        _orient.SelectionChanged += (_, _) => { if (!_suppress && Target != null && _orient!.SelectedItem is ComboBoxItem ci) Target.PageOrientation = (RichEditorPageOrientation)ci.Tag; };
+        // The pickers edit the OPEN DOCUMENT's page setup, not the host's defaults (see EditDocumentPageSetup).
+        _orient.SelectionChanged += (_, _) =>
+        {
+            if (!_suppress && Target is { } t && _orient!.SelectedItem is ComboBoxItem ci)
+                t.EditDocumentPageSetup(() => t.PageOrientation = (RichEditorPageOrientation)ci.Tag);
+        };
         strip.Children.Add(_orient);
     }
 
@@ -104,9 +109,13 @@ public partial class RichEditorToolbar
     {
         if (_suppress || Target == null || _paper!.SelectedIndex < 0) return;
         var size = PaperSizes[_paper.SelectedIndex].size;
-        Target.PageSize = size;
-        // A concrete paper size shows the page outline (page view); Continuous reflows with no chrome.
-        Target.ShowPageBoundaries = size != RichEditorPageSize.Continuous;
+        var t = Target;
+        t.EditDocumentPageSetup(() => // an edit of the open document, not of the host's defaults
+        {
+            t.PageSize = size;
+            // A concrete paper size shows the page outline (page view); Continuous reflows with no chrome.
+            t.ShowPageBoundaries = size != RichEditorPageSize.Continuous;
+        });
         // Fit-width has no meaning in Continuous; drop back to 100% when leaving a fitted paged view.
         if (size == RichEditorPageSize.Continuous && Target.IsFitWidth) Target.SetZoom(1.0);
         // Suppressed: SyncPage writes SelectedItem/SelectedIndex on the zoom and orientation combos, and

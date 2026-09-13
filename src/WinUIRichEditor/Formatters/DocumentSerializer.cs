@@ -59,8 +59,9 @@ public static class DocumentSerializer
     // (Serialize) or zip entries (DocumentPackage).
     internal static FlowDocumentDto ToDto(FlowDocument document, Dictionary<string, (byte[] Bytes, string Mime)> images)
     {
-        var dto = new FlowDocumentDto { Version = CurrentSchemaVersion };
-        foreach (var block in document.Blocks) dto.Blocks.Add(BlockToDto(block, images));
+        var blocks = new List<BlockDto>();
+        foreach (var block in document.Blocks) blocks.Add(BlockToDto(block, images));
+        var dto = new FlowDocumentDto { Version = CurrentSchemaVersion, Blocks = blocks };
         // Only persist a non-default page setup, so plain (Continuous) documents keep their original format.
         if (document.PageSetup is { IsDefault: false } ps)
             dto.PageSetup = new PageSetupDto
@@ -85,6 +86,26 @@ public static class DocumentSerializer
     {
         var (dto, pool) = ParseJson(json);
         return FromDto(dto, pool);
+    }
+
+    // The editor's load paths (LoadJson/LoadJsonAsync): Deserialize plus the check that the JSON is a
+    // document of this library at all. Any JSON OBJECT used to load — unknown properties are ignored — so
+    // opening some other application's .json replaced the open document with an empty one, marked it saved,
+    // and the next save wrote the blank over the original (decided 2026-09-12). The public Deserialize keeps
+    // its lenient behaviour.
+    internal static FlowDocument DeserializeDocument(string json)
+    {
+        var (dto, pool) = ParseJson(json);
+        EnsureDocumentShape(dto);
+        return FromDto(dto, pool);
+    }
+
+    // Every document this library writes has "Blocks" (ToDto always sets it, even when empty); an object
+    // without it is something else. A literal null stays an empty document, as Deserialize documents.
+    internal static void EnsureDocumentShape(FlowDocumentDto? dto)
+    {
+        if (dto != null && dto.Blocks == null)
+            throw new JsonException("The JSON is not a WinUIRichEditor document: it has no \"Blocks\".");
     }
 
     // Thread-free half of Deserialize: JSON parsing + base64 decode only, no model objects.
@@ -462,7 +483,9 @@ internal class FlowDocumentDto
 {
     [JsonConverter(typeof(SchemaVersionConverter))]
     public string Version { get; set; } = "1";
-    public List<BlockDto> Blocks { get; set; } = new();
+    // Null by default so a READ can tell "no Blocks property" (not a document of this library) from "no
+    // blocks" — ToDto always sets it, so every document this library writes has it (see EnsureDocumentShape).
+    public List<BlockDto>? Blocks { get; set; }
     public Dictionary<string, ImagePoolDto>? Images { get; set; }
     // Optional page setup; absent for plain (Continuous) documents, so the format is unchanged for them.
     public PageSetupDto? PageSetup { get; set; }

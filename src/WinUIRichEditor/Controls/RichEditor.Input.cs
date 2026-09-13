@@ -160,6 +160,11 @@ public partial class RichEditor
         ClearObjectSelection();
         _resizingImage = null;
         _resizingInline = null;
+        // State that belongs to the document being replaced: an armed format painter would paint the NEW
+        // document's next selection with the OLD one's format, and a pending caret style would land on the
+        // new document's first typed text (upstream's ResetInteractionState drops the latter the same way).
+        _painterFmt = null;
+        _pendingCaretStyles = null;
         if (Document != null)
         {
             UpdateParents(Document);

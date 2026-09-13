@@ -242,6 +242,7 @@ public partial class RichEditor : ContentControl
         var ed = (RichEditor)d;
         ed.ClearLayoutCache();
         ed.RelayoutToViewport();
+        ed.RecordHostPageSetup(e.Property); // a page DP set by code is the host's default (see there)
         ed.CapturePageSetupToDocument(); // keep the doc's page setup in sync when a page DP changes
     }
 
