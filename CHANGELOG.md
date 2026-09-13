@@ -6,6 +6,33 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — 인쇄가 그림이 아니라 글자로 나간다 (2026-09-12)
+
+`RichEditorPrintHelper.ShowPrintUIAsync`는 페이지마다 150DPI 비트맵을 먼저 그려 PNG로 넘겼다. 그래서 PDF 프린터(Hancom PDF
+등)로 받은 결과는 보기에는 같아도 **글자가 없는 그림**이었고, 실제 프린터에서도 150DPI로 나갔다. 이제 Win2D
+`CanvasPrintDocument`로 편집기의 렌더러가 **프린터의 드로잉 세션에 직접** 그린다 — 글자는 글자로(선택·검색 가능), 프린터
+해상도로. 미리보기는 보는 페이지만 그리고, 인쇄 전 전 페이지 사전 렌더(A4 한 장 ≈ 8MB)가 없어졌다. 페이지는 사용자가 고른
+용지·방향에 맞게 균일 축소해 가운데 놓는다. 공개 표면 불변 — `dpi` 인자는 더 쓰지 않는다(소스 호환용으로 남김).
+`SavePdf`는 여전히 페이지를 이미지로 담는다(글자 PDF가 필요하면 인쇄 대화상자에서 PDF 프린터를 고를 것).
+
+### Fixed — Native AOT에서도 인쇄 대화상자가 열린다 (2026-09-12)
+
+`RichEditorPrintHelper.ShowPrintUIAsync`는 AOT 호스트에서 대화상자를 열지 않고 `false`를 돌려줬다(호스트는 PDF로
+대신했다). 원인은 인쇄 시스템이 아니라 투영이었다 — `PrintManagerInterop.ShowPrintUIForWindowAsync`의 결과
+`IAsyncOperation<bool>`를 CsWinRT가 리플렉션으로 변환하는데 AOT가 그걸 막고, 예외가 대화상자가 뜬 **뒤에** 났다.
+이제 `IPrintManagerInterop`을 COM vtable로 직접 부르고 반환된 작업도 자기 vtable로 읽는다(상태 → 결과). 제네릭 투영도
+리플렉션도 없어 JIT와 AOT가 같은 경로다. 공개 표면 불변(라이브러리에 `AllowUnsafeBlocks` — 함수 포인터용).
+데모의 툴바 페이지 인쇄도 PDF 직행에서 "대화상자 먼저, 안 되면 PDF"로 바꿨다.
+
+### Changed — 툴바 아이콘을 벡터 그림으로 (2026-09-12)
+
+툴바는 Segoe 기호 글꼴을 썼고, 글꼴에 없는 것은 글자로 대신했다(들여쓰기 `⇥ ⇤`, 번호 목록 `1.`, 서식 복사 `🖌`, 표 `▦`,
+서식 지우기 `✕`). 이제 툴바의 그림 아이콘 17개를 **상류와 같은 그림**(24×24 획 경로, 1.5 굵기, `#3C4043`)으로 직접 그린다 —
+상류 15개 + 찾기·서식 지우기 2개. 굵게·기울임·밑줄·취소선은 상류처럼 모양을 준 글자다(U는 밑줄, S는 취소선). 비활성
+버튼(실행 취소 등)의 그림은 함께 흐려진다. 오른쪽 클릭 메뉴는 Segoe 기호 그대로(메뉴 아이콘은 `IconElement`여야 한다).
+경로 문자열은 자체 파서(`PathMarkup`)로 읽는다 — WinUI엔 코드용 파서가 없고, XAML 경유 변환은 AOT에서 형식 해석이 깨질
+수 있다. `RichEditorIcons.Provider`로 덮어쓴 호스트는 영향 없음. 공개 표면 불변.
+
 ### Changed — 캐럿 서식 보고가 다음 타이핑과 화면을 그대로 말한다 (2026-09-12)
 
 툴바가 보여 주는 캐럿 서식(`GetCaretFormat`)이 실제로 칠 글자·화면과 어긋나던 네 가지를 고쳤다.

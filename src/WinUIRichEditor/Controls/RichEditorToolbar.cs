@@ -345,8 +345,10 @@ public partial class RichEditorToolbar : UserControl
 
             _bold = ToggleBtn("B", TipSc("Bold", ShortcutId.Bold), () => Target?.ToggleBold(), bold: true, icon: RichEditorIcon.Bold);
             _italic = ToggleBtn("I", TipSc("Italic", ShortcutId.Italic), () => Target?.ToggleItalic(), italic: true, icon: RichEditorIcon.Italic);
-            _underline = ToggleBtn("U", TipSc("Underline", ShortcutId.Underline), () => Target?.ToggleUnderline(), icon: RichEditorIcon.Underline);
-            _strike = ToggleBtn("S", TipSc("Strikethrough", ShortcutId.Strikethrough), () => Target?.ToggleStrikethrough(), icon: RichEditorIcon.Strikethrough);
+            _underline = ToggleBtn("U", TipSc("Underline", ShortcutId.Underline), () => Target?.ToggleUnderline(), icon: RichEditorIcon.Underline,
+                decorations: Windows.UI.Text.TextDecorations.Underline);
+            _strike = ToggleBtn("S", TipSc("Strikethrough", ShortcutId.Strikethrough), () => Target?.ToggleStrikethrough(), icon: RichEditorIcon.Strikethrough,
+                decorations: Windows.UI.Text.TextDecorations.Strikethrough);
             Add(_bold); Add(_italic); Add(_underline); Add(_strike);
 
             if (normal)
@@ -786,10 +788,23 @@ public partial class RichEditorToolbar : UserControl
         Background = new SolidColorBrush(Color.FromArgb(60, 0, 0, 0)),
     };
 
-    // Icon precedence: host override (RichEditorIcons.Provider) > built-in Segoe Fluent Icons FontIcon
-    // (ToolbarIcons) > styled-text fallback (`text`, e.g. the letter B/I/U/S or a unicode glyph).
+    // Icon precedence: host override (RichEditorIcons.Provider) > built-in vector icon
+    // (ToolbarIcons.CreateVector, the upstream peer's pictures) > styled-text fallback (`text` — the letters
+    // B/I/U/S by design, as upstream). The Segoe glyphs (ToolbarIcons.Create) are the context menu's.
     private static object IconOrText(RichEditorIcon? icon, string text)
-        => (icon is { } k ? RichEditorIcons.TryCreate(k) ?? ToolbarIcons.Create(k) : null) ?? (object)text;
+        => (icon is { } k ? RichEditorIcons.TryCreate(k) ?? ToolbarIcons.CreateVector(k) : null) ?? (object)text;
+
+    // A vector icon is drawn in fixed ink, so unlike a FontIcon it does not follow the button's disabled
+    // foreground: dim it with the button (undo/redo with no history).
+    // A property callback, not IsEnabledChanged: that event is not raised synchronously for a local set (and
+    // not at all off the live tree), so the first Sync after a build left undo looking enabled.
+    private static void DimVectorIconWhenDisabled(ContentControl button)
+    {
+        if (button.Content is not Viewbox icon) return;
+        void Sync() => icon.Opacity = button.IsEnabled ? 1 : 0.4;
+        button.RegisterPropertyChangedCallback(Control.IsEnabledProperty, (_, _) => Sync());
+        Sync();
+    }
 
     private Button IconButton(string glyph, string tip, Action act, RichEditorIcon? icon = null)
     {
@@ -821,14 +836,19 @@ public partial class RichEditorToolbar : UserControl
             HorizontalContentAlignment = HorizontalAlignment.Center,
         };
         ToolTipService.SetToolTip(b, tip);
+        DimVectorIconWhenDisabled(b);
         return NoFocus(b); // the caret must survive a button click — see the focus discipline section
     }
 
-    private ToggleButton ToggleBtn(string glyph, string tip, Action act, bool bold = false, bool italic = false, RichEditorIcon? icon = null)
+    private ToggleButton ToggleBtn(string glyph, string tip, Action act, bool bold = false, bool italic = false, RichEditorIcon? icon = null,
+        Windows.UI.Text.TextDecorations decorations = Windows.UI.Text.TextDecorations.None)
     {
+        var content = AsElement(IconOrText(icon, glyph)); // centred + tight, like the icon buttons
+        // The styled letters (B I U S) show what they do — U underlined, S struck through, as upstream.
+        if (content is TextBlock letter) letter.TextDecorations = decorations;
         var b = new ToggleButton
         {
-            Content = AsElement(IconOrText(icon, glyph)), // centred + tight, like the icon buttons
+            Content = content,
             Width = BtnWidth,
             Height = CtlHeight,
             Padding = new Thickness(0),
@@ -899,7 +919,7 @@ public partial class RichEditorToolbar : UserControl
         // which doubles up awkwardly with the bar); the highlight face uses the real Highlight pen icon
         // so its visual weight matches the other 16px FontIcons (the ✎ text glyph looked undersized).
         var glyphEl = highlight
-            ? ToolbarIcons.Create(RichEditorIcon.Highlight, 14) ?? AsElement(glyph)
+            ? RichEditorIcons.TryCreate(RichEditorIcon.Highlight) ?? ToolbarIcons.CreateVector(RichEditorIcon.Highlight, 16) ?? AsElement(glyph)
             : AsElement(glyph);
         var swatch = new Border
         {

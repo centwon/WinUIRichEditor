@@ -19,11 +19,13 @@ public sealed partial class ToolbarPage : Page
         toolbar.ImagePicker = PickImageBytesAsync;
         Editor.ImageReplacePicker = PickImageBytesAsync;
         // The toolbar now carries the built-in Export/Import (needs the window handle for the unpackaged
-        // file picker) and a Print button wired to print-to-PDF.
+        // file picker) and a Print button wired to the Windows print dialog — Native AOT included — with
+        // print-to-PDF when printing is unavailable on this system.
         toolbar.WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
         toolbar.PrintRequested += async (_, _) =>
         {
             if (Editor.Document is null) return;
+            if (await RichEditorPrintHelper.ShowPrintUIAsync(Editor, toolbar.WindowHandle, "WinUIRichEditor")) return;
             var picker = new FileSavePicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary, SuggestedFileName = "document" };
             picker.FileTypeChoices.Add("PDF", new[] { ".pdf" });
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow));
