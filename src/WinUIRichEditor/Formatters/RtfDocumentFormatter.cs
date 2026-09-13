@@ -1553,11 +1553,9 @@ internal sealed class RtfWriter
             wrote = true;
         }
 
-        bool heading = p.HeadingLevel is >= 1 and <= 6;
-        double headingSize = heading ? HeadingSize(p.HeadingLevel) : 0;
         foreach (var inline in p.Inlines)
         {
-            if (inline is Run r && !string.IsNullOrEmpty(r.Text)) { WriteRun(r, heading, headingSize); wrote = true; }
+            if (inline is Run r && !string.IsNullOrEmpty(r.Text)) { WriteRun(r); wrote = true; }
             else if (inline is InlineImage img && PictBytes(img.RawBytes, img.MimeType, img.Image) is { } ipic)
             { WritePict(ipic.bytes, ipic.mime, img.Width, img.Height); wrote = true; }
             else if (inline is InlineTable itbl)
@@ -1587,7 +1585,10 @@ internal sealed class RtfWriter
         _body.Append(@"\par").Append('\n');
     }
 
-    private void WriteRun(Run r, bool heading, double headingSize)
+    // A heading's bold and size are on its runs (HeadingStyle), so a run is written as it is. This used to add
+    // \b to every heading run and the heading size to unsized ones, mirroring the renderer that forced them —
+    // which would now re-bold heading text the user un-bolded.
+    private void WriteRun(Run r)
     {
         // Hyperlink as a real field: {\field{\*\fldinst{HYPERLINK "url"}}{\fldrslt {...}}} — Word/HWP
         // then keep the target address (the bare \ul form only looked like a link).
@@ -1595,14 +1596,13 @@ internal sealed class RtfWriter
         if (link)
             _body.Append(@"{\field{\*\fldinst{HYPERLINK """).Append(EscapeText(r.NavigateUri!)).Append("\"}}{\\fldrslt ");
         _body.Append('{');
-        if (r.FontWeight.IsBold() || heading) _body.Append(@"\b");
+        if (r.FontWeight.IsBold()) _body.Append(@"\b");
         if (r.FontStyle == FontStyle.Italic) _body.Append(@"\i");
         if (r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri)) _body.Append(@"\ul");
         if (r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)) _body.Append(@"\strike");
         int f = FontIndex(r.FontFamily);
         if (f > 0) _body.Append($@"\f{f}");
         double size = r.FontSize <= 0 ? 10 : r.FontSize; // pt; body default
-        if (heading && (r.FontSize <= 0 || Math.Abs(r.FontSize - 10) < 0.01)) size = headingSize;
         _body.Append($@"\fs{(int)Math.Round(size * 2)}"); // \fs is half-points
         int c = ColorIndex(r.Foreground);
         if (c > 0) _body.Append($@"\cf{c}");
@@ -1704,8 +1704,6 @@ internal sealed class RtfWriter
                 // until the next \par or \pard, so stating them here is all that was missing.
                 WriteParagraphPropsBody(cpara); // ends with its own delimiter space
                 if (cpara.ListType != ListKind.None) WriteListMarker(cpara, 1);
-                bool heading = cpara.HeadingLevel is >= 1 and <= 6;
-                double headingSize = heading ? HeadingSize(cpara.HeadingLevel) : 0;
                 foreach (var inline in cpara.Inlines)
                 {
                     if (inline is InlineTable it)
@@ -1715,7 +1713,7 @@ internal sealed class RtfWriter
                         wroteNested = true;
                         ReopenCell(cpara); // the rest of this paragraph belongs to THIS cell, not the inner table
                     }
-                    else if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r, heading, headingSize);
+                    else if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r);
                     else if (inline is InlineImage cii && PictBytes(cii.RawBytes, cii.MimeType, cii.Image) is { } cipic)
                         WritePict(cipic.bytes, cipic.mime, cii.Width, cii.Height);
                 }
@@ -1855,9 +1853,6 @@ internal sealed class RtfWriter
         _colorIndex[key] = i;
         return i;
     }
-
-    private static double HeadingSize(int level)
-        => level switch { 1 => 20, 2 => 16, 3 => 14, 4 => 12, 5 => 11, 6 => 10, _ => 10 };
 
     private void WriteEscaped(string text) => _body.Append(EscapeText(text));
 

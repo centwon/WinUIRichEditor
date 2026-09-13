@@ -61,8 +61,7 @@ public partial class RichEditor
     /// <summary>Toggles bold on the current selection (or the caret word), Word-style: turns it off only
     /// when every character already has it, otherwise turns it on for all of them.</summary>
     public void ToggleBold() => ToggleCharacterFormat(
-        r => r.FontWeight.IsBold(), (r, on) => r.FontWeight = on ? FontWeights.Bold : FontWeights.Normal,
-        forced: (_, p) => p.HeadingLevel is >= 1 and <= 6); // a heading is drawn bold (DrawnBold)
+        r => r.FontWeight.IsBold(), (r, on) => r.FontWeight = on ? FontWeights.Bold : FontWeights.Normal);
     /// <summary>Toggles italic on the current selection (or the caret word), Word-style (see <see cref="ToggleBold"/>).</summary>
     public void ToggleItalic() => ToggleCharacterFormat(
         r => r.FontStyle == FontStyle.Italic, (r, on) => r.FontStyle = on ? FontStyle.Italic : FontStyle.Normal);
@@ -84,9 +83,10 @@ public partial class RichEditor
     // text they mean. With no text to look at (a pending caret style), the caret's own format decides —
     // pending styles included, which is what makes two presses before typing cancel out.
     //
-    // `forced`: where the renderer draws the format whatever the run says (a heading's bold, a link's
-    // underline). Such text counts as having it — the toggle judges what is SHOWN, as the toolbar reports
-    // it — and when every targeted character is forced the toggle does nothing and records no undo step:
+    // `forced`: where the renderer draws the format whatever the run says (a link's underline — a heading's
+    // bold was one until it became a run attribute, see HeadingStyle). Such text counts as having it — the
+    // toggle judges what is SHOWN, as the toolbar reports it — and when every targeted character is forced
+    // the toggle does nothing and records no undo step:
     // no change it could make would show. It used to flip a hidden flag there, the screen unchanged.
     private void ToggleCharacterFormat(Func<Run, bool> has, Action<Run, bool> set, Func<Run, Paragraph, bool>? forced = null)
     {
@@ -150,12 +150,13 @@ public partial class RichEditor
     /// <summary>Clears character formatting on the current selection (or caret word).</summary>
     public void ClearFormatting() => ApplyStyleToSelection(r =>
     {
-        r.FontWeight = FontWeights.Normal;
+        // Back to the paragraph's own look: body text to the host default, heading text to the heading's
+        // preset (bold, its size) — the format the heading applied when it was set (HeadingStyle). Writing
+        // DefaultFontSize in a heading shrank an H1 from 20 to 14 with a host default of 14.
+        int level = r.Parent is Paragraph hp && HeadingStyle.IsHeading(hp.HeadingLevel) ? hp.HeadingLevel : 0;
+        r.FontWeight = level > 0 ? FontWeights.Bold : FontWeights.Normal;
         r.FontStyle = FontStyle.Normal;
-        // "Unstyled": in a heading that is the body-default size, which draws at the heading's size
-        // (DrawnRunSize). DefaultFontSize there was an explicit size — with a host default of 14, clearing
-        // an H1 shrank it from 20 to 14.
-        r.FontSize = r.Parent is Paragraph { HeadingLevel: >= 1 and <= 6 } ? BodyFontSizePt : DefaultFontSize;
+        r.FontSize = level > 0 ? HeadingStyle.Size(level) : DefaultFontSize;
         r.Foreground = null;
         r.Background = null;
         r.FontFamily = null;
@@ -179,7 +180,14 @@ public partial class RichEditor
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
         PushUndo(null);
-        foreach (var p in SelectedParagraphs()) p.HeadingLevel = level;
+        // Setting a level writes the heading's format onto its text (HeadingStyle.Retype): the preset on
+        // first application, the new size on a level change, off again back to body. After that the text
+        // holds ordinary run attributes — bold can be turned off, any size set.
+        foreach (var p in SelectedParagraphs())
+        {
+            HeadingStyle.Retype(p, p.HeadingLevel, level, DefaultFontSize);
+            p.HeadingLevel = level;
+        }
         AfterFormat();
     }
 

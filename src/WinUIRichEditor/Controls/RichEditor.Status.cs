@@ -215,10 +215,10 @@ public partial class RichEditor
         double headingSize = heading ? HeadingFontSize(p!.HeadingLevel) : 0;
         bool strike = run != null && run.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough);
         // Bold, underline and colour are reported as DRAWN (DrawnBold/DrawnUnderline/DrawnForeground, the
-        // renderer's rules): a heading is drawn bold and a link underlined and blue whatever the run says.
-        // The raw run showed the bold button off over a bold heading.
+        // renderer's rules): a link is drawn underlined and blue whatever the run says. With no run at all,
+        // text typed into a heading takes the heading's preset (TryInsertTextCore), so that is the report.
         return new CaretFormat(
-            run != null ? DrawnBold(run, heading) : heading,
+            run != null ? DrawnBold(run) : heading,
             run?.FontStyle == FontStyle.Italic,
             run != null && DrawnUnderline(run),
             strike,
@@ -226,7 +226,7 @@ public partial class RichEditor
             // and IncreaseFontSize steps from it. Reporting the run's raw size showed 10 for unset text drawn
             // at the host's DefaultFontSize (14) and for an H1 drawn at 20 — and "larger" then SHRANK both,
             // to 10.5. (DefaultFontSize's contract also names "the toolbar's displayed fallback size".)
-            run != null ? DrawnRunSize(run, heading, headingSize, DefaultFontSize)
+            run != null ? DrawnRunSize(run, DefaultFontSize)
                         : heading ? headingSize : DefaultFontSize,
             run?.FontFamily,
             p?.TextAlignment ?? TextAlignment.Left,

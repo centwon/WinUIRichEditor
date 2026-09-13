@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using Microsoft.UI.Xaml.Controls;
 using WinUIRichEditor.Controls;
 using WinUIRichEditor.Documents;
@@ -120,4 +122,123 @@ public class ControlContextMenuTests
         if (readOnly) Assert.Single(labels);
         else Assert.Contains(Loc("DeleteTable"), labels);
     });
+
+    // ---- the whole right-click, from a point ------------------------------------------------------
+
+    // Hit-testing needs a real layout: hosted, one editor for the class (see ControlCaretTests).
+    private static readonly Lazy<RichEditor> Hosted = new(() =>
+    {
+        var ed = UiThread.Run(() => new RichEditor { Document = new FlowDocument(), PageSize = RichEditorPageSize.Continuous });
+        UiThread.Host(ed);
+        return ed;
+    }, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    // The middle of the caret box at p:offset, in document space — which is view space here (continuous
+    // page, no zoom, not scrolled).
+    private static Windows.Foundation.Point PointAt(RichEditor ed, Paragraph p, int offset)
+    {
+        var box = typeof(RichEditor).GetMethod("CaretToDocPoint", NP)!.Invoke(ed, new object[] { new TextPointer(p, offset) })!;
+        var ty = box.GetType();
+        double F(string n) => (double)ty.GetField(n)!.GetValue(box)!;
+        return new(F("Item1"), F("Item2") + F("Item3") / 2);
+    }
+
+    private static void Invoke(MenuFlyoutItem item)
+        => ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.MenuFlyoutItemAutomationPeer(item)).Invoke();
+
+    // A viewer right-clicking a table gets Copy and Select All, and Copy — enabled with nothing selected —
+    // takes the table, as right-clicking an image takes the image. Outside a table the same menu's Copy is
+    // greyed out with nothing selected (the contrast that makes the table case more than "always enabled").
+    [Fact]
+    public void AViewerRightClickingATable_GetsCopyAndSelectAll_AndCopyTakesTheTable()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var tb = new TableBlock(2, 2);
+            for (int r = 0; r < 2; r++)
+                for (int c = 0; c < 2; c++)
+                {
+                    tb.Cells[r][c].Blocks.Clear();
+                    tb.Cells[r][c].Blocks.Add(new Paragraph { Inlines = { new Run { Text = $"cell {r}{c}" } } });
+                }
+            var above = new Paragraph { Inlines = { new Run { Text = "above the table" } } };
+            var doc = new FlowDocument();
+            doc.Blocks.Add(above);
+            doc.Blocks.Add(tb);
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "below the table" } } });
+            ed.Document = doc;
+            ed.IsReadOnly = true;
+            try
+            {
+                typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+
+                object? Selected() => typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed);
+
+                var items = ed.BuildContextMenuAt(PointAt(ed, (Paragraph)tb.Cells[1][0].Blocks[0], 2))
+                    .Items.OfType<MenuFlyoutItem>().ToList();
+                Assert.Equal(new[] { Loc("Copy"), Loc("SelectAll") }, items.Select(i => i.Text).ToArray());
+                Assert.True(items[0].IsEnabled, "Copy is greyed out on a table with nothing selected");
+                Assert.Same(tb, Selected()); // shown selected: the viewer sees what Copy takes
+                Invoke(items[0]);
+                var clip = (FlowDocument?)typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.GetValue(ed);
+                Assert.IsType<TableBlock>(Assert.Single(clip!.Blocks));
+
+                var outside = ed.BuildContextMenuAt(PointAt(ed, above, 2)).Items.OfType<MenuFlyoutItem>().ToList();
+                Assert.False(outside[0].IsEnabled);
+                Assert.Null(Selected()); // the table's selection does not linger past a right-click elsewhere
+                Invoke(outside[1]);
+                Assert.True((bool)typeof(RichEditor).GetProperty("HasSelection", NP | BindingFlags.Public)!.GetValue(ed)!);
+            }
+            finally { ed.IsReadOnly = false; }
+        });
+    }
+
+    // A viewer's table border shows the move cursor, a click there selects the table — as in the editor —
+    // and a right-click there takes the table. The first two were edit-only; a live check asked for a sign
+    // that the TABLE is the target. The border rect is seeded into the registry the renderer fills (a test
+    // host does not paint), since what changed is the gate in front of it, not the geometry — and seeded far
+    // below the content, so the right-click can only find the table through its border (the caret lands in
+    // the last paragraph there). A point inside the rect is the contrast: I-beam, no selection.
+    [Fact]
+    public void AViewersTableBorder_ShowsTheMoveCursor_AndAClickSelectsTheTable()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var tb = new TableBlock(2, 2);
+            var doc = new FlowDocument();
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "above" } } });
+            doc.Blocks.Add(tb);
+            ed.Document = doc;
+            ed.IsReadOnly = true;
+            try
+            {
+                typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+                var rects = (IDictionary<TableBlock, Windows.Foundation.Rect>)typeof(RichEditor).GetField("_tableRects", NP)!.GetValue(ed)!;
+                rects[tb] = new Windows.Foundation.Rect(20, 2000, 200, 80);
+                var border = new Windows.Foundation.Point(20, 2040);
+                var inside = new Windows.Foundation.Point(120, 2040);
+
+                object Cursor(Windows.Foundation.Point pt)
+                {
+                    typeof(RichEditor).GetMethod("UpdateHoverCursor", NP)!.Invoke(ed, new object[] { pt });
+                    return typeof(RichEditor).GetField("_cursorShape", NP)!.GetValue(ed)!;
+                }
+                bool Select(Windows.Foundation.Point pt) => (bool)typeof(RichEditor).GetMethod("TrySelectTableBlock", NP)!.Invoke(ed, new object[] { pt })!;
+
+                Assert.Equal(Microsoft.UI.Input.InputSystemCursorShape.SizeAll, Cursor(border));
+                Assert.NotEqual(Microsoft.UI.Input.InputSystemCursorShape.SizeAll, Cursor(inside));
+                Assert.False(Select(inside));
+                Assert.True(Select(border));
+                Assert.Same(tb, typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed));
+
+                typeof(RichEditor).GetField("_selectedBlock", NP)!.SetValue(ed, null);
+                var copy = ed.BuildContextMenuAt(border).Items.OfType<MenuFlyoutItem>().First();
+                Assert.True(copy.IsEnabled, "a right-click on the border did not find the table");
+                Assert.Same(tb, typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed));
+            }
+            finally { ed.IsReadOnly = false; }
+        });
+    }
 }

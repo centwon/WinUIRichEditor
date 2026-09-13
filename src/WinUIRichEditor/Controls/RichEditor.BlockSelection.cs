@@ -63,9 +63,9 @@ public partial class RichEditor
 
     // Selects a whole inline table when its left/top border is clicked (a click inside descends into a
     // cell instead, via HitInlineTable). The grab band reuses the block-table border width.
+    // A viewer too: there the selection is what Copy (Ctrl+C, the right-click menu) takes — the whole table.
     private bool TrySelectInlineTable(Point pt)
     {
-        if (IsReadOnly) return false;
         foreach (var (it, v) in _inlineTableRects)
             if (OnEdgeBorder(v.rect, pt))
             {

@@ -264,13 +264,12 @@ public partial class RichEditor
         return false;
     }
 
-    // Selects a whole table when its left/top border is clicked (Delete then removes it). Editing only:
-    // in a read-only viewer the selection chrome would be a dead end (Delete is gated by IsReadOnly), and
-    // it would also swallow a click that should place the caret — TrySelectInlineTable already bails out
-    // the same way.
+    // Selects a whole table when its left/top border is clicked (Delete then removes it). A viewer too, since
+    // 2026-09-13: it was edit-only because the chrome looked like a dead end there (Delete is gated), but a
+    // viewer's selected table is what Copy takes, and a live check asked for a sign that the table — not the
+    // text in it — is the target. The border band is narrow; a click inside the table still places the caret.
     private bool TrySelectTableBlock(Point pt)
     {
-        if (IsReadOnly) return false;
         if (!OnTableSelectBorder(pt, out var tb) || tb == null) return false;
         _selectedInline = null;
         _selectedBlock = tb;

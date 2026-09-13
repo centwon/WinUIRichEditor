@@ -292,9 +292,11 @@ public partial class RichEditor
         double size = first is { FontSize: > 0 } ? first.FontSize : DefaultFontSize;
         string family = first != null && !string.IsNullOrEmpty(first.FontFamily) ? first.FontFamily! : DefaultFontFamily;
         var weight = first?.FontWeight ?? FontWeights.Normal;
-        if (p.HeadingLevel is >= 1 and <= 6)
+        // The marker follows the first run, heading or not (a heading's format is on its runs). With no run
+        // yet, it takes the heading's preset — the format the first typed character will get.
+        if (first == null && p.HeadingLevel is >= 1 and <= 6)
         {
-            if (first == null || RunSizeIsBodyDefault(first)) size = HeadingFontSize(p.HeadingLevel);
+            size = HeadingFontSize(p.HeadingLevel);
             weight = FontWeights.Bold;
         }
         var color = first?.Foreground ?? EffectiveTextColor;

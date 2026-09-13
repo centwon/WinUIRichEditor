@@ -167,6 +167,10 @@ public partial class RichEditor
         _pendingCaretStyles = null;
         if (Document != null)
         {
+            // A document from before heading formats lived on their runs (an older file, upstream's, a host's
+            // own model) gets them now, once — the flag rides along in undo snapshots and saved files, so text
+            // the user un-bolded is never re-bolded. See HeadingStyle.Materialize.
+            HeadingStyle.Materialize(Document);
             UpdateParents(Document);
             var first = FirstParagraph();
             _caret = new TextPointer(first, 0);
@@ -418,9 +422,10 @@ public partial class RichEditor
         if ((Ctrl || IsReadOnly) && LinkAtPoint(pt)) { SetCursorShape(InputSystemCursorShape.Hand); return; }
         if (OverColumnBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeWestEast); return; }
         if (OverRowBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeNorthSouth); return; }
-        // Table block-select cursor: edit only, matching TrySelectTableBlock / TrySelectInlineTable
-        // (OverColumnBoundary / OverRowBoundary already self-gate on IsReadOnly).
-        if (!IsReadOnly && (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt))) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
+        // Table block-select cursor, matching TrySelectTableBlock / TrySelectInlineTable — in a viewer too, where
+        // it is the sign that a click here takes the whole table (OverColumnBoundary / OverRowBoundary, the
+        // resize cursors above, stay edit-only: they self-gate on IsReadOnly).
+        if (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt)) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
         bool onHandle = false;
         if (_selectedBlock is ImageBlock selB)
             foreach (var rect in BlockImageHandleRects(selB)) // top-level map + cell registry
@@ -873,6 +878,9 @@ public partial class RichEditor
             return;
         }
         var run = src != null ? (Run)src.Clone() : new Run();
+        // No text in the paragraph to take a format from: in a heading the typed text gets the heading's
+        // preset, which the caret report and the caret size already assume.
+        if (src == null && HeadingStyle.IsHeading(p.HeadingLevel)) HeadingStyle.ApplyPreset(run, p.HeadingLevel);
         run.Text = text;
         run.Parent = p;
         if (!link) run.NavigateUri = null;
@@ -1081,8 +1089,11 @@ public partial class RichEditor
             inl.Parent = np;
             np.Inlines.Add(inl);
         }
+        // The text carried into the new body paragraph leaves the heading's format behind; a heading left
+        // empty keeps it on its empty run, so typing there still writes heading text.
+        HeadingStyle.Retype(np, p.HeadingLevel, 0, DefaultFontSize);
         if (np.Inlines.Count == 0) np.Inlines.Add(new Run { Text = "" });
-        if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
+        if (p.Inlines.Count == 0) p.Inlines.Add(HeadingStyle.EmptyRun(p.HeadingLevel));
         np.Parent = p.Parent;
         container.Insert(idx + 1, np);
         _caret = new TextPointer(np, 0);
@@ -2245,7 +2256,7 @@ public partial class RichEditor
         double headingSize = heading ? HeadingFontSize(p.HeadingLevel) : 0;
         // On an inline object (no character format) the text typed beside it decides — TypingSource.
         var r = RunAtOffset(p, offset) ?? TypingSource(p, offset).Run;
-        return r != null ? DrawnRunSize(r, heading, headingSize, DefaultFontSize)
+        return r != null ? DrawnRunSize(r, DefaultFontSize)
                          : heading ? headingSize : DefaultFontSize;
     }
 }

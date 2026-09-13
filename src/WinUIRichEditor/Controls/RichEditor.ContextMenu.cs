@@ -80,8 +80,18 @@ public partial class RichEditor
     private void OnCanvasRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         _canvas.Focus(Microsoft.UI.Xaml.FocusState.Pointer);
-        CancelTableDraw(); // a right-click abandons an armed table-draw
         var pos = e.GetPosition(_canvas);             // view space — where the menu opens
+        var menu = BuildContextMenuAt(pos);
+        if (menu.Items.Count > 0) menu.ShowAt(_canvas, pos);
+        e.Handled = true;
+    }
+
+    // Everything a right-click does except opening the flyout — hit-testing, moving the caret or selecting
+    // the object, building the menu — so it can be driven from a plain point: the handler's
+    // RightTappedRoutedEventArgs has no public constructor, which kept this whole path untested.
+    internal MenuFlyout BuildContextMenuAt(Point pos)
+    {
+        CancelTableDraw(); // a right-click abandons an armed table-draw
         _ctxMenuPos = pos;
         var ipt = ViewToDoc(new Point(pos.X, pos.Y)); // doc space — for hit-testing
 
@@ -125,32 +135,53 @@ public partial class RichEditor
         {
             case ContextMenuKind.BlockImage:
                 _selectedInline = null; _selectedBlock = hitBlockImage; CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowImageMenu(pos, hitBlockImage, null); e.Handled = true; return;
+                return BuildImageMenu(hitBlockImage, null);
 
             case ContextMenuKind.InlineImage:
                 _selectedBlock = null; _selectedInline = hitInlineImage; CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowImageMenu(pos, null, hitInlineImage!.Value.img); e.Handled = true; return;
+                return BuildImageMenu(null, hitInlineImage!.Value.img);
 
             case ContextMenuKind.InlineTable:
                 ClearObjectSelection(); _selectedInlineTable = hitInlineTable; CollapseSelectionToCaret(); InvalidateCanvas();
-                ShowInlineTableMenu(pos, hitInlineTable!.Value.host, hitInlineTable.Value.it); e.Handled = true; return;
+                return BuildInlineTableMenu(hitInlineTable!.Value.host, hitInlineTable.Value.it);
 
             case ContextMenuKind.ReadOnlyText: // a viewer: copy + select-all only
-                menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), hasSel, RichEditorIcon.Copy, "Ctrl+C"));
+            {
+                // Right-clicked in a table with nothing selected: Copy takes the TABLE, as right-clicking an
+                // image copies the image. The generic Copy acts on the selection — empty here — so a viewer
+                // got a greyed-out item and no way to take the table (live check, 2026-09-12).
+                // The table is the one under the pointer: its border band (which lies partly OUTSIDE the grid,
+                // where the caret lands in a neighbouring paragraph), else the cell the caret just moved into.
+                var table = hasSel ? null
+                    : OnTableSelectBorder(ipt, out var bt) && bt != null ? bt
+                    : _caret.Paragraph is { } cp && FindCell(cp) is { } at ? at.tb : null;
+                // ...and it is shown selected, so the viewer sees what Copy will take (live check, 2026-09-13).
+                if (table != null) SelectTableObject(table);
+                else if (HasBlockSelection) { ClearObjectSelection(); InvalidateCanvas(); } // a table shown selected earlier must not linger
+                menu.Items.Add(Mi(Loc("Copy"), () => _ = table != null ? CopyBlockToClipboard(table) : CopyAsync(),
+                                  hasSel || table != null, RichEditorIcon.Copy, "Ctrl+C"));
                 menu.Items.Add(Mi(Loc("SelectAll"), SelectAll, true, RichEditorIcon.SelectAll, "Ctrl+A"));
-                break;
+                return menu;
+            }
 
             case ContextMenuKind.Link:
                 BuildLinkMenu(menu, linkUri!);
-                break;
+                return menu;
 
             default:
                 BuildTextMenu(menu, hasSel, linkUri);
-                break;
+                return menu;
         }
+    }
 
-        menu.ShowAt(_canvas, pos);
-        e.Handled = true;
+    // Shows `tb` selected as an object — the chrome a border click draws — where such chrome exists: a
+    // top-level table, or an inline table. A table nested in a cell has none; Copy still takes it.
+    private void SelectTableObject(TableBlock tb)
+    {
+        ClearObjectSelection();
+        if (tb.Parent is FlowDocument) _selectedBlock = tb;
+        else if (tb.Parent is InlineTable it && it.Parent is Paragraph host) _selectedInlineTable = (host, it);
+        InvalidateCanvas();
     }
 
     // The caret-position text menu, shared by top-level paragraphs and table cells.
@@ -436,7 +467,7 @@ public partial class RichEditor
     }
 
     // Image context menu: size presets (fraction of natural), replace, save, margin, block↔inline, delete.
-    private void ShowImageMenu(Point pos, ImageBlock? block, InlineImage? inline)
+    internal MenuFlyout BuildImageMenu(ImageBlock? block, InlineImage? inline)
     {
         string L(string k) => RichEditorLocalization.GetString(k);
         var menu = new MenuFlyout();
@@ -494,7 +525,7 @@ public partial class RichEditor
             menu.Items.Add(Sep());
             Add(L("Delete"), DeleteSelectedObject, true, RichEditorIcon.Delete);
         }
-        menu.ShowAt(_canvas, pos);
+        return menu;
     }
 
     // Cell-background palette flyout (the toolbar's 40 swatches + "none"). Applies to the selected
@@ -552,9 +583,6 @@ public partial class RichEditor
     // Copy leads for the same reason it leads the image menu: an object wins the right-click even in a
     // viewer (ChooseContextMenu), and with every item below gated on !IsReadOnly a viewer used to get an
     // EMPTY flyout. CopyAsync already copies the selected inline table as a whole table.
-    private void ShowInlineTableMenu(Point pos, Paragraph host, InlineTable it)
-        => BuildInlineTableMenu(host, it).ShowAt(_canvas, pos);
-
     internal MenuFlyout BuildInlineTableMenu(Paragraph host, InlineTable it)
     {
         var menu = new MenuFlyout();
