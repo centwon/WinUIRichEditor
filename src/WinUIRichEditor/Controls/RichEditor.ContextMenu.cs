@@ -84,8 +84,25 @@ public partial class RichEditor
         _canvas.Focus(Microsoft.UI.Xaml.FocusState.Pointer);
         var pos = e.GetPosition(_canvas);             // view space — where the menu opens
         var menu = BuildContextMenuAt(pos);
+        Compact(menu.Items);
         if (menu.Items.Count > 0) menu.ShowAt(_canvas, pos);
         e.Handled = true;
+    }
+
+    // Denser rows, as AvaloniaRichEditor's menu (user request, 2026-09-14): WinUI's default item padding
+    // (11,9,11,10 measured) sizes rows for touch — 37px rows, 9px separators with a 12px font. Upstream's rows
+    // are 10,2,10,2 (18px there, 1px separators; measured in its headless host), so the same numbers here.
+    // Applied to every item, submenu item and separator on the way out, so no builder has to remember it.
+    private static readonly Thickness MenuItemPadding = new(10, 2, 10, 2);
+    private static readonly Thickness MenuSeparatorPadding = new(12, 0, 12, 0);
+
+    private static void Compact(System.Collections.Generic.IList<MenuFlyoutItemBase> items)
+    {
+        foreach (var item in items)
+        {
+            item.Padding = item is MenuFlyoutSeparator ? MenuSeparatorPadding : MenuItemPadding;
+            if (item is MenuFlyoutSubItem sub) Compact(sub.Items);
+        }
     }
 
     // Everything a right-click does except opening the flyout — hit-testing, moving the caret or selecting
