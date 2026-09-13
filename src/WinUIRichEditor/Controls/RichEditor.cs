@@ -47,6 +47,17 @@ public partial class RichEditor : ContentControl
     private static double DrawnRunSize(Run r, bool heading, double headingSize, double defaultSize)
         => heading && RunSizeIsBodyDefault(r) ? headingSize : r.FontSize <= 0 ? defaultSize : r.FontSize;
 
+    // The attributes the renderer FORCES, whatever the run says — same pairing as DrawnRunSize: CreateLayout
+    // draws with them and GetCaretFormat reports them, so the toolbar shows what is on screen. A heading is
+    // drawn bold; a hyperlink underlined, and link-blue unless it has its own colour (so in-app SetHyperlink
+    // and pasted links look identical).
+    internal static readonly Windows.UI.Color LinkColor = Windows.UI.Color.FromArgb(255, 0, 0, 255);
+    private static bool DrawnBold(Run r, bool heading) => heading || r.FontWeight.IsBold();
+    private static bool DrawnUnderline(Run r)
+        => r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri);
+    private static Windows.UI.Color? DrawnForeground(Run r)
+        => r.Foreground ?? (string.IsNullOrEmpty(r.NavigateUri) ? null : LinkColor);
+
     // Left x where a paragraph's text starts: base indent + manual indent + nesting + (list marker gap).
     private static double ParaLeft(Paragraph p)
         => 10 + p.Indent + p.ListLevel * 20 + (p.ListType != ListKind.None ? ListMarkerWidth : 0);
@@ -515,12 +526,8 @@ public partial class RichEditor : ContentControl
                 layout.SetFontStyle(pos, len, r.FontStyle);
                 if (!forMeasure)
                 {
-                    if (r.Foreground is { } fg) layout.SetColor(pos, len, fg);
-                    // A hyperlink without its own color renders link-blue — same as HTML-pasted links, so
-                    // in-app SetHyperlink and pasted links look identical (an explicit Foreground wins).
-                    else if (!string.IsNullOrEmpty(r.NavigateUri)) layout.SetColor(pos, len, Windows.UI.Color.FromArgb(255, 0, 0, 255));
-                    bool underline = r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri);
-                    if (underline) layout.SetUnderline(pos, len, true);
+                    if (DrawnForeground(r) is { } fg) layout.SetColor(pos, len, fg);
+                    if (DrawnUnderline(r)) layout.SetUnderline(pos, len, true);
                     if (r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)) layout.SetStrikethrough(pos, len, true);
                 }
             }

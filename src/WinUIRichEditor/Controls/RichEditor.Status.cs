@@ -107,44 +107,103 @@ public partial class RichEditor
         Color? Foreground = null, Color? Background = null, bool Quote = false, double LineSpacing = double.NaN,
         ListMarkerStyle ListMarker = ListMarkerStyle.Default);
 
-    // The Run covering logical offset within p (the run just before a boundary offset), or null.
+    // The Run holding the character at logical offset within p — at or past the end, the paragraph's last
+    // inline if that is a run — or null when the character is an inline object (an image has no character
+    // format). It used to fall back to the paragraph's LAST run whenever the offset landed on an object,
+    // so next to an image the caret reported, and CurrentLinkUri returned, a run far away.
     private static Run? RunAtOffset(Paragraph p, int offset)
     {
         int pos = 0;
-        Run? last = null;
+        Inline? last = null;
         foreach (var inl in p.Inlines)
         {
             int len = InlineLen(inl);
-            if (inl is Run r)
-            {
-                last = r;
-                if (offset >= pos && offset < pos + len) return r;
-            }
+            last = inl;
+            if (offset >= pos && offset < pos + len) return inl as Run;
             pos += len;
         }
-        return last;
+        return offset >= pos ? last as Run : null;
     }
 
-    // The run whose character format the caret shows: the one just before the caret (else the
-    // paragraph's first run), with any pending caret format (a toggle at an empty position) previewed on
-    // a clone so the document stays untouched. Shared with the character toggles, which decide on/off
-    // from exactly what the toolbar is showing.
+    // Where text typed at logical offset k goes, and whose character format it takes — the ONE rule for
+    // insertion (TryInsertTextCore) and for the caret report (CaretFormatRun), so the toolbar shows what
+    // typing will produce. Word's rule: the nearest text BEFORE the caret, skipping inline objects; with
+    // none before, the nearest after. Before this (2026-09-12) insertion and report each had their own
+    // rule and disagreed next to images — measured at 4 caret positions, e.g. "[img] bold italic" with
+    // the caret before the image: the toolbar showed the italic of the paragraph's last run, typing wrote
+    // plain text.
+    //   Run  — the format source; null when the paragraph has no run at all.
+    //   Into — the typed text goes INTO Run at this local index; -1 = into a new run cloned from Run,
+    //          inserted at inline index At.
+    //   Link — the typed text continues Run's hyperlink. Only strictly inside a link (the characters on
+    //          both sides of the caret carry it): typing at a link's end or start writes plain text, as in
+    //          Word. It used to extend the link.
+    private static (Run? Run, int Into, int At, bool Link) TypingSource(Paragraph p, int k)
+    {
+        var inls = p.Inlines;
+        int holdsPrev = -1, holdsPrevStart = 0; // the inline holding character k-1
+        int pos = 0;
+        for (int i = 0; i < inls.Count; i++)
+        {
+            int len = InlineLen(inls[i]);
+            if (pos < k && k <= pos + len) { holdsPrev = i; holdsPrevStart = pos; break; }
+            pos += len;
+        }
+        int at = holdsPrev + 1; // a new run goes right after the character before the caret (0 at the start)
+
+        // The run holding character k-1: the typed text joins it.
+        if (holdsPrev >= 0 && inls[holdsPrev] is Run t)
+        {
+            int end = holdsPrevStart + InlineLen(t);
+            bool link = !string.IsNullOrEmpty(t.NavigateUri)
+                && (k < end || NextTextRun(inls, holdsPrev)?.NavigateUri == t.NavigateUri);
+            bool into = link || string.IsNullOrEmpty(t.NavigateUri);
+            return (t, into ? k - holdsPrevStart : -1, at, link);
+        }
+        // Character k-1 is an object (or there is none): the nearest run before, skipping objects...
+        for (int i = holdsPrev - 1; i >= 0; i--)
+            if (inls[i] is Run b) return (b, -1, at, false);
+        // ...else the nearest after. Touching the caret (no object between), the text goes into it.
+        for (int i = at; i < inls.Count; i++)
+            if (inls[i] is Run a)
+            {
+                bool touching = i == at;
+                return (a, touching && string.IsNullOrEmpty(a.NavigateUri) ? 0 : -1, at, false);
+            }
+        return (null, -1, at, false);
+    }
+
+    // The first run after inline index i that holds a character (empty runs hold none), or null when an
+    // object or the paragraph's end comes first.
+    private static Run? NextTextRun(System.Collections.Generic.IList<Inline> inls, int i)
+    {
+        for (int j = i + 1; j < inls.Count; j++)
+        {
+            if (inls[j] is not Run r) return null;
+            if (!string.IsNullOrEmpty(r.Text)) return r;
+        }
+        return null;
+    }
+
+    // The run whose character format the caret shows — TypingSource's, so the toolbar shows what typing
+    // will produce — with any pending caret format (a toggle at an empty position) previewed on a clone so
+    // the document stays untouched. Shared with the character toggles, which decide on/off from exactly
+    // what the toolbar is showing.
     private Run? CaretFormatRun()
     {
         var p = _caret.Paragraph;
-        Run? run = null;
-        if (p != null)
-        {
-            run = RunAtOffset(p, _caret.Offset > 0 ? _caret.Offset - 1 : 0);
-            if (run == null) foreach (var inl in p.Inlines) if (inl is Run r0) { run = r0; break; }
-        }
-        if (_pendingCaretStyles is { Count: > 0 } pend)
-        {
-            var probe = run != null ? (Run)run.Clone() : new Run();
-            foreach (var a in pend) a(probe);
-            run = probe;
-        }
-        return run;
+        if (p == null) return null;
+        var (run, _, _, link) = TypingSource(p, _caret.Offset);
+        bool dropLink = run != null && !link && !string.IsNullOrEmpty(run.NavigateUri);
+        bool pending = _pendingCaretStyles is { Count: > 0 };
+        if (!dropLink && !pending) return run;
+        // A clone: parented to the caret paragraph, so a style reading its paragraph (ClearFormatting's
+        // heading-aware size) previews what it will do to the typed run.
+        var probe = run != null ? (Run)run.Clone() : new Run();
+        probe.Parent = p;
+        if (dropLink) probe.NavigateUri = null;
+        if (pending) foreach (var a in _pendingCaretStyles!) a(probe);
+        return probe;
     }
 
     /// <summary>Returns the formatting snapshot at the current caret position for toolbar state display.</summary>
@@ -154,12 +213,14 @@ public partial class RichEditor
         var run = CaretFormatRun();
         bool heading = p is { HeadingLevel: >= 1 and <= 6 };
         double headingSize = heading ? HeadingFontSize(p!.HeadingLevel) : 0;
-        bool underline = run != null && (run.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(run.NavigateUri));
         bool strike = run != null && run.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough);
+        // Bold, underline and colour are reported as DRAWN (DrawnBold/DrawnUnderline/DrawnForeground, the
+        // renderer's rules): a heading is drawn bold and a link underlined and blue whatever the run says.
+        // The raw run showed the bold button off over a bold heading.
         return new CaretFormat(
-            run?.FontWeight.IsBold() ?? false,
+            run != null ? DrawnBold(run, heading) : heading,
             run?.FontStyle == FontStyle.Italic,
-            underline,
+            run != null && DrawnUnderline(run),
             strike,
             // The size the text is DRAWN at, by the renderer's own rule (DrawnRunSize): the toolbar shows it
             // and IncreaseFontSize steps from it. Reporting the run's raw size showed 10 for unset text drawn
@@ -171,7 +232,7 @@ public partial class RichEditor
             p?.TextAlignment ?? TextAlignment.Left,
             p?.ListType ?? ListKind.None,
             p?.HeadingLevel ?? 0,
-            run?.Foreground,
+            run != null ? DrawnForeground(run) : null,
             run?.Background,
             p?.IsQuote ?? false,
             p?.LineSpacing ?? double.NaN,

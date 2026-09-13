@@ -72,6 +72,36 @@ public class ControlCaretHeadingTests
         });
     }
 
+    // Before an image at a paragraph's start the caret is sized for the text typed there — the run AFTER
+    // the image (TypingSource). The character under the caret is the image, which has no size, and the
+    // fallback used to be the paragraph's LAST run: here the 12pt one.
+    [Fact]
+    public void TheCaretBeforeAnImage_IsSizedForTheTextTypedThere()
+    {
+        var ed = Shared.Value;
+        UiThread.Run(() =>
+        {
+            var withImage = new Paragraph();
+            withImage.Inlines.Add(new InlineImage { Width = 10, Height = 10 });
+            withImage.Inlines.Add(new Run { Text = "Mxg", FontSize = 36 });
+            withImage.Inlines.Add(new Run { Text = "Mxg", FontSize = 12 });
+            var doc = new FlowDocument();
+            doc.Blocks.Add(Para(0, 36));
+            doc.Blocks.Add(withImage);
+            ed.Document = doc;
+            typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+            var ps = ed.Document!.Blocks.OfType<Paragraph>().ToList();
+            double H(Paragraph p, int off)
+            {
+                var box = typeof(RichEditor).GetMethod("CaretToDocPoint", NP)!.Invoke(ed, new object[] { new TextPointer(p, off) })!;
+                return (double)box.GetType().GetField("Item3")!.GetValue(box)!;
+            }
+            double reference = H(ps[0], 2), beforeImage = H(ps[1], 0);
+            Assert.True(Math.Abs(beforeImage - reference) < 0.5,
+                $"caret before the image {beforeImage:0.0}, a 36pt run's caret {reference:0.0}");
+        });
+    }
+
     // The case that was already right, pinned so the fix cannot trade it away: an UNSTYLED run in an H1 is
     // drawn at the heading size (20pt), and so is its caret.
     [Fact]
