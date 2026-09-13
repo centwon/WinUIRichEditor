@@ -6,6 +6,11 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — 셀 세로 정렬의 가운데를 영어로 "Middle" (2026-09-13)
+
+영어 표시에서 셀 세로 정렬 "Center"를 "Middle"로 — 세로 정렬 용어(Excel·CSS)이고 AvaloniaRichEditor와 같게. 한국어는 그대로
+"가운데".
+
 ### Added — 한 셀 선택(F5), Shift+방향키로 셀 블록 넓히기 (2026-09-13)
 
 셀 하나를 단위로 잡을 방법이 없었다 — 셀을 넘는 끌기는 두 셀 이상만 만든다. AvaloniaRichEditor와 셀 선택 규칙을 통일하면서

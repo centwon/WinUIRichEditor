@@ -126,7 +126,7 @@ public static class RichEditorLocalization
             ["UnmergeCells"] = "Unmerge Cells",
             ["CellVerticalAlign"] = "Cell Vertical Alignment",
             ["VAlignTop"] = "Top",
-            ["VAlignCenter"] = "Center",
+            ["VAlignCenter"] = "Middle", // vertical alignment (Excel/CSS); converged with upstream
             ["VAlignBottom"] = "Bottom",
             ["CopyCell"] = "Copy Cell",
             ["SelectCell"] = "Select Cell",
