@@ -34,9 +34,7 @@ public partial class RichEditor
             Text = CurrentLinkUri() ?? "https://",
             AcceptsReturn = false,
             Width = 360,
-            SelectionStart = 0,
         };
-        box.SelectAll();
         var dlg = new ContentDialog
         {
             Title = RichEditorLocalization.GetString("Hyperlink"),
@@ -50,11 +48,31 @@ public partial class RichEditor
         // ShowAsync throws when another ContentDialog is already open — and every caller invokes this as
         // `_ = EditHyperlinkAsync()`, so the throw would die in an unobserved Task with nothing on screen
         // and nothing in the fault channel. Same fire-and-forget hole the toolbar's file actions had.
+        // Ready to type: focus in the box with the caret after the address ("https://|"). The box opened with no
+        // focus, so the address could not be typed until it was clicked (live check, 2026-09-14).
+        dlg.Opened += (_, _) =>
+        {
+            box.Focus(FocusState.Programmatic);
+            box.Select(box.Text.Length, 0);
+        };
         ContentDialogResult result;
         try { result = await dlg.ShowAsync(); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
-        if (result == ContentDialogResult.Primary) SetHyperlink(box.Text);
+        if (result == ContentDialogResult.Primary) ApplyHyperlinkFromDialog(box.Text);
         else if (result == ContentDialogResult.Secondary) SetHyperlink(null);
+        _canvas.Focus(FocusState.Programmatic); // back to the caret the dialog was opened from
+    }
+
+    // The link dialog's OK: the selection or the caret's word gets the link. With neither — a blank spot — the
+    // address itself goes in as the link's text, as Word does: arming a link for "the next typed text" showed
+    // nothing at all, so the inserted link looked lost (live check, 2026-09-14).
+    private void ApplyHyperlinkFromDialog(string url)
+    {
+        var u = url.Trim();
+        if (u.Length == 0) return;
+        bool blank = ResolveStyleTarget().Pending;
+        SetHyperlink(u);          // blank: arms the link for the text typed next
+        if (blank) InsertText(u); // …which is the address
     }
 
     /// <summary>Identifies the <see cref="AutoLinkOnType"/> dependency property.</summary>

@@ -213,6 +213,43 @@ public class ControlHyperlinkTests
         Assert.Equal(enabled, open.IsEnabled);
     });
 
+    // ---- the link dialog's OK (the dialog itself — focus, caret in the box — is checked by hand) -------
+
+    // A blank spot has no word to link: the address goes in as the link's text (Word). Arming the link for the
+    // next typed text showed nothing, so the link looked lost (live check, 2026-09-14).
+    [Fact]
+    public void TheLinkDialog_OnABlankSpot_InsertsTheAddressAsTheLink() => UiThread.Run(() =>
+    {
+        var ed = Typing(); // "x |"
+        Call(ed, "ApplyHyperlinkFromDialog", " https://example.com/ ");
+
+        var runs = ed.Document!.Blocks.OfType<Paragraph>().First().Inlines.OfType<Run>().ToList();
+        Assert.Contains(runs, r => r.Text == "https://example.com/" && r.NavigateUri == "https://example.com/");
+        Assert.Equal("x https://example.com/", string.Concat(runs.Select(r => r.Text)));
+
+        ed.Undo(); // one step
+        Assert.Equal("x ", string.Concat(ed.Document!.Blocks.OfType<Paragraph>().First().Inlines.OfType<Run>().Select(r => r.Text)));
+    });
+
+    // Inside a word the word gets the link — nothing is inserted.
+    [Fact]
+    public void TheLinkDialog_InAWord_LinksTheWord_AndInsertsNothing() => UiThread.Run(() =>
+    {
+        var p = new Paragraph();
+        p.Inlines.Add(new Run { Text = "hello world" });
+        var doc = new FlowDocument();
+        doc.Blocks.Add(p);
+        var ed = new RichEditor { Document = doc };
+        var para = ed.Document!.Blocks.OfType<Paragraph>().First();
+        foreach (var f in new[] { "_caret", "_selStart", "_selEnd" }) T.GetField(f, NP)!.SetValue(ed, new TextPointer(para, 2));
+
+        Call(ed, "ApplyHyperlinkFromDialog", "https://example.com/");
+
+        var runs = para.Inlines.OfType<Run>().ToList();
+        Assert.Equal("hello world", string.Concat(runs.Select(r => r.Text)));
+        Assert.Equal("https://example.com/", runs.Single(r => r.Text == "hello").NavigateUri);
+    });
+
     // ---- what a click is on (hosted: this needs a real layout) --------------------------------------
 
     private static readonly Lazy<RichEditor> Hosted = new(() =>
