@@ -231,7 +231,8 @@ public partial class RichEditor
         // ── Hyperlink ──
         if (!string.IsNullOrEmpty(linkUri))
         {
-            Item(Mi(Loc("OpenLink"), () => _ = OpenLinkAtCaretAsync(), true, RichEditorIcon.OpenLink));
+            // Disabled for a link it would refuse to launch (see IsLaunchableLink) rather than silently doing nothing.
+            Item(Mi(Loc("OpenLink"), () => _ = OpenLinkAtCaretAsync(), IsLaunchableLink(linkUri, out _), RichEditorIcon.OpenLink));
             Item(Mi(Loc("EditLink"), () => _ = EditHyperlinkAsync(), true, RichEditorIcon.EditLink, RichEditorShortcuts.Display(ShortcutId.InsertLink)));
             Item(Mi(Loc("RemoveLink"), () => SetHyperlink(null), true, RichEditorIcon.RemoveLink));
         }
@@ -412,7 +413,7 @@ public partial class RichEditor
     // Concise menu for a right-clicked hyperlink: link actions + copy address, no formatting clutter.
     private void BuildLinkMenu(MenuFlyout menu, string uri)
     {
-        menu.Items.Add(Mi(Loc("OpenLink"), () => _ = OpenLinkAtCaretAsync(), true, RichEditorIcon.OpenLink));
+        menu.Items.Add(Mi(Loc("OpenLink"), () => _ = OpenLinkAtCaretAsync(), IsLaunchableLink(uri, out _), RichEditorIcon.OpenLink));
         if (!IsReadOnly)
         {
             menu.Items.Add(Sep()); // navigation vs. edit
