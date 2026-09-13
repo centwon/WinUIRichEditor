@@ -219,6 +219,47 @@ public class ControlClipboardTests : IClassFixture<ClipboardGuard>
         });
     }
 
+    // A block table pasted with the caret in a table cell nests in THAT cell — cells are recursive
+    // containers (rule #4) — not after the outer table. Both paste paths: the internal snapshot (same
+    // editor) and the external flavours (another editor, the Word/HWP route).
+    [Fact]
+    public void PastingATable_IntoACell_NestsItThere_InternalSnapshot()
+        => AssertPasteNestsInCell(sameEditor: true);
+
+    [Fact]
+    public void PastingATable_IntoACell_NestsItThere_ExternalFlavours()
+        => AssertPasteNestsInCell(sameEditor: false);
+
+    private static void AssertPasteNestsInCell(bool sameEditor)
+    {
+        var copied = Table2x2();
+        RichEditor source = UiThread.Run(() => NewEditor(copied));
+        CopyBlock(source, copied);
+
+        var outer = Table2x2();
+        RichEditor target = sameEditor ? source : UiThread.Run(() => NewEditor(outer));
+        UiThread.Run(() =>
+        {
+            if (sameEditor)
+            {
+                // The document becomes [p, copied, p]; paste into the copied table's own cell.
+                outer = target.Document!.Blocks.OfType<TableBlock>().Single();
+            }
+            T.GetField("_caret", NP)!.SetValue(target, new TextPointer(outer.Cells[1][1].Para, 3)); // after "c11"
+        });
+        int topTablesBefore = UiThread.Run(() => target.Document!.Blocks.OfType<TableBlock>().Count());
+
+        UiThread.RunAsync(() => target.PasteAsync());
+
+        UiThread.Run(() =>
+        {
+            Assert.Equal(topTablesBefore, target.Document!.Blocks.OfType<TableBlock>().Count());
+            var nested = Assert.Single(outer.Cells[1][1].Blocks.OfType<TableBlock>());
+            Assert.Equal((2, 2), (nested.Rows, nested.Columns));
+            Assert.Same(outer.Cells[1][1], nested.Parent);
+        });
+    }
+
     // Into the SAME editor the internal rich snapshot wins, which is the loss-free path.
     [Fact]
     public void PastingIntoTheSameEditor_UsesTheInternalSnapshot()
