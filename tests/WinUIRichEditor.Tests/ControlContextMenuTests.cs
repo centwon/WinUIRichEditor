@@ -180,6 +180,8 @@ public class ControlContextMenuTests
                 Assert.Equal(new[] { Loc("Copy"), Loc("SelectAll") }, items.Select(i => i.Text).ToArray());
                 Assert.True(items[0].IsEnabled, "Copy is greyed out on a table with nothing selected");
                 Assert.Same(tb, Selected()); // shown selected: the viewer sees what Copy takes
+                // The hosted editor is shared by the class: an earlier test's copy could satisfy the check below.
+                typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
                 Invoke(items[0]);
                 var clip = (FlowDocument?)typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.GetValue(ed);
                 Assert.IsType<TableBlock>(Assert.Single(clip!.Blocks));
@@ -239,6 +241,37 @@ public class ControlContextMenuTests
                 Assert.Same(tb, typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed));
             }
             finally { ed.IsReadOnly = false; }
+        });
+    }
+
+    // In the editor a right-click on a table's border is a right-click on the TABLE: it is selected as an
+    // object and its own menu opens — Copy and Cut take it, then 글자처럼 취급 and 표 삭제. It opened the text
+    // menu with Copy greyed out, although a click on the same band selects the table (live check, 2026-09-13).
+    // The rect is seeded far below the content (see the viewer test above), so only the border finds it.
+    [Fact]
+    public void InTheEditor_RightClickingATablesBorder_OpensTheTablesMenu_AndCopyTakesIt()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var tb = new TableBlock(2, 2);
+            var doc = new FlowDocument();
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "above" } } });
+            doc.Blocks.Add(tb);
+            ed.Document = doc;
+            typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+            var rects = (IDictionary<TableBlock, Windows.Foundation.Rect>)typeof(RichEditor).GetField("_tableRects", NP)!.GetValue(ed)!;
+            rects[tb] = new Windows.Foundation.Rect(20, 2000, 200, 80);
+
+            var items = ed.BuildContextMenuAt(new Windows.Foundation.Point(20, 2040)).Items.OfType<MenuFlyoutItem>().ToList();
+            Assert.Equal(new[] { Loc("Copy"), Loc("Cut"), Loc("InlineWithText"), Loc("DeleteTable") },
+                         items.Select(i => i.Text).ToArray());
+            Assert.Same(tb, typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed));
+
+            typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
+            Invoke(items[0]);
+            var clip = (FlowDocument?)typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.GetValue(ed);
+            Assert.IsType<TableBlock>(Assert.Single(clip!.Blocks));
         });
     }
 }
