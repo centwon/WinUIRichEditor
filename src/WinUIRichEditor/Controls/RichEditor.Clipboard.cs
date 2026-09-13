@@ -32,13 +32,17 @@ public partial class RichEditor
         if (_selectedInline is { } sinl)
             return CopyImageToClipboardAsync(sinl.img.RawBytes, sinl.img.Image, true, sinl.img.Width, sinl.img.Height);
         if (_selectedInlineTable is { } sit)
-            return CopyBlockToClipboard(sit.it.Table);
+            return CopyTableToClipboard(sit.it.Table);
 
         // A rectangular table-cell block selection: copy just the selected cells as a sub-table (so an
         // in-app paste, and the HTML/RTF handed to Word/HWP, reproduce only the highlighted rectangle —
-        // not the whole table the linear BuildSelectionDocument would clone).
+        // not the whole table the linear BuildSelectionDocument would clone). All of an INLINE table's cells
+        // (a staged Ctrl+A) are that inline table, and copy as it (CopyTableToClipboard).
         if (CellBlockSelection() is { } cb)
-            return CopyBlockToClipboard(cb.tb.Extract(cb.r0, cb.c0, cb.r1, cb.c1));
+            return cb.tb.Parent is InlineTable && cb.r0 == 0 && cb.c0 == 0
+                   && cb.r1 == cb.tb.Rows - 1 && cb.c1 == cb.tb.Columns - 1
+                ? CopyTableToClipboard(cb.tb)
+                : CopyBlockToClipboard(cb.tb.Extract(cb.r0, cb.c0, cb.r1, cb.c1));
 
         if (!HasSelection) return Task.CompletedTask;
         var range = new TextRange(_selStart, _selEnd);
@@ -105,6 +109,22 @@ public partial class RichEditor
         var selDoc = new FlowDocument();
         selDoc.Blocks.Add((Block)block.Clone());
         SetClipboardFromSelection(selDoc, BlockPlainText(block));
+        return Task.CompletedTask;
+    }
+
+    // Copies a table as what it is. An inline table ("treat as character") goes out as a one-paragraph fragment
+    // holding it, which paste puts at the caret as an inline table (InsertDocumentAtCaret → InsertInlinesAtCaret);
+    // it came back a block table, splitting the paragraph it was pasted into (user decision, 2026-09-13). The
+    // HTML and RTF built from that fragment carry the inline marker, so a paste of them into this editor stays
+    // inline too. Any other table copies as a block.
+    private Task CopyTableToClipboard(TableBlock tb)
+    {
+        if (tb.Parent is not InlineTable it) return CopyBlockToClipboard(tb);
+        var line = new Paragraph();
+        line.Inlines.Add((Inline)it.Clone());
+        var selDoc = new FlowDocument();
+        selDoc.Blocks.Add(line);
+        SetClipboardFromSelection(selDoc, BlockPlainText(tb));
         return Task.CompletedTask;
     }
 

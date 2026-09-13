@@ -18,6 +18,10 @@ public partial class RichEditor
     private readonly Dictionary<TableBlock, List<(int col, Rect rect)>> _columnBoundaries = new();
     private readonly Dictionary<TableBlock, List<(int row, double height, Rect rect)>> _rowBoundaries = new();
     private readonly Dictionary<TableBlock, Rect> _tableRects = new();
+    // Tables nested in a cell — at any depth, an inline table's cells included — drawn by DrawNestedTable.
+    // Their border selects them like a top-level table's (OnTableSelectBorder). A list, recorded before a
+    // table's cells are drawn, so walking it backwards finds the innermost table first.
+    private readonly List<(TableBlock tb, Rect rect)> _cellTableRects = new();
     // Doc-space origin of EVERY drawn table — top-level, nested-in-cell and inline. _tableRects only
     // covers top-level tables and _inlineTableRects only inline ones, so nested tables previously had no
     // recorded geometry at all; caret code that needs to locate one (entering it with ↑/↓, stepping out
@@ -35,6 +39,7 @@ public partial class RichEditor
         _columnBoundaries.Clear();
         _rowBoundaries.Clear();
         _tableRects.Clear();
+        _cellTableRects.Clear();
         _tableOrigins.Clear();
     }
 
@@ -251,17 +256,24 @@ public partial class RichEditor
     }
 
     // True when the point is on a table's outer LEFT or TOP border band (its right/bottom edges are the
-    // last column/row resize boundaries, so only left/top select the table as a block).
+    // last column/row resize boundaries, so only left/top select the table as a block) — a top-level table,
+    // or one nested in a cell (2026-09-13: those had no border at all). Innermost first: a table in a cell
+    // wins over the table around it, whose band it overlaps by a cell's padding.
     private bool OnTableSelectBorder(Point pt, out TableBlock? table)
     {
+        for (int i = _cellTableRects.Count - 1; i >= 0; i--)
+            if (OnTableBand(_cellTableRects[i].rect, pt)) { table = _cellTableRects[i].tb; return true; }
         foreach (var (tb, o) in _tableRects)
-        {
-            bool onLeft = Math.Abs(pt.X - o.Left) <= TableBorderGrab && pt.Y >= o.Top - TableBorderGrab && pt.Y <= o.Bottom + TableBorderGrab;
-            bool onTop = Math.Abs(pt.Y - o.Top) <= TableBorderGrab && pt.X >= o.Left - TableBorderGrab && pt.X <= o.Right + TableBorderGrab;
-            if (onLeft || onTop) { table = tb; return true; }
-        }
+            if (OnTableBand(o, pt)) { table = tb; return true; }
         table = null;
         return false;
+    }
+
+    private static bool OnTableBand(Rect o, Point pt)
+    {
+        bool onLeft = Math.Abs(pt.X - o.Left) <= TableBorderGrab && pt.Y >= o.Top - TableBorderGrab && pt.Y <= o.Bottom + TableBorderGrab;
+        bool onTop = Math.Abs(pt.Y - o.Top) <= TableBorderGrab && pt.X >= o.Left - TableBorderGrab && pt.X <= o.Right + TableBorderGrab;
+        return onLeft || onTop;
     }
 
     // Selects a whole table when its left/top border is clicked (Delete then removes it). A viewer too, since

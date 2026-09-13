@@ -240,6 +240,14 @@ public partial class RichEditor
     {
         var tl = known ?? LayoutTable(tb, startX, top);
         if (!_printMode) RecordTableResizeBoundaries(tb, top, tl); // column/row drag handles for every table
+        // A table in a cell: its border band (OnTableSelectBorder) and, when selected, the chrome a top-level
+        // table gets from its caller. Recorded before its cells are drawn, so a table nested in one of them
+        // comes later in the list and is found first.
+        if (!_printMode && tb.Parent is TableCell)
+        {
+            _cellTableRects.Add((tb, new Rect(tl.ColX[0], top, tl.TableWidth, tl.TotalHeight)));
+            DrawTableSelectionChrome(ds, tb, tl.ColX[0], top, tl);
+        }
         var cellSel = _printMode ? null : _renderCellSel; // per-pass cache (see DrawDocument)
         foreach (var (r, c, rect) in tl.AnchorRects)
         {

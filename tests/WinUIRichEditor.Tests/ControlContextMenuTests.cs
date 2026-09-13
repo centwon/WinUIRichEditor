@@ -274,4 +274,87 @@ public class ControlContextMenuTests
             Assert.IsType<TableBlock>(Assert.Single(clip!.Blocks));
         });
     }
+
+    // An inline table copies AS an inline table: the clipboard holds one paragraph with it, which paste puts at
+    // the caret — inside a line of text — not a block table splitting the paragraph (user decision, 2026-09-13).
+    // The paste half is InsertDocumentAtCaret, the in-app paste path (the OS clipboard is not needed for it).
+    [Fact]
+    public void AnInlineTable_CopiesAsAnInlineTable_AndPastesInlineAtTheCaret() => UiThread.Run(() =>
+    {
+        var it = new InlineTable { Table = new TableBlock(2, 2) };
+        var host = new Paragraph { Inlines = { new Run { Text = "a" }, it } };
+        var target = new Paragraph { Inlines = { new Run { Text = "xy" } } };
+        var doc = new FlowDocument();
+        doc.Blocks.Add(host);
+        doc.Blocks.Add(target);
+        var ed = new RichEditor { Document = doc };
+        typeof(RichEditor).GetField("_selectedInlineTable", NP)!.SetValue(ed, ((Paragraph, InlineTable)?)(host, it));
+        typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
+
+        _ = ed.CopyAsync();
+
+        var clip = (FlowDocument)typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.GetValue(ed)!;
+        var line = Assert.IsType<Paragraph>(Assert.Single(clip.Blocks)); // a line, not a block table
+        var copied = Assert.IsType<InlineTable>(Assert.Single(line.Inlines));
+        Assert.Equal((2, 2), (copied.Table.Rows, copied.Table.Columns));
+
+        Caret(ed, target, 1); // between "x" and "y"
+        typeof(RichEditor).GetMethod("InsertDocumentAtCaret", NP)!.Invoke(ed, new object[] { clip.Clone() });
+
+        Assert.Empty(ed.Document!.Blocks.OfType<TableBlock>());  // no block table appeared
+        Assert.Collection(target.Inlines,
+            i => Assert.Equal("x", Assert.IsType<Run>(i).Text),
+            i => Assert.IsType<InlineTable>(i),
+            i => Assert.Equal("y", Assert.IsType<Run>(i).Text));
+    });
+
+    // A table nested in a cell has a border too (2026-09-13 — it had none): a right-click there selects it as
+    // an object and opens the table's menu — without 글자처럼 취급, which converts top-level tables only — and
+    // Copy takes it. Where its band overlaps its outer table's (a cell's padding apart), the INNER table wins.
+    // Now that it can be selected, an arrow steps out of it within its cell, and deleting it leaves the caret
+    // in that cell — not inside the removed table, where it was.
+    [Fact]
+    public void ATableInACell_HasABorder_TheInnerWins_AndLeavingOrDeletingItKeepsTheCaretInItsCell()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var inner = new TableBlock(2, 2);
+            var outer = new TableBlock(1, 2);
+            var after = new Paragraph { Inlines = { new Run { Text = "after" } } };
+            outer.Cells[0][0].Blocks.Clear();
+            outer.Cells[0][0].Blocks.Add(inner);
+            outer.Cells[0][0].Blocks.Add(after);
+            var doc = new FlowDocument();
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "above" } } });
+            doc.Blocks.Add(outer);
+            ed.Document = doc;
+            typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+            var top = (IDictionary<TableBlock, Windows.Foundation.Rect>)typeof(RichEditor).GetField("_tableRects", NP)!.GetValue(ed)!;
+            top[outer] = new Windows.Foundation.Rect(20, 3000, 300, 100);
+            var nested = (List<(TableBlock tb, Windows.Foundation.Rect rect)>)typeof(RichEditor).GetField("_cellTableRects", NP)!.GetValue(ed)!;
+            nested.Add((inner, new Windows.Foundation.Rect(25, 3005, 100, 50)));
+            var both = new Windows.Foundation.Point(23, 3020); // 3 from the outer's left edge, 2 from the inner's
+
+            object? Selected() => typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed);
+            TextPointer CaretNow() => (TextPointer)typeof(RichEditor).GetField("_caret", NP)!.GetValue(ed)!;
+
+            var items = ed.BuildContextMenuAt(both).Items.OfType<MenuFlyoutItem>().ToList();
+            Assert.Equal(new[] { Loc("Copy"), Loc("Cut"), Loc("DeleteTable") }, items.Select(i => i.Text).ToArray());
+            Assert.Same(inner, Selected());
+            typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
+            Invoke(items[0]);
+            var copied = Assert.IsType<TableBlock>(Assert.Single(((FlowDocument?)typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.GetValue(ed))!.Blocks));
+            Assert.Equal((2, 2), (copied.Rows, copied.Columns)); // the inner table — the outer is 1×2
+
+            typeof(RichEditor).GetMethod("ExitBlockSelection", NP)!.Invoke(ed, new object[] { inner, true });
+            Assert.Same(after, CaretNow().Paragraph); // the next paragraph IN the cell
+
+            Caret(ed, inner.Cells[1][1].Blocks.OfType<Paragraph>().First(), 0); // the caret inside the table about to go
+            typeof(RichEditor).GetField("_selectedBlock", NP)!.SetValue(ed, inner);
+            Invoke(items[2]);
+            Assert.DoesNotContain(inner, outer.Cells[0][0].Blocks);
+            Assert.Same(outer.Cells[0][0], CaretNow().Paragraph!.Parent);
+        });
+    }
 }

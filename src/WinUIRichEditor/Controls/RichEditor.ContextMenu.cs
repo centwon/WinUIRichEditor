@@ -169,7 +169,7 @@ public partial class RichEditor
                 // ...and it is shown selected, so the viewer sees what Copy will take (live check, 2026-09-13).
                 if (table != null) SelectTableObject(table);
                 else if (HasBlockSelection) { ClearObjectSelection(); InvalidateCanvas(); } // a table shown selected earlier must not linger
-                menu.Items.Add(Mi(Loc("Copy"), () => _ = table != null ? CopyBlockToClipboard(table) : CopyAsync(),
+                menu.Items.Add(Mi(Loc("Copy"), () => _ = table != null ? CopyTableToClipboard(table) : CopyAsync(),
                                   hasSel || table != null, RichEditorIcon.Copy, "Ctrl+C"));
                 menu.Items.Add(Mi(Loc("SelectAll"), SelectAll, true, RichEditorIcon.SelectAll, "Ctrl+A"));
                 return menu;
@@ -185,12 +185,12 @@ public partial class RichEditor
         }
     }
 
-    // Shows `tb` selected as an object — the chrome a border click draws — where such chrome exists: a
-    // top-level table, or an inline table. A table nested in a cell has none; Copy still takes it.
+    // Shows `tb` selected as an object — the chrome a border click draws: a top-level table, a table in a
+    // cell (which has its chrome since 2026-09-13), or an inline table.
     private void SelectTableObject(TableBlock tb)
     {
         ClearObjectSelection();
-        if (tb.Parent is FlowDocument) _selectedBlock = tb;
+        if (tb.Parent is FlowDocument or TableCell) _selectedBlock = tb;
         else if (tb.Parent is InlineTable it && it.Parent is Paragraph host) _selectedInlineTable = (host, it);
         InvalidateCanvas();
     }
@@ -623,10 +623,15 @@ public partial class RichEditor
         {
             menu.Items.Add(Mi(Loc("Cut"), () => _ = CutAsync(), true, RichEditorIcon.Cut, "Ctrl+X"));
             menu.Items.Add(Sep());
-            var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = false, FontSize = MenuFontSize };
-            t.Click += (_, _) => ConvertTableBlockToInline(tb);
-            menu.Items.Add(t);
-            menu.Items.Add(Sep());
+            // 글자처럼 취급 converts a TOP-LEVEL table (ConvertTableBlockToInline anchors to the paragraphs around
+            // it in the document); a table in a cell is offered no toggle that would do nothing.
+            if (tb.Parent is FlowDocument)
+            {
+                var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = false, FontSize = MenuFontSize };
+                t.Click += (_, _) => ConvertTableBlockToInline(tb);
+                menu.Items.Add(t);
+                menu.Items.Add(Sep());
+            }
             menu.Items.Add(Mi(Loc("DeleteTable"), DeleteSelectedObject, true, RichEditorIcon.DeleteTable));
         }
         return menu;

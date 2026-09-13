@@ -299,7 +299,19 @@ public partial class RichEditor
         PushUndo(null);
         _selectedBlock = null;
         int idx = Document.Blocks.IndexOf(blk);
-        if (idx < 0) { RemoveBlockAnywhere(blk); UpdateParents(Document); AfterEdit(); return; }
+        if (idx < 0)
+        {
+            // A block inside a table cell — an image, or (since its border selects it, 2026-09-13) a table
+            // nested there. The caret moves to that cell: it may have been INSIDE the removed table, and would
+            // otherwise point at a paragraph no longer in the document.
+            var cellBlocks = BlockContainerOf(blk);
+            RemoveBlockAnywhere(blk);
+            UpdateParents(Document);
+            var landing = (cellBlocks != null ? ParagraphsInBlocks(cellBlocks).FirstOrDefault() : null) ?? FirstParagraph();
+            if (landing != null) { _caret = new TextPointer(landing, 0); CollapseSelectionToCaret(); }
+            AfterEdit();
+            return;
+        }
         Document.Blocks.RemoveAt(idx);
         UpdateParents(Document); // re-normalizes so a paragraph borders the gap
 

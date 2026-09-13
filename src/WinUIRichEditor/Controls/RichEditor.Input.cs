@@ -1500,10 +1500,13 @@ public partial class RichEditor
         ClearObjectSelection();
         if (Document != null)
         {
-            int bi = Document.Blocks.IndexOf(blk);
-            if (bi >= 0)
-                for (int i = forward ? bi + 1 : bi - 1; i >= 0 && i < Document.Blocks.Count; i += forward ? 1 : -1)
-                    if (Document.Blocks[i] is Paragraph q)
+            // Its own container — the document, or a table cell (a cell image; a table nested in a cell, which
+            // its border selects since 2026-09-13). Looking in Document.Blocks alone left the caret where it was.
+            var blocks = BlockContainerOf(blk);
+            int bi = blocks?.IndexOf(blk) ?? -1;
+            if (blocks != null && bi >= 0)
+                for (int i = forward ? bi + 1 : bi - 1; i >= 0 && i < blocks.Count; i += forward ? 1 : -1)
+                    if (blocks[i] is Paragraph q)
                     {
                         _caret = new TextPointer(q, forward ? 0 : GetParagraphLength(q));
                         break;
