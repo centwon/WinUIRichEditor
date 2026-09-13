@@ -6,6 +6,11 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 인라인 표 셀에서 Ctrl+A가 바깥 표를 건너뛰었다 (2026-09-14)
+
+표 셀 안에 들어 있는 인라인 표의 셀에서 Ctrl+A를 거듭 누르면 셀 → 인라인 표 다음에 바로 **문서 전체**가 선택됐다 — 인라인
+표를 둘러싼 표 단계가 빠졌다(측정). 이제 셀 → 인라인 표 → 바깥 표 → 문서. AvaloniaRichEditor와 같은 규칙이다.
+
 ### Changed — 우클릭 메뉴가 세로로 조밀해졌다 (2026-09-14)
 
 메뉴 행이 37px → 22px, 구분선이 9px → 약 1px. WinUI 기본 항목 여백(위아래 9·10)이 터치용 높이라 12px 글자에는 헐거웠다.

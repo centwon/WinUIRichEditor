@@ -197,6 +197,41 @@ public class ControlCellBlockTests
         Assert.Null(Block(ed));
     });
 
+    // Ctrl+A in an inline table inside an outer table's cell climbs cell → inline table → OUTER table → document.
+    // It skipped the outer table: from the inline table straight to the whole document (measured 2026-09-14).
+    [Fact]
+    public void CtrlA_InAnInlineTableInACell_ClimbsThroughTheOuterTable() => UiThread.Run(() =>
+    {
+        var outer = new TableBlock(1, 2);
+        ((Run)outer.Cells[0][0].Para.Inlines[0]).Text = "host ";
+        ((Run)outer.Cells[0][1].Para.Inlines[0]).Text = "other";
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "before" } } });
+        doc.Blocks.Add(outer);
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "after" } } });
+        var ed = new RichEditor { Document = doc };
+        var hostPara = outer.Cells[0][0].Para;
+        Caret(ed, hostPara, 5);
+        ed.InsertInlineTable(1, 2);
+        var inner = hostPara.Inlines.OfType<InlineTable>().Single().Table;
+        var innerPara = inner.Cells[0][0].Para;
+        ((Run)innerPara.Inlines[0]).Text = "in";
+        Caret(ed, innerPara, 1);
+
+        (Paragraph? s, int so, Paragraph? e, int eo) Stage()
+        {
+            Call(ed, "SelectAll");
+            var s = (TextPointer)T.GetField("_selStart", NP)!.GetValue(ed)!;
+            var e = (TextPointer)T.GetField("_selEnd", NP)!.GetValue(ed)!;
+            return (s.Paragraph, s.Offset, e.Paragraph, e.Offset);
+        }
+
+        Assert.Equal((innerPara, 0, innerPara, 2), Stage());                          // 1: the cell
+        Assert.Equal((innerPara, 0, inner.Cells[0][1].Para, 0), Stage());            // 2: the inline table
+        Assert.Equal((hostPara, 0, outer.Cells[0][1].Para, 5), Stage());             // 3: the table around it
+        Assert.Equal(((Paragraph)doc.Blocks[0], 0, (Paragraph)doc.Blocks[^1], 5), Stage()); // 4: the document
+    });
+
     [Fact]
     public void TheTableMenu_OffersSelectCell_WithItsKey_AndItSelectsTheCell() => UiThread.Run(() =>
     {

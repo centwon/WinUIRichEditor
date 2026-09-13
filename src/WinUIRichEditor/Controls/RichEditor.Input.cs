@@ -1167,11 +1167,8 @@ public partial class RichEditor
 
             var (ar, ac) = loc.tb.AnchorOf(loc.r, loc.c);
             AddRange(ParagraphsInBlocks(loc.tb.Cells[ar][ac].Blocks)); // 1: the cell's content
-            for (TableBlock? t = loc.tb; t != null; )                  // 2..: each enclosing table
-            {
+            for (TableBlock? t = loc.tb; t != null; t = EnclosingTableOf(t)) // 2..: each enclosing table
                 AddRange(ParagraphsInBlocks(new[] { (Block)t }));
-                t = t.Parent is TableCell tc && tc.Parent is TableBlock outer ? outer : null;
-            }
             AddRange(AllParagraphs());                                 // last: the whole document
 
             bool Eq((Paragraph s, int so, Paragraph e, int eo) st)
@@ -1202,6 +1199,18 @@ public partial class RichEditor
         _caret = Clone(_selEnd);
         InvalidateCanvas();
         RaiseStatusChanged(); // flush SelectionChanged now, not with the next unrelated input
+    }
+
+    // The table one level further out: a table nested in a cell, or — for an inline table — the table holding the
+    // cell its host paragraph is in (upstream's EnclosingTableOf). Climbing through TableCell parents only stopped at
+    // an inline table, so Ctrl+A went from an inline table straight to the whole document, skipping the table
+    // around it (measured 2026-09-14).
+    private static TableBlock? EnclosingTableOf(TableBlock t)
+    {
+        if (t.Parent is TableCell c && c.Parent is TableBlock outer) return outer;
+        if (t.Parent is InlineTable it && it.Parent is Paragraph host
+            && host.Parent is TableCell hc && hc.Parent is TableBlock ht) return ht;
+        return null;
     }
 
     private void CollapseSelectionToCaret()
