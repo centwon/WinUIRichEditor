@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Windows.Foundation;
 using Windows.UI;
 using Windows.ApplicationModel.DataTransfer;
@@ -58,7 +60,7 @@ public partial class RichEditor
     // the part worth pinning and the handler is the part that cannot be tested — it needs a
     // RightTappedRoutedEventArgs, which has no public constructor. The handler now does the hit-testing
     // and the acting; this decides, and it decides from plain values.
-    internal enum ContextMenuKind { BlockImage, InlineImage, InlineTable, BlockTable, ReadOnlyText, Link, Text }
+    internal enum ContextMenuKind { BlockImage, InlineImage, InlineTable, BlockTable, ReadOnlyText, Link, Text, CellBlock }
 
     /// The priority order, which is a contract and not an accident:
     /// an object under the pointer wins over any text menu (you right-clicked the object, not the line) —
@@ -68,13 +70,16 @@ public partial class RichEditor
     /// on the selection, not on the link under the pointer.
     internal static ContextMenuKind ChooseContextMenu(
         bool onBlockImage, bool onInlineImage, bool onInlineTableEdge,
-        bool isReadOnly, bool hasSelection, string? linkUri, bool onBlockTableEdge = false)
+        bool isReadOnly, bool hasSelection, string? linkUri, bool onBlockTableEdge = false, bool onCellBlock = false)
     {
         if (onBlockImage) return ContextMenuKind.BlockImage;
         if (onInlineImage) return ContextMenuKind.InlineImage;
         if (onInlineTableEdge) return ContextMenuKind.InlineTable;
         if (onBlockTableEdge) return ContextMenuKind.BlockTable;
         if (isReadOnly) return ContextMenuKind.ReadOnlyText;
+        // A cell block (F5, a drag, Shift+arrow) is the table's business: the table menu, as for a table held whole
+        // (user decision, 2026-09-14 — a menu that fits what was clicked). It opened the text menu.
+        if (onCellBlock) return ContextMenuKind.CellBlock;
         if (!hasSelection && !string.IsNullOrEmpty(linkUri)) return ContextMenuKind.Link;
         return ContextMenuKind.Text;
     }
@@ -161,8 +166,9 @@ public partial class RichEditor
         // the caret's link, as they always have.
         bool hasSel = HasSelection;
         string? linkUri = onObject ? null : hasSel ? CurrentLinkUri() : LinkHitAtPoint(ipt)?.run.NavigateUri;
+        var cellBlock = onObject ? null : CellBlockSelection();
         var kind = ChooseContextMenu(hitBlockImage != null, hitInlineImage != null, hitInlineTable != null,
-                                     IsReadOnly, hasSel, linkUri, edgeTable != null);
+                                     IsReadOnly, hasSel, linkUri, edgeTable != null, cellBlock != null);
 
         var menu = new MenuFlyout();
         switch (kind)
@@ -176,12 +182,27 @@ public partial class RichEditor
                 return BuildImageMenu(null, hitInlineImage!.Value.img);
 
             case ContextMenuKind.InlineTable:
+            {
                 ClearObjectSelection(); _selectedInlineTable = hitInlineTable; CollapseSelectionToCaret(); InvalidateCanvas();
-                return BuildInlineTableMenu(hitInlineTable!.Value.host, hitInlineTable.Value.it);
+                var (ir, ic) = PointerCell(ipt, hitInlineTable!.Value.it.Table);
+                return BuildInlineTableMenu(hitInlineTable.Value.host, hitInlineTable.Value.it, ir, ic);
+            }
 
             case ContextMenuKind.BlockTable:
+            {
                 ClearObjectSelection(); _selectedBlock = edgeTable; CollapseSelectionToCaret(); InvalidateCanvas();
-                return BuildBlockTableMenu(edgeTable!);
+                var (br, bc) = PointerCell(ipt, edgeTable!);
+                return BuildBlockTableMenu(edgeTable!, br, bc);
+            }
+
+            case ContextMenuKind.CellBlock:
+            {
+                // The block stays selected; its row/column items act on the cell under the pointer, else its corner.
+                var cb = cellBlock!.Value;
+                var (pr, pc) = PointerCell(ipt, cb.tb);
+                if (pr < 0) (pr, pc) = (cb.r0, cb.c0);
+                return BuildTableMenu(cb.tb, pr, pc, DeleteTableAction(cb.tb), DeleteCellBlockContent);
+            }
 
             case ContextMenuKind.ReadOnlyText: // a viewer: copy + select-all only
             {
@@ -262,9 +283,8 @@ public partial class RichEditor
             // ── 목록 (list) — promoted to top level ──
             Item(Sub(Loc("List"), RichEditorIcon.BulletList,
                 BulletToggle(Loc("BulletList"), fmt.List == ListKind.Bullet, ToggleBullet, RichEditorShortcuts.Display(ShortcutId.BulletList)),
-                // Style submenus list STYLES only. Removal has exactly two doors — the toggle above
-                // (which now clears the whole list state) and the labelled "목록 제거" below — instead
-                // of the three it used to have (a "없음" first item in each of these two submenus).
+                // Style submenus list STYLES only; a list is turned off by its own toggle (which clears the whole
+                // list state). The labelled "목록 제거" was a duplicate door and went (user decision, 2026-09-14).
                 Sub(Loc("BulletStyle"), null,
                     Mi("•", () => SetListStyle(ListMarkerStyle.Disc)), Mi("◦", () => SetListStyle(ListMarkerStyle.Circle)),
                     Mi("▪", () => SetListStyle(ListMarkerStyle.Square)), Mi("–", () => SetListStyle(ListMarkerStyle.Dash))),
@@ -273,8 +293,6 @@ public partial class RichEditor
                     Mi("1.", () => SetListStyle(ListMarkerStyle.Decimal)), Mi("1)", () => SetListStyle(ListMarkerStyle.DecimalParen)),
                     Mi("a)", () => SetListStyle(ListMarkerStyle.LowerAlpha)), Mi("A)", () => SetListStyle(ListMarkerStyle.UpperAlpha)),
                     Mi("i)", () => SetListStyle(ListMarkerStyle.LowerRoman))),
-                Sep(),
-                Mi(Loc("RemoveList"), RemoveList, fmt.List != ListKind.None),
                 Sep(),
                 BulletToggle(Loc("Quote"), fmt.Quote, ToggleQuote)));
 
@@ -564,8 +582,23 @@ public partial class RichEditor
         return menu;
     }
 
-    // Cell-background palette flyout (the toolbar's 40 swatches + "none"). Applies to the selected
-    // rectangular cell block when the selection spans cells of this table, else to the cell at (r,c).
+    // The cells a background goes on: the cell block when one is on this table — a ONE-cell block included, which
+    // SelectedCellRange does not see (it painted the cell under the pointer instead) — else the cell at (r,c).
+    internal IEnumerable<TableCell> CellBackgroundTargets(TableBlock tb, int r, int c)
+    {
+        if (CellBlockSelection() is { } cb && ReferenceEquals(cb.tb, tb))
+        {
+            foreach (var (rr, cc, cell) in tb.LogicalCells())
+                if (rr >= cb.r0 && rr <= cb.r1 && cc >= cb.c0 && cc <= cb.c1) yield return cell;
+        }
+        else if (r >= 0 && c >= 0)
+        {
+            var (ar, ac) = tb.AnchorOf(r, c);
+            yield return tb.Cells[ar][ac];
+        }
+    }
+
+    // Cell-background palette flyout (the toolbar's 40 swatches + "none"), on CellBackgroundTargets.
     private void ShowCellBackgroundPalette(TableBlock tb, int r, int c)
     {
         if (IsReadOnly || Document == null) return;
@@ -575,17 +608,7 @@ public partial class RichEditor
         {
             flyout.Hide();
             PushUndo(null);
-            if (SelectedCellRange(tb) is { } rg)
-            {
-                foreach (var (rr, cc, cell) in tb.LogicalCells())
-                    if (rr >= rg.r0 && rr <= rg.r1 && cc >= rg.c0 && cc <= rg.c1)
-                        cell.Background = color;
-            }
-            else
-            {
-                var (ar, ac) = tb.AnchorOf(r, c);
-                tb.Cells[ar][ac].Background = color;
-            }
+            foreach (var cell in CellBackgroundTargets(tb, r, c)) cell.Background = color;
             InvalidateCanvas();
             RaiseStatusChanged();
         }
@@ -615,104 +638,119 @@ public partial class RichEditor
         flyout.ShowAt(_canvas, new FlyoutShowOptions { Position = _ctxMenuPos });
     }
 
-    // Menu for a whole inline table selected by its border: copy, then block↔inline toggle + delete.
-    // Copy leads for the same reason it leads the image menu: an object wins the right-click even in a
-    // viewer (ChooseContextMenu), and with every item below gated on !IsReadOnly a viewer used to get an
-    // EMPTY flyout. CopyAsync already copies the selected inline table as a whole table.
-    internal MenuFlyout BuildInlineTableMenu(Paragraph host, InlineTable it)
+    // Menu for a whole inline table selected by its border — the table menu. A viewer's is Copy alone: an object
+    // wins the right-click even in a viewer (ChooseContextMenu), which once gave it an EMPTY flyout.
+    internal MenuFlyout BuildInlineTableMenu(Paragraph host, InlineTable it, int r = -1, int c = -1)
+        => BuildTableMenu(it.Table, r, c, DeleteSelectedInlineTable, DeleteSelectedInlineTable);
+
+    // Menu for a whole block table selected by its border (top-level, or a table in a cell) — the table menu.
+    internal MenuFlyout BuildBlockTableMenu(TableBlock tb, int r = -1, int c = -1)
+        => BuildTableMenu(tb, r, c, DeleteSelectedObject, DeleteSelectedObject);
+
+    // The table menu: what a right-click opens on a table held whole (its border) or on a cell block — the same,
+    // item for item, as AvaloniaRichEditor's (user decision, 2026-09-14: a menu that fits what was clicked — text,
+    // table or image). The clipboard verbs, then the table's own items (AddTableStructureItems) for the cell (r, c):
+    // the one under the pointer, or -1 when the right-click was on the border (those items greyed). Delete is
+    // `deleteContent` — the whole table when it is held, the cells' content for a cell block, as the Delete key;
+    // 표 삭제 is `deleteTable`. It replaced a short object menu (copy · cut · 글자처럼 취급 · 표 삭제) and, for a cell
+    // block, the text menu with the table in a submenu. A viewer gets Copy alone.
+    internal MenuFlyout BuildTableMenu(TableBlock tb, int r, int c, Action deleteTable, Action deleteContent)
     {
         var menu = new MenuFlyout();
-        menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), true, RichEditorIcon.Copy, "Ctrl+C"));
-        if (!IsReadOnly)
+        if (IsReadOnly)
         {
-            menu.Items.Add(Mi(Loc("Cut"), () => _ = CutAsync(), true, RichEditorIcon.Cut, "Ctrl+X"));
-            menu.Items.Add(Sep());
-            // 표 모양: 글자처럼 취급 (checked while inline) → separator → 표 삭제.
-            var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = true, FontSize = MenuFontSize };
-            t.Click += (_, _) => ConvertInlineTableToBlock(host, it);
-            menu.Items.Add(t);
-            menu.Items.Add(Sep());
-            menu.Items.Add(Mi(Loc("DeleteTable"), DeleteSelectedInlineTable, true, RichEditorIcon.DeleteTable));
+            menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), true, RichEditorIcon.Copy, "Ctrl+C"));
+            return menu;
         }
+        menu.Items.Add(Mi(Loc("Cut"), () => _ = CutAsync(), true, RichEditorIcon.Cut, "Ctrl+X"));
+        menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), true, RichEditorIcon.Copy, "Ctrl+C"));
+        menu.Items.Add(Mi(Loc("Paste"), () => _ = PasteAsync(), true, RichEditorIcon.Paste, "Ctrl+V"));
+        menu.Items.Add(Mi(Loc("Delete"), deleteContent, true, RichEditorIcon.Delete, "Del"));
+        menu.Items.Add(Sep());
+        AddTableStructureItems(menu.Items, tb, r, c, deleteTable);
         return menu;
     }
 
-    // Menu for a whole top-level table selected by its border — the block twin of the inline-table menu:
-    // copy and cut take the table (CopyAsync/CutAsync act on the selected object), then 글자처럼 취급
-    // (unchecked: this table is a block) and 표 삭제. A viewer gets Copy alone.
-    internal MenuFlyout BuildBlockTableMenu(TableBlock tb)
+    // Deleting `tb` from a menu: an inline table leaves its host line (DeleteTable removes blocks only).
+    private Action DeleteTableAction(TableBlock tb)
+        => tb.Parent is InlineTable it && it.Parent is Paragraph host
+            ? () => { ClearObjectSelection(); _selectedInlineTable = (host, it); DeleteSelectedInlineTable(); }
+            : () => DeleteTable(tb);
+
+    // Delete on a cell block: its cells' content, the grid stays — as the Delete key.
+    private void DeleteCellBlockContent()
     {
-        var menu = new MenuFlyout();
-        menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), true, RichEditorIcon.Copy, "Ctrl+C"));
-        if (!IsReadOnly)
-        {
-            menu.Items.Add(Mi(Loc("Cut"), () => _ = CutAsync(), true, RichEditorIcon.Cut, "Ctrl+X"));
-            menu.Items.Add(Sep());
-            // 글자처럼 취급 converts a TOP-LEVEL table (ConvertTableBlockToInline anchors to the paragraphs around
-            // it in the document); a table in a cell is offered no toggle that would do nothing.
-            if (tb.Parent is FlowDocument)
-            {
-                var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = false, FontSize = MenuFontSize };
-                t.Click += (_, _) => ConvertTableBlockToInline(tb);
-                menu.Items.Add(t);
-                menu.Items.Add(Sep());
-            }
-            menu.Items.Add(Mi(Loc("DeleteTable"), DeleteSelectedObject, true, RichEditorIcon.DeleteTable));
-        }
-        return menu;
+        if (!HasSelection) return;
+        PushUndo(null);
+        DeleteSelection();
+        AfterEdit();
     }
 
-    // The table-structure operations, shown as a "Table" submenu when editing inside a cell.
+    // The anchor cell of `tb` under a document point, or (-1, -1).
+    private (int r, int c) PointerCell(Point docPt, TableBlock tb)
+        => GetPositionFromPoint(docPt) is { Paragraph: { } p } && FindCell(p) is { } loc && ReferenceEquals(loc.tb, tb)
+            ? tb.AnchorOf(loc.r, loc.c) : (-1, -1);
+
+    // The "Table" submenu of the text menu, when editing inside a cell: the table menu's own items.
     internal MenuFlyoutSubItem BuildTableSubmenu(TableBlock tb, int r, int c)
     {
         var sub = new MenuFlyoutSubItem { Text = Loc("TableOps"), FontSize = MenuFontSize };
-        void Add(string text, Action act, bool enabled = true, RichEditorIcon? icon = null) => sub.Items.Add(Mi(text, act, enabled, icon));
+        AddTableStructureItems(sub.Items, tb, r, c, DeleteTableAction(tb));
+        return sub;
+    }
 
-        // ── Edit ── Copy the current cell as a 1×1 sub-table (a whole merged cell copies its content), so it
-        // pastes back as a cell — not just text. A multi-cell rectangle uses the ordinary Copy (Ctrl+C) path.
-        Add(Loc("CopyCell"), () => _ = CopyCell(tb, r, c), r >= 0 && c >= 0, RichEditorIcon.Copy);
-        // One-cell block (F5; upstream's "셀 선택"): the cell as a unit — Delete clears it, formatting and the
-        // background take all of it, Copy takes it as a 1×1 table, Shift+arrow grows it by cells.
-        sub.Items.Add(Mi(Loc("SelectCell"), () => { if (r >= 0 && c >= 0) { var (ar, ac) = tb.AnchorOf(r, c); SelectCellAsBlock(tb.Cells[ar][ac]); } },
-                         r >= 0 && c >= 0, null, RichEditorShortcuts.Display(ShortcutId.SelectCell)));
-        sub.Items.Add(Sep());
+    // The table's own items, shared by the table menu and the text menu's "Table" submenu, in AvaloniaRichEditor's
+    // order: 셀 선택 | rows | columns | merge | 셀 세로 정렬 · 셀 배경 · 여백 · 글자처럼 취급 | 표 삭제. An item that
+    // does not apply is greyed, not dropped (user decision, 2026-09-14), so the same items stand in the same
+    // places. "셀 복사" went: F5 then Copy does it, as does the table menu's Copy on a cell block.
+    private void AddTableStructureItems(IList<MenuFlyoutItemBase> items, TableBlock tb, int r, int c, Action deleteTable)
+    {
+        bool onCell = r >= 0 && c >= 0;
+        void Add(string text, Action act, bool enabled = true, RichEditorIcon? icon = null) => items.Add(Mi(text, act, enabled, icon));
+
+        // One-cell block (F5): the cell as a unit — Delete clears it, formatting and the background take all of it,
+        // Copy takes it as a 1×1 table, Shift+arrow grows it by cells.
+        items.Add(Mi(Loc("SelectCell"), () => { if (onCell) { var (ar, ac) = tb.AnchorOf(r, c); SelectCellAsBlock(tb.Cells[ar][ac]); } },
+                     onCell, null, RichEditorShortcuts.Display(ShortcutId.SelectCell)));
+        items.Add(Sep());
         // ── Rows ──
         Add(Loc("InsertRowAbove"), () => TableInsertRow(tb, r), r >= 0, RichEditorIcon.InsertRowAbove);
         Add(Loc("InsertRowBelow"), () => TableInsertRow(tb, RowBelowIndex(tb, r, c)), r >= 0, RichEditorIcon.InsertRowBelow);
         Add(Loc("DeleteRow"), () => TableDeleteRow(tb, r), r >= 0 && tb.Rows > 1, RichEditorIcon.DeleteRow);
-        sub.Items.Add(Sep());
+        items.Add(Sep());
         // ── Columns ──
         Add(Loc("InsertColumnLeft"), () => TableInsertColumn(tb, c), c >= 0, RichEditorIcon.InsertColumnLeft);
         Add(Loc("InsertColumnRight"), () => TableInsertColumn(tb, ColumnRightIndex(tb, r, c)), c >= 0, RichEditorIcon.InsertColumnRight);
         Add(Loc("DeleteColumn"), () => TableDeleteColumn(tb, c), c >= 0 && tb.Columns > 1, RichEditorIcon.DeleteColumn);
-        sub.Items.Add(Sep());
+        items.Add(Sep());
         // ── Merge / split ──
         bool canMerge = SelectedCellRange(tb) is { } rg && IsCleanRect(tb, rg.r0, rg.c0, rg.r1, rg.c1);
         Add(Loc("MergeCells"), () => TableMergeSelected(tb), canMerge, RichEditorIcon.MergeCells);
-        bool canUnmerge = r >= 0 && c >= 0 && (tb.SpanOf(r, c).cs > 1 || tb.SpanOf(r, c).rs > 1);
+        bool canUnmerge = onCell && (tb.SpanOf(r, c).cs > 1 || tb.SpanOf(r, c).rs > 1);
         Add(Loc("UnmergeCells"), () => TableUnmergeCell(tb, r, c), canUnmerge, RichEditorIcon.UnmergeCells);
-        sub.Items.Add(Sep());
+        items.Add(Sep());
         // ── 표 모양 (table shape): cell vertical alignment + background + margin + 글자처럼 취급 ──
-        if (r >= 0 && c >= 0) sub.Items.Add(BuildCellVAlignSub(tb, r, c));
-        // Cell background: model + every serializer already round-trip TableCell.Background; this
-        // palette (shared with the toolbar pickers) is the missing edit surface. Applies to the
-        // selected cell rectangle when one exists, else the current cell.
-        if (r >= 0 && c >= 0)
-            Add(Loc("CellBackground"), () => ShowCellBackgroundPalette(tb, r, c));
-        sub.Items.Add(MarginMenu(tb));
+        items.Add(onCell ? BuildCellVAlignSub(tb, r, c)
+                         : new MenuFlyoutSubItem { Text = Loc("CellVerticalAlign"), FontSize = MenuFontSize, IsEnabled = false });
+        // Cell background: model + every serializer already round-trip TableCell.Background; this palette (shared
+        // with the toolbar pickers) is the edit surface — on the cell block, else the cell (CellBackgroundTargets).
+        Add(Loc("CellBackground"), () => ShowCellBackgroundPalette(tb, r, c), CellBackgroundTargets(tb, r, c).Any());
+        items.Add(MarginMenu(tb));
+        // 글자처럼 취급 converts a TOP-LEVEL table (ConvertTableBlockToInline anchors to the paragraphs around it) or
+        // an inline one back; a table in a cell is offered no toggle that would do nothing.
         if (tb.Parent is FlowDocument)
         {
             var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = false, FontSize = MenuFontSize };
             t.Click += (_, _) => ConvertTableBlockToInline(tb);
-            sub.Items.Add(t);
+            items.Add(t);
         }
         else if (tb.Parent is InlineTable it && it.Parent is Paragraph host)
         {
             var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = true, FontSize = MenuFontSize };
             t.Click += (_, _) => ConvertInlineTableToBlock(host, it);
-            sub.Items.Add(t);
+            items.Add(t);
         }
-        Add(Loc("DeleteTable"), () => DeleteTable(tb), true, RichEditorIcon.DeleteTable);
-        return sub;
+        items.Add(Sep());
+        Add(Loc("DeleteTable"), deleteTable, true, RichEditorIcon.DeleteTable);
     }
 }

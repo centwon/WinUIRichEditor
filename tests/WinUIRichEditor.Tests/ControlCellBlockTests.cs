@@ -80,6 +80,24 @@ public class ControlCellBlockTests
         Assert.Null(Block(ed));
     });
 
+    // An EMPTY cell's one-cell block is a zero-length range — still a selection, and it copies as a 1×1 table.
+    // It read as "nothing selected", so a right-click dropped it (found by the table-menu right-click test).
+    [Fact]
+    public void AnEmptyCell_F5_IsStillASelection_AndCopiesAsAOneByOneTable() => UiThread.Run(() =>
+    {
+        var (ed, tb) = Grid(2, 2);
+        ((Run)tb.Cells[0][0].Para.Inlines[0]).Text = "";
+        Caret(ed, tb.Cells[0][0].Para, 0);
+        Key(ed, VirtualKey.F5);
+
+        Assert.True(HasSelection(ed));
+        Assert.Equal((tb, 0, 0, 0, 0), Block(ed));
+        _ = ed.CopyAsync();
+        var clip = (FlowDocument?)T.GetField("_internalClipboardDoc", NP)!.GetValue(ed);
+        var copied = Assert.IsType<TableBlock>(Assert.Single(clip!.Blocks));
+        Assert.Equal((1, 1), (copied.Rows, copied.Columns));
+    });
+
     // Delete on a one-cell block clears that cell as a unit — the cell block path, the same as a multi-cell one.
     [Fact]
     public void Delete_OnAOneCellBlock_ClearsThatCell_AndNoOther() => UiThread.Run(() =>

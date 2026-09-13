@@ -103,7 +103,81 @@ public class ControlContextMenuTests
         Assert.All(items, i => Assert.True(i.FontSize == size, $"'{TextOf(i)}' is {i.FontSize}px, the menu is {size}px"));
     });
 
-    // A viewer's inline-table menu is Copy and nothing else; an editor's adds the structure verbs.
+    // ---- the table menu — the same items in the same order as AvaloniaRichEditor's (user decision, 2026-09-14) --
+
+    private static string[] Labels(MenuFlyout m) => m.Items.Select(i => i is MenuFlyoutSeparator ? "—" : TextOf(i)).ToArray();
+
+    // Written out identically in AvaloniaRichEditor's ContextMenuConvergenceTests; "—" is a separator.
+    private static string[] TableMenuLabels(bool inlineToggle)
+    {
+        var l = new List<string> { Loc("Cut"), Loc("Copy"), Loc("Paste"), Loc("Delete"), "—",
+            Loc("SelectCell"), "—",
+            Loc("InsertRowAbove"), Loc("InsertRowBelow"), Loc("DeleteRow"), "—",
+            Loc("InsertColumnLeft"), Loc("InsertColumnRight"), Loc("DeleteColumn"), "—",
+            Loc("MergeCells"), Loc("UnmergeCells"), "—",
+            Loc("CellVerticalAlign"), Loc("CellBackground"), Loc("Margin") };
+        if (inlineToggle) l.Add(Loc("InlineWithText"));
+        l.Add("—");
+        l.Add(Loc("DeleteTable"));
+        return l.ToArray();
+    }
+
+    private static (RichEditor ed, TableBlock tb) TableEditor(bool nested)
+    {
+        var tb = new TableBlock(2, 2);
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "above" } } });
+        if (nested)
+        {
+            var outer = new TableBlock(1, 1);
+            outer.Cells[0][0].Blocks.Insert(0, tb);
+            doc.Blocks.Add(outer);
+        }
+        else doc.Blocks.Add(tb);
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "below" } } });
+        return (new RichEditor { Document = doc }, tb);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheTableMenu_IsTheSameItemsInTheSameOrder_AsUpstreams(bool nested) => UiThread.Run(() =>
+    {
+        var (ed, tb) = TableEditor(nested);
+        Assert.Equal(TableMenuLabels(inlineToggle: !nested), Labels(ed.BuildTableMenu(tb, 0, 0, () => { }, () => { })));
+    });
+
+    private static void F5(RichEditor ed)
+        => typeof(RichEditor).GetMethod("TryCellBlockKey", NP)!.Invoke(ed, new object[] { Windows.System.VirtualKey.F5, false, false, false });
+
+    // The two items that went: a list is turned off by its own toggle, and a cell is copied with F5 then Copy.
+    [Fact]
+    public void TheMenus_HaveNoRemoveList_AndNoCopyCell() => UiThread.Run(() =>
+    {
+        var (ed, tb) = TableEditor(nested: false);
+        ed.ShowFormattingMenu = true;
+        Caret(ed, tb.Cells[0][0].Blocks.OfType<Paragraph>().First(), 0);
+        ed.ToggleBullet();
+
+        var texts = Walk(TextMenu(ed).Items).Select(TextOf).ToList();
+        Assert.Contains(Loc("TableOps"), texts); // the cell's "Table" submenu is in there
+        Assert.DoesNotContain(texts, t => t is "목록 제거" or "Remove List" or "셀 복사" or "Copy Cell");
+    });
+
+    // 셀 배경 goes on a ONE-cell block — SelectedCellRange does not see one, so it painted the clicked cell.
+    [Fact]
+    public void CellBackground_TakesTheOneCellBlock_NotTheClickedCell() => UiThread.Run(() =>
+    {
+        var (ed, tb) = TableEditor(nested: false);
+        Caret(ed, tb.Cells[0][1].Blocks.OfType<Paragraph>().First(), 0);
+        F5(ed);
+        Assert.Same(tb.Cells[0][1], Assert.Single(ed.CellBackgroundTargets(tb, 1, 1)));
+
+        Caret(ed, tb.Cells[0][0].Blocks.OfType<Paragraph>().First(), 0); // no block: the clicked cell
+        Assert.Same(tb.Cells[1][1], Assert.Single(ed.CellBackgroundTargets(tb, 1, 1)));
+    });
+
+    // A viewer's inline-table menu is Copy and nothing else; an editor's is the table menu.
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -118,9 +192,8 @@ public class ControlContextMenuTests
         var labels = ed.BuildInlineTableMenu(host, it).Items
             .Where(i => i is not MenuFlyoutSeparator).Select(TextOf).ToList();
 
-        Assert.Equal(Loc("Copy"), labels.First());
-        if (readOnly) Assert.Single(labels);
-        else Assert.Contains(Loc("DeleteTable"), labels);
+        if (readOnly) Assert.Equal(new[] { Loc("Copy") }, labels);
+        else Assert.Equal(TableMenuLabels(inlineToggle: true).Where(l => l != "—"), labels);
     });
 
     // ---- the whole right-click, from a point ------------------------------------------------------
@@ -263,15 +336,40 @@ public class ControlContextMenuTests
             var rects = (IDictionary<TableBlock, Windows.Foundation.Rect>)typeof(RichEditor).GetField("_tableRects", NP)!.GetValue(ed)!;
             rects[tb] = new Windows.Foundation.Rect(20, 2000, 200, 80);
 
-            var items = ed.BuildContextMenuAt(new Windows.Foundation.Point(20, 2040)).Items.OfType<MenuFlyoutItem>().ToList();
-            Assert.Equal(new[] { Loc("Copy"), Loc("Cut"), Loc("InlineWithText"), Loc("DeleteTable") },
-                         items.Select(i => i.Text).ToArray());
+            var menu = ed.BuildContextMenuAt(new Windows.Foundation.Point(20, 2040));
+            Assert.Equal(TableMenuLabels(inlineToggle: true), Labels(menu)); // the table menu (it was a short object menu)
             Assert.Same(tb, typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed));
 
             typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
-            Invoke(items[0]);
+            Invoke(menu.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == Loc("Copy")));
             var clip = (FlowDocument?)typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.GetValue(ed);
             Assert.IsType<TableBlock>(Assert.Single(clip!.Blocks));
+        });
+    }
+
+    // A right-click on a cell block opens the table menu and leaves the block selected — it opened the text menu
+    // (user decision, 2026-09-14: the menu fits what was clicked).
+    [Fact]
+    public void ARightClick_OnACellBlock_OpensTheTableMenu_AndKeepsTheBlock()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var tb = new TableBlock(2, 2);
+            var doc = new FlowDocument();
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "above" } } });
+            doc.Blocks.Add(tb);
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "below" } } });
+            ed.IsReadOnly = false;
+            ed.Document = doc;
+            typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+            Caret(ed, tb.Cells[0][0].Blocks.OfType<Paragraph>().First(), 0);
+            F5(ed);
+
+            var menu = ed.BuildContextMenuAt(PointAt(ed, tb.Cells[1][1].Blocks.OfType<Paragraph>().First(), 0));
+
+            Assert.Equal(TableMenuLabels(inlineToggle: true), Labels(menu));
+            Assert.NotNull(typeof(RichEditor).GetMethod("CellBlockSelection", NP)!.Invoke(ed, null));
         });
     }
 
@@ -339,11 +437,11 @@ public class ControlContextMenuTests
             object? Selected() => typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed);
             TextPointer CaretNow() => (TextPointer)typeof(RichEditor).GetField("_caret", NP)!.GetValue(ed)!;
 
-            var items = ed.BuildContextMenuAt(both).Items.OfType<MenuFlyoutItem>().ToList();
-            Assert.Equal(new[] { Loc("Copy"), Loc("Cut"), Loc("DeleteTable") }, items.Select(i => i.Text).ToArray());
+            var menu = ed.BuildContextMenuAt(both);
+            Assert.Equal(TableMenuLabels(inlineToggle: false), Labels(menu)); // a table in a cell: no 글자처럼 취급
             Assert.Same(inner, Selected());
             typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
-            Invoke(items[0]);
+            Invoke(menu.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == Loc("Copy")));
             var copied = Assert.IsType<TableBlock>(Assert.Single(((FlowDocument?)typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.GetValue(ed))!.Blocks));
             Assert.Equal((2, 2), (copied.Rows, copied.Columns)); // the inner table — the outer is 1×2
 
@@ -352,7 +450,7 @@ public class ControlContextMenuTests
 
             Caret(ed, inner.Cells[1][1].Blocks.OfType<Paragraph>().First(), 0); // the caret inside the table about to go
             typeof(RichEditor).GetField("_selectedBlock", NP)!.SetValue(ed, inner);
-            Invoke(items[2]);
+            Invoke(menu.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == Loc("DeleteTable")));
             Assert.DoesNotContain(inner, outer.Cells[0][0].Blocks);
             Assert.Same(outer.Cells[0][0], CaretNow().Paragraph!.Parent);
         });
