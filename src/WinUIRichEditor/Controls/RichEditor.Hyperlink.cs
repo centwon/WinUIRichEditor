@@ -132,7 +132,10 @@ public partial class RichEditor
     // the one layout the caret already comes from (core rule #1): pointer left of the caret → the character
     // before it, right of it → the character at it, and none when that character is on another line — the
     // pointer is past a line's end or before its start.
-    private Run? LinkRunAtPoint(Windows.Foundation.Point pt)
+    private Run? LinkRunAtPoint(Windows.Foundation.Point pt) => LinkHitAtPoint(pt)?.run;
+
+    // LinkRunAtPoint with the character it hit — a right-click puts the caret just past it (CaretJustPast).
+    private (Paragraph p, int ch, Run run)? LinkHitAtPoint(Windows.Foundation.Point pt)
     {
         if (GetPositionFromPoint(pt) is not { Paragraph: { } p } tp) return null;
         if (CaretToDocPoint(tp) is not { } c || pt.Y < c.LineTop || pt.Y > c.LineBottom) return null;
@@ -152,10 +155,22 @@ public partial class RichEditor
         foreach (var inl in p.Inlines)
         {
             int n = InlineLen(inl);
-            if (ch < pos + n) return inl is Run { NavigateUri: { Length: > 0 } } r ? r : null;
+            if (ch < pos + n) return inl is Run { NavigateUri: { Length: > 0 } } r ? (p, ch, r) : null;
             pos += n;
         }
         return null;
+    }
+
+    // The caret just past character `ch` — inside a link when `ch` is one of its characters, which is what the
+    // caret-based link actions (CurrentLinkUri, OpenLinkAtCaretAsync, EditHyperlinkAsync) read. Kept on `ch`'s
+    // own line when that boundary is also a soft-wrap point (AtLineEnd), so the caret does not jump a line.
+    private TextPointer CaretJustPast(Paragraph p, int ch)
+    {
+        var after = new TextPointer(p, ch + 1);
+        if (CaretToDocPoint(after) is { } a && CaretToDocPoint(new TextPointer(p, ch)) is { } b
+            && Math.Abs(a.LineTop - b.LineTop) > 0.5)
+            after.AtLineEnd = true;
+        return after;
     }
 
     /// <summary>Launches the hyperlink at the caret in the system browser, if any.</summary>

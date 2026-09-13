@@ -128,14 +128,22 @@ public partial class RichEditor
         // Right-clicking outside an existing selection moves the caret there first (Word/VS behavior).
         // Only when no object was hit — those select the object instead.
         bool onObject = hitBlockImage != null || hitInlineImage != null || hitInlineTable != null || edgeTable != null;
+        // On a link, the caret goes just past the character UNDER the pointer — inside the link — so the link
+        // menu and its caret-based actions (open/edit/remove) act on the link the pointer is on. The nearest
+        // boundary alone put the left half of a link's first character before the link (the text menu) and a
+        // point just past its end at its end (the link menu) — half a character off on both edges, the defect
+        // the click path had (measured 2026-09-13). Upstream hit-tests the character (GetLinkRunAtPoint).
         if (!onObject && !HasSelection && GetPositionFromPoint(ipt) is { } tp)
         {
-            _caret = tp; CollapseSelectionToCaret(); InvalidateCanvas();
+            _caret = LinkHitAtPoint(ipt) is { } hit ? CaretJustPast(hit.p, hit.ch) : tp;
+            CollapseSelectionToCaret(); InvalidateCanvas();
         }
 
-        // The caret may have just moved, so read the selection and the link AFTER it.
+        // The caret may have just moved, so read the selection and the link AFTER it. Without a selection the
+        // link is the one under the pointer; with one, the menu acts on the selection and the link items on
+        // the caret's link, as they always have.
         bool hasSel = HasSelection;
-        string? linkUri = onObject ? null : CurrentLinkUri();
+        string? linkUri = onObject ? null : hasSel ? CurrentLinkUri() : LinkHitAtPoint(ipt)?.run.NavigateUri;
         var kind = ChooseContextMenu(hitBlockImage != null, hitInlineImage != null, hitInlineTable != null,
                                      IsReadOnly, hasSel, linkUri, edgeTable != null);
 
