@@ -14,6 +14,7 @@ internal enum ShortcutId
     Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, BodyText,
     BulletList, NumberedList, LineSpacingSingle, LineSpacingOneHalf, LineSpacingDouble,
     Find, FindReplace, InsertLink,
+    SelectCell,
 }
 
 internal readonly record struct ShortcutSpec(ShortcutId Id, bool Ctrl, bool Shift, bool Alt, VirtualKey Key, string Display);
@@ -63,6 +64,9 @@ internal static class RichEditorShortcuts
         new(ShortcutId.Find,               true, false, false, VirtualKey.F, "Ctrl+F"),
         new(ShortcutId.FindReplace,        true, false, false, VirtualKey.H, "Ctrl+H"),
         new(ShortcutId.InsertLink,         true, false, false, VirtualKey.K, "Ctrl+K"),
+        // Not Ctrl-modified, so TryMatch (reached only with Ctrl) never runs it: OnEditorKeyDown routes F5
+        // through TryCellBlockKey. Listed for the menu hint (HWP's cell block key).
+        new(ShortcutId.SelectCell,         false, false, false, VirtualKey.F5, "F5"),
     };
 
     private static readonly Dictionary<ShortcutId, string> DisplayMap = BuildDisplayMap();

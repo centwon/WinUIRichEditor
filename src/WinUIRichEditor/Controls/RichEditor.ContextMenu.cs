@@ -654,6 +654,10 @@ public partial class RichEditor
         // ── Edit ── Copy the current cell as a 1×1 sub-table (a whole merged cell copies its content), so it
         // pastes back as a cell — not just text. A multi-cell rectangle uses the ordinary Copy (Ctrl+C) path.
         Add(Loc("CopyCell"), () => _ = CopyCell(tb, r, c), r >= 0 && c >= 0, RichEditorIcon.Copy);
+        // One-cell block (F5; upstream's "셀 선택"): the cell as a unit — Delete clears it, formatting and the
+        // background take all of it, Copy takes it as a 1×1 table, Shift+arrow grows it by cells.
+        sub.Items.Add(Mi(Loc("SelectCell"), () => { if (r >= 0 && c >= 0) { var (ar, ac) = tb.AnchorOf(r, c); SelectCellAsBlock(tb.Cells[ar][ac]); } },
+                         r >= 0 && c >= 0, null, RichEditorShortcuts.Display(ShortcutId.SelectCell)));
         sub.Items.Add(Sep());
         // ── Rows ──
         Add(Loc("InsertRowAbove"), () => TableInsertRow(tb, r), r >= 0, RichEditorIcon.InsertRowAbove);

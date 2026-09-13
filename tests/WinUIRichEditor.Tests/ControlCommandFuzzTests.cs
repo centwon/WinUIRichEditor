@@ -397,7 +397,7 @@ public class ControlCommandFuzzTests
         int r = (int)t.GetField("Item2")!.GetValue(loc)!;
         int c = (int)t.GetField("Item3")!.GetValue(loc)!;
 
-        switch (rng.Next(7))
+        switch (rng.Next(9))
         {
             // The menu's own indices: above/left = r/c, below/right = past the whole (possibly merged) cell.
             case 0: Call(ed, "TableInsertRow", tb, rng.Next(2) == 0 ? r : RichEditor.RowBelowIndex(tb, r, c)); return "table-insert-row";
@@ -429,6 +429,14 @@ public class ControlCommandFuzzTests
                 Call(ed, "TableUnmergeCell", tb, r, c);
                 return "table-unmerge";
             }
+            // Cell-block keys (unified with upstream, 2026-09-13): no mutation of their own — they set up the
+            // block (one cell, or grown by cells) that the next Delete, format, copy or merge acts on.
+            case 6: Call(ed, "TryCellBlockKey", Windows.System.VirtualKey.F5, false, false, false); return "cell-block-f5";
+            case 7:
+                Call(ed, "TryCellBlockKey",
+                     new[] { Windows.System.VirtualKey.Left, Windows.System.VirtualKey.Right,
+                             Windows.System.VirtualKey.Up, Windows.System.VirtualKey.Down }[rng.Next(4)], true, false, false);
+                return "cell-block-shift-arrow";
             default: Call(ed, "DeleteTable", tb); return "table-delete";
         }
     }

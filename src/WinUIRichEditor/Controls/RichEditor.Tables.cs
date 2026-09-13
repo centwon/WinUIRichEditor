@@ -275,10 +275,97 @@ public partial class RichEditor
         return cell.VerticalAlignment == CellVerticalAlignment.Center ? slack / 2 : slack;
     }
 
-    // The table whose cells are block-selected by the current drag (selection endpoints in different
-    // cells of one table), with the span-aware cell rectangle. Null for ordinary text selections.
+    // A ONE-cell block — F5, the menu's "셀 선택", Shift+arrow shrinking back to the anchor. Two selection
+    // endpoints in one cell are otherwise a text selection, so this is a marker: the cell plus the exact
+    // _selStart/_selEnd objects the block was made with. It is live only while those very objects are the
+    // selection and still span the cell (MarkedCell) — any caret move or selection change builds new pointers,
+    // so the block ends by itself, and a later selection of the same range (the Ctrl+A cell stage) cannot
+    // revive it. Upstream kept a mode flag that every entry point had to reset, and one did not: Shift+arrow
+    // across cells painted a block the commands ignored (measured 2026-09-13). Unified on this, both repos.
+    private (TableCell cell, TextPointer s, TextPointer e)? _cellBlockMark;
+
+    // The marked one-cell block, if it is still the selection (see _cellBlockMark).
+    private (TableBlock tb, int r, int c)? MarkedCell()
+    {
+        if (_cellBlockMark is not { } m || !ReferenceEquals(_selStart, m.s) || !ReferenceEquals(_selEnd, m.e)) return null;
+        if (m.cell.Parent is not TableBlock tb || CellContentEnds(m.cell) is not { } ends) return null;
+        if (!ReferenceEquals(m.s.Paragraph, ends.first) || m.s.Offset != 0
+            || !ReferenceEquals(m.e.Paragraph, ends.last) || m.e.Offset != GetParagraphLength(ends.last)) return null;
+        foreach (var (r, c, cell) in tb.LogicalCells())
+            if (ReferenceEquals(cell, m.cell)) return (tb, r, c);
+        return null;
+    }
+
+    // First and last paragraph of a cell's content in document order (nested tables' cells included).
+    private static (Paragraph first, Paragraph last)? CellContentEnds(TableCell cell)
+    {
+        Paragraph? first = null, last = null;
+        foreach (var q in ParagraphsInBlocks(cell.Blocks)) { first ??= q; last = q; }
+        return first != null ? (first, last!) : null;
+    }
+
+    private static (int r0, int c0, int r1, int c1) SpanRect(TableBlock tb, int r, int c)
+    {
+        var (cs, rs) = tb.SpanOf(r, c);
+        return (r, c, r + rs - 1, c + cs - 1);
+    }
+
+    // Selects `cell` as a one-cell block. False when it has no paragraph to hold the selection.
+    private bool SelectCellAsBlock(TableCell cell)
+    {
+        if (CellContentEnds(cell) is not { } ends) return false;
+        ClearObjectSelection();
+        _selStart = new TextPointer(ends.first, 0);
+        _selEnd = new TextPointer(ends.last, GetParagraphLength(ends.last));
+        _caret = Clone(_selEnd);
+        _cellBlockMark = (cell, _selStart, _selEnd);
+        InvalidateCanvas();
+        RaiseStatusChanged();
+        return true;
+    }
+
+    // F5 (HWP): the caret's cell as a one-cell block. False outside a table.
+    private bool SelectCellAtCaret()
+    {
+        if (_caret.Paragraph is not { } p || FindCell(p) is not { } loc) return false;
+        var (ar, ac) = loc.tb.AnchorOf(loc.r, loc.c);
+        return SelectCellAsBlock(loc.tb.Cells[ar][ac]);
+    }
+
+    // Shift+arrow on a cell block (HWP): the anchor corner stays, the active corner — the selection end's cell —
+    // steps one cell (dr, dc), past its own span. Back onto the anchor it is a one-cell block again; at the
+    // table's edge nothing moves.
+    private void ExtendCellBlock(TableBlock tb, int dr, int dc)
+    {
+        (int r, int c) anchor, active;
+        if (MarkedCell() is { } mk) anchor = active = (mk.r, mk.c);
+        else if (CellIn(tb, _selStart) is { } a && CellIn(tb, _selEnd) is { } b) (anchor, active) = (a, b);
+        else return;
+        var (cs, rs) = tb.SpanOf(active.r, active.c);
+        int nr = dr < 0 ? active.r - 1 : dr > 0 ? active.r + rs : active.r;
+        int nc = dc < 0 ? active.c - 1 : dc > 0 ? active.c + cs : active.c;
+        if (nr < 0 || nc < 0 || nr >= tb.Rows || nc >= tb.Columns) return;
+        (int r, int c) next = tb.AnchorOf(nr, nc);
+        if (next == anchor) { SelectCellAsBlock(tb.Cells[anchor.r][anchor.c]); return; }
+        if (CellContentEnds(tb.Cells[anchor.r][anchor.c]) is not { } from
+            || CellContentEnds(tb.Cells[next.r][next.c]) is not { } to) return;
+        _selStart = new TextPointer(from.first, 0);
+        _selEnd = new TextPointer(to.last, GetParagraphLength(to.last));
+        _caret = Clone(_selEnd);
+        InvalidateCanvas();
+        RaiseStatusChanged();
+    }
+
+    // The anchor cell of `tb` holding pointer p directly, or null (another table, nested or outside).
+    private static (int r, int c)? CellIn(TableBlock tb, TextPointer p)
+        => p.Paragraph is { } q && FindCell(q) is { } loc && ReferenceEquals(loc.tb, tb) ? tb.AnchorOf(loc.r, loc.c) : null;
+
+    // The table whose cells are block-selected, with the span-aware cell rectangle: selection endpoints in
+    // different cells of one table (a drag, Shift+arrow), or a one-cell block (_cellBlockMark). Null for
+    // ordinary text selections. The renderer's fill and every command read this — one source.
     private (TableBlock tb, int r0, int c0, int r1, int c1)? CellBlockSelection()
     {
+        if (MarkedCell() is { } mk) { var one = SpanRect(mk.tb, mk.r, mk.c); return (mk.tb, one.r0, one.c0, one.r1, one.c1); }
         if (_selStart.Paragraph == null || _selEnd.Paragraph == null) return null;
         if (FindCell(_selStart.Paragraph) is not { } s) return null;
         if (FindCell(_selEnd.Paragraph) is not { } e || !ReferenceEquals(s.tb, e.tb)) return null;
@@ -688,7 +775,8 @@ public partial class RichEditor
     }
 
     // The selected rectangular cell block defined by the two selection endpoints (span-aware), or null
-    // unless both endpoints land in different cells of `tb`.
+    // unless both endpoints land in different cells of `tb`. (A one-cell block is CellBlockSelection's; the
+    // callers of this — merge, copy cell, cell background — fall back to the caret's cell, the same cell.)
     private (int r0, int c0, int r1, int c1)? SelectedCellRange(TableBlock tb)
     {
         if (_selStart.Paragraph == null || _selEnd.Paragraph == null) return null;

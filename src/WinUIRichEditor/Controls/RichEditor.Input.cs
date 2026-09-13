@@ -781,6 +781,8 @@ public partial class RichEditor
             return;
         }
 
+        if (TryCellBlockKey(e.Key, shift, ctrl, alt)) { e.Handled = true; return; }
+
         switch (e.Key)
         {
             case VirtualKey.Left: MoveCaretLeft(shift); e.Handled = true; break;
@@ -797,6 +799,25 @@ public partial class RichEditor
             case VirtualKey.Tab: if (!IsReadOnly) { HandleTab(shift); e.Handled = true; } break;
             case VirtualKey.F3: if (AllowFindReplace && FindAgain(shift)) e.Handled = true; break;
             default: break;
+        }
+    }
+
+    // Cell-block keys (unified with upstream, 2026-09-13). F5 (HWP) selects the caret's cell as a one-cell
+    // block. Shift+arrow on a cell block grows or shrinks it by whole cells (ExtendCellBlock). A plain arrow is
+    // not handled here: it ends the block like any caret move. Split from OnEditorKeyDown so it can be driven
+    // without a KeyRoutedEventArgs (no public constructor) and the live Shift state.
+    private bool TryCellBlockKey(VirtualKey key, bool shift, bool ctrl, bool alt)
+    {
+        if (ctrl || alt) return false;
+        if (key == VirtualKey.F5) return !shift && SelectCellAtCaret();
+        if (!shift || CellBlockSelection() is not { } blk) return false;
+        switch (key)
+        {
+            case VirtualKey.Left: ExtendCellBlock(blk.tb, 0, -1); return true;
+            case VirtualKey.Right: ExtendCellBlock(blk.tb, 0, 1); return true;
+            case VirtualKey.Up: ExtendCellBlock(blk.tb, -1, 0); return true;
+            case VirtualKey.Down: ExtendCellBlock(blk.tb, 1, 0); return true;
+            default: return false;
         }
     }
 
