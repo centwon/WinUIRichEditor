@@ -32,12 +32,20 @@ public partial class RichEditor
         return result;
     }
 
-    /// <summary>Writes the document to <paramref name="stream"/> as a PDF, one rasterized page per
-    /// document page (at <paramref name="dpi"/>, default 150). Pages are rendered and disposed one at a
-    /// time. Must run on the UI thread (Win2D rendering).</summary>
+    /// <summary>Writes the document to <paramref name="stream"/> as a PDF, one page per document page.
+    /// Pages are VECTOR where Windows' "Microsoft Print to PDF" printer is available (it is by default): the
+    /// editor draws them for the printer with no dialog, so text stays text — selectable, searchable, sharp
+    /// at any zoom — with subset fonts embedded. Where that printer or the print spooler is missing, each
+    /// page is instead rasterized at <paramref name="dpi"/> (default 150), as before 2026-09. Must run on the
+    /// UI thread (Win2D rendering).</summary>
     public void SavePdf(Stream stream, double dpi = 150)
     {
         if (Document == null) return;
+        if (WindowsPdfPrinter.TryWrite(this) is { } vector)
+        {
+            stream.Write(vector, 0, vector.Length);
+            return;
+        }
         WithPrintLayout(() =>
         {
             int count = EnsurePageBreaks().Count;
