@@ -744,6 +744,9 @@ public partial class RichEditorToolbar : UserControl
             if (_redo != null) _redo.IsEnabled = rt.CanRedo;
             if (_tableBtn != null) _tableBtn.Visibility = rt.AllowTables ? Visibility.Visible : Visibility.Collapsed;
             if (_imageBtn != null) _imageBtn.Visibility = rt.AllowImages ? Visibility.Visible : Visibility.Collapsed;
+            // The divider belongs to the insert group: shown while tables OR images are allowed, like the
+            // context menu's divider item (and upstream's toolbar). It used to stay visible regardless.
+            if (_dividerBtn != null) _dividerBtn.Visibility = rt.AllowTables || rt.AllowImages ? Visibility.Visible : Visibility.Collapsed;
             if (_findBtn != null) _findBtn.Visibility = rt.AllowFindReplace ? Visibility.Visible : Visibility.Collapsed;
             SyncPage();        // reflect zoom/paper/orientation state
             SyncFileActions(); // Print/Import button visibility

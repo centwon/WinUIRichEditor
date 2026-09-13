@@ -204,7 +204,11 @@ public partial class RichEditor
     // pushUndo: false because it snapshots BEFORE deleting the replaced selection (one undo step).
     internal void InsertImageBlock(byte[] bytes, string? mimeType, double displayW, double displayH, bool pushUndo = true)
     {
-        if (Document == null || IsReadOnly || bytes.Length == 0 || !CaretCanHostBlock) return;
+        // AllowImages is checked HERE, in the core both public entry points reach (InsertImageBlock and the
+        // InsertImageBytes alias). Only the inline twin used to check it; the paste path was covered solely
+        // because its caller tests the flag first, so a host that turned images off still got them through
+        // the API. Upstream gates InsertImageBytes the same way.
+        if (Document == null || IsReadOnly || !AllowImages || bytes.Length == 0 || !CaretCanHostBlock) return;
 
         if (pushUndo) PushUndo(null);
 

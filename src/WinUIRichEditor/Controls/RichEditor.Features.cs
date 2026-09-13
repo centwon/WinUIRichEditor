@@ -9,7 +9,15 @@ public partial class RichEditor
 {
     /// <summary>Identifies the <see cref="AllowImages"/> dependency property.</summary>
     public static readonly DependencyProperty AllowImagesProperty = DependencyProperty.Register(
-        nameof(AllowImages), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
+        nameof(AllowImages), typeof(bool), typeof(RichEditor), new PropertyMetadata(true, OnToolbarFlagChanged));
+
+    // The toolbar mirrors AllowImages / AllowTables / AllowFindReplace (its insert and find buttons) and
+    // re-reads them on StatusChanged — which a flag change did not raise, so a host that switched a
+    // capability off at run time kept showing its button until the next keystroke. Upstream's toolbar
+    // subscribes to the property change itself; here the flag announces it through the same channel the
+    // toolbar already listens on.
+    private static void OnToolbarFlagChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        => ((RichEditor)d).RaiseStatusChanged();
 
     /// <summary>When true, image insertion and image paste are allowed. Default true.</summary>
     public bool AllowImages
@@ -20,7 +28,7 @@ public partial class RichEditor
 
     /// <summary>Identifies the <see cref="AllowTables"/> dependency property.</summary>
     public static readonly DependencyProperty AllowTablesProperty = DependencyProperty.Register(
-        nameof(AllowTables), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
+        nameof(AllowTables), typeof(bool), typeof(RichEditor), new PropertyMetadata(true, OnToolbarFlagChanged));
 
     /// <summary>When true, table insertion and TSV-to-table paste are allowed. Default true.</summary>
     public bool AllowTables

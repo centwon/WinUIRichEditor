@@ -41,6 +41,7 @@ public static class HtmlDocumentFormatter
     private static readonly TimeSpan RemoteImageBudget = TimeSpan.FromSeconds(5);
     [ThreadStatic] private static bool _blockLocalFileImages;
     [ThreadStatic] private static bool _blockRemoteImages;
+    [ThreadStatic] private static bool _allowTempFileImages;
     [ThreadStatic] private static Dictionary<string, byte[]?>? _prefetchedRemoteImages;
     // Per-parse memo for HasBlockOrMedia: the naive Descendants().Any() per node is O(n²) on deep
     // documents (Word/Docs HTML nests hard); the memoized child recursion is O(n) total.
@@ -52,16 +53,30 @@ public static class HtmlDocumentFormatter
     private static FontWeight NormalizeWeight(FontWeight w) => w.IsBold() ? FontWeightValues.Bold : FontWeightValues.Normal;
 
     /// <summary>Parses an HTML string into a <see cref="FlowDocument"/>.
-    /// When <paramref name="allowLocalFileImages"/> is false, <c>file://</c> image sources are skipped.
+    /// When <paramref name="allowLocalFileImages"/> is false, <c>file://</c> image sources are skipped —
+    /// EXCEPT files under the user's temp directory, which still load: Word and HWP clipboard HTML
+    /// reference the pictures the copy itself just wrote there, and refusing them drops every image
+    /// pasted from those applications. (The editor's own <see cref="Controls.RichEditor.LoadHtml"/> and
+    /// <see cref="Controls.RichEditor.InsertHtml"/> do not take this exemption.)
     /// <para>This overload performs NO network I/O: remote (<c>http</c>) images are skipped, because
     /// fetching them here would block the calling thread — typically the UI thread, via
     /// <see cref="Controls.RichEditor.LoadHtml"/>/<see cref="Controls.RichEditor.InsertHtml"/>. Use
-    /// <see cref="ParseHtmlAsync"/> (or <see cref="Controls.RichEditor.LoadHtmlAsync"/>) to include them;
+    /// <see cref="ParseHtmlAsync(string, bool, bool)"/> (or <see cref="Controls.RichEditor.LoadHtmlAsync"/>) to include them;
     /// <c>data:</c> and <c>file:</c> images load on both paths.</para></summary>
     public static FlowDocument ParseHtml(string html, bool allowLocalFileImages = true, bool allowRemoteImages = true)
+        => ParseHtml(html, allowLocalFileImages, allowRemoteImages, allowTempFileImages: true);
+
+    // allowTempFileImages: whether files under %TEMP% still load when local files are blocked. That is the
+    // PASTE exemption (see the public overload), and it used to apply to every caller — so an editor with
+    // AllowLocalFileImages=false, whose contract is "file:// images are not loaded by LoadHtml/InsertHtml",
+    // still read whatever sat under %TEMP% (other applications' temp files included). The public entry
+    // points keep the exemption (a test pins it and hosts may rely on it); the editor's LoadHtml/InsertHtml
+    // pass false. Upstream has no exemption at all.
+    internal static FlowDocument ParseHtml(string html, bool allowLocalFileImages, bool allowRemoteImages, bool allowTempFileImages)
     {
         _blockLocalFileImages = !allowLocalFileImages;
         _blockRemoteImages = !allowRemoteImages;
+        _allowTempFileImages = allowTempFileImages;
         _prefetchedRemoteImages = null;
         _blockOrMediaMemo = null; // fresh memo per parse
         var doc = LoadHtmlDoc(ref html);
@@ -69,11 +84,15 @@ public static class HtmlDocumentFormatter
         finally { _blockOrMediaMemo = null; } // don't retain the DOM past the parse
     }
 
-    /// <summary>Same as <see cref="ParseHtml"/> but downloads remote (<c>http</c>) images concurrently
+    /// <summary>Same as <see cref="ParseHtml(string, bool, bool)"/> but downloads remote (<c>http</c>) images concurrently
     /// off the UI thread first, so a slow network can't freeze the UI while pasting web content.
     /// <paramref name="allowRemoteImages"/> false skips the network entirely (privacy: pasting HTML
     /// otherwise issues HTTP requests, e.g. to tracking pixels).</summary>
-    public static async System.Threading.Tasks.Task<FlowDocument> ParseHtmlAsync(string html, bool allowLocalFileImages = true, bool allowRemoteImages = true)
+    public static System.Threading.Tasks.Task<FlowDocument> ParseHtmlAsync(string html, bool allowLocalFileImages = true, bool allowRemoteImages = true)
+        => ParseHtmlAsync(html, allowLocalFileImages, allowRemoteImages, allowTempFileImages: true);
+
+    // See the synchronous overload for allowTempFileImages.
+    internal static async System.Threading.Tasks.Task<FlowDocument> ParseHtmlAsync(string html, bool allowLocalFileImages, bool allowRemoteImages, bool allowTempFileImages)
     {
         var doc = LoadHtmlDoc(ref html);
         var prefetched = allowRemoteImages
@@ -81,6 +100,7 @@ public static class HtmlDocumentFormatter
             : new Dictionary<string, byte[]?>();
         _blockLocalFileImages = !allowLocalFileImages;
         _blockRemoteImages = !allowRemoteImages;
+        _allowTempFileImages = allowTempFileImages;
         _prefetchedRemoteImages = prefetched;
         _blockOrMediaMemo = null; // fresh memo per parse
         try { return RunNormalizer.Compact(BuildDocument(doc, html)); }
@@ -641,11 +661,12 @@ public static class HtmlDocumentFormatter
                 if (src.StartsWith("ms-clipboard-file:", StringComparison.OrdinalIgnoreCase))
                     src = "file:" + src.Substring("ms-clipboard-file:".Length);
                 var path = new Uri(src).LocalPath;
-                // Even when local files are blocked (the paste default), allow paths under %TEMP%:
-                // Word/HWP CF_HTML reference the pictures the COPY itself just wrote there — refusing
-                // them silently drops every image pasted from those apps. Anything outside the temp
-                // directory (a hostile page referencing user files) stays blocked.
-                if (_blockLocalFileImages && !IsTempPath(path)) return (null, 0, 0, null);
+                // Even when local files are blocked (the paste default), allow paths under %TEMP% — when the
+                // caller takes the paste exemption: Word/HWP CF_HTML reference the pictures the COPY itself
+                // just wrote there, and refusing them silently drops every image pasted from those apps.
+                // Anything outside the temp directory (a hostile page referencing user files) stays blocked,
+                // and so does temp itself for a caller that did not ask for the exemption.
+                if (_blockLocalFileImages && !(_allowTempFileImages && IsTempPath(path))) return (null, 0, 0, null);
                 if (System.IO.File.Exists(path)) bytes = System.IO.File.ReadAllBytes(path);
             }
             if (bytes == null) return (null, 0, 0, null);

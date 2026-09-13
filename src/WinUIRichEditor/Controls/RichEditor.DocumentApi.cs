@@ -19,7 +19,8 @@ public partial class RichEditor
         nameof(AllowLocalFileImages), typeof(bool), typeof(RichEditor), new PropertyMetadata(true));
 
     /// <summary>When true, <c>file://</c> and local-path images are loaded when parsing HTML
-    /// via <see cref="LoadHtml"/>/<see cref="InsertHtml"/>. Default true.</summary>
+    /// via <see cref="LoadHtml"/>/<see cref="InsertHtml"/>. When false, none are — files under the temp
+    /// directory included (only clipboard paste reads those, for Word/HWP pictures). Default true.</summary>
     public bool AllowLocalFileImages
     {
         get => (bool)GetValue(AllowLocalFileImagesProperty);
@@ -33,14 +34,14 @@ public partial class RichEditor
     public void LoadHtml(string? html)
         => LoadDocument(string.IsNullOrEmpty(html)
             ? new FlowDocument()
-            : HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages, AllowRemoteImagesOnPaste));
+            : HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages, AllowRemoteImagesOnPaste, allowTempFileImages: false));
 
     /// <summary>Replaces the document with one parsed from HTML, downloading remote (<c>http</c>)
     /// images off the UI thread first so a slow network can't freeze the UI. Await from the UI thread.</summary>
     public async Task LoadHtmlAsync(string? html)
         => LoadDocument(string.IsNullOrEmpty(html)
             ? new FlowDocument()
-            : await HtmlDocumentFormatter.ParseHtmlAsync(html, AllowLocalFileImages, AllowRemoteImagesOnPaste));
+            : await HtmlDocumentFormatter.ParseHtmlAsync(html, AllowLocalFileImages, AllowRemoteImagesOnPaste, allowTempFileImages: false));
 
     /// <summary>Serializes the document to RTF (Rich Text Format) — readable by Word, WordPad, LibreOffice,
     /// and HWP.</summary>
@@ -148,8 +149,12 @@ public partial class RichEditor
     public void InsertHtml(string html)
     {
         if (Document == null || IsReadOnly || string.IsNullOrEmpty(html)) return;
-        var parsed = HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages, AllowRemoteImagesOnPaste);
-        if (parsed.Blocks.Count == 0) return;
+        // Inserting is subject to AllowImages/AllowTables (see AdaptToCapabilities); LoadHtml, which opens
+        // a document rather than inserting into one, is not.
+        var parsed = AdaptToCapabilities(
+            HtmlDocumentFormatter.ParseHtml(html, AllowLocalFileImages, AllowRemoteImagesOnPaste, allowTempFileImages: false),
+            out bool emptied);
+        if (parsed.Blocks.Count == 0 || emptied) return;
         PushUndo(null);
         InsertDocumentAtCaret(parsed);
         AfterEdit();
