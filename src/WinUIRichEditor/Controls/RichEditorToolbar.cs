@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Threading.Tasks;
@@ -89,7 +89,10 @@ public partial class RichEditorToolbar : UserControl
     //
     // `??=` is not synchronized: these are only ever touched while building/syncing a toolbar, which is
     // UI-thread work. A torn race would cost an extra brush, not correctness.
-    private static SolidColorBrush? _activeBrush, _activeHoverBrush, _clearBrush, _blackInk;
+    // [ThreadStatic]: one set PER UI THREAD. A brush belongs to the thread that made it, and a process-wide set made
+    // the first toolbar's thread the owner of every toolbar's brushes — a toolbar in a window on its own thread got
+    // RPC_E_WRONG_THREAD (the editor's brush defaults did, measured 2026-09-14; upstream a66b472 is the same shape).
+    [ThreadStatic] private static SolidColorBrush? _activeBrush, _activeHoverBrush, _clearBrush, _blackInk;
     private static SolidColorBrush ActiveBrush => _activeBrush ??= new(Color.FromArgb(255, 0xDD, 0xE7, 0xF3));
     private static SolidColorBrush ActiveHoverBrush => _activeHoverBrush ??= new(Color.FromArgb(255, 0xCB, 0xDA, 0xEC));
     private static SolidColorBrush ClearBrush => _clearBrush ??= new(Colors.Transparent);
@@ -104,7 +107,7 @@ public partial class RichEditorToolbar : UserControl
     private ToggleButton? _bold, _italic, _underline, _strike, _painter;
     private Button? _bullet, _number;                 // list-box icon buttons (toggle the list)
     private TextBlock? _bulletPreview, _numberPreview; // current list marker shown in the list boxes
-    private static SolidColorBrush? _dimInk;
+    [ThreadStatic] private static SolidColorBrush? _dimInk; // per UI thread, as _activeBrush
     private static SolidColorBrush DimInk => _dimInk ??= new(Color.FromArgb(255, 0xBF, 0xC3, 0xC7)); // inactive marker
     private ComboBox? _font, _size, _heading, _align;
     private TextBox? _spacingBox; // editable line-spacing %, reflects/sets the caret paragraph
@@ -183,7 +186,7 @@ public partial class RichEditorToolbar : UserControl
         "#FFCDD2","#FFE0B2","#FFF9C4","#C8E6C9","#B2DFDB","#BBDEFB","#E1BEE7","#F8BBD0",
     };
 
-    private static SolidColorBrush? _noColorBrush;
+    [ThreadStatic] private static SolidColorBrush? _noColorBrush; // per UI thread, as _activeBrush
     private static SolidColorBrush NoColorBrush => _noColorBrush ??= new(Color.FromArgb(255, 0xDD, 0xDD, 0xDD)); // "no highlight" face
     private Border? _colorSwatch, _highlightSwatch; // current-colour bars under the picker glyphs
 

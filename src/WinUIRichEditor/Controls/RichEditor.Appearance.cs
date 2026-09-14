@@ -1,4 +1,4 @@
-using Windows.UI;
+﻿using Windows.UI;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
@@ -8,12 +8,18 @@ namespace WinUIRichEditor.Controls;
 // Caret + selection appearance. The original exposes IBrush SelectionBrush/CaretBrush; here they are
 // WinUI Brushes (defaulting to SolidColorBrush) and the renderer pulls a Windows.UI.Color out of them,
 // since Win2D's DrawLine/FillRectangle take a Color. A non-solid brush falls back to the default color.
+//
+// The defaults are made PER EDITOR (PropertyMetadata.Create with a factory). A brush is a DependencyObject and
+// belongs to the thread that made it; the defaults used to be one SolidColorBrush each, made in the static
+// constructor, so an editor in a window on its own UI thread read another thread's brush on its first paint —
+// RPC_E_WRONG_THREAD (measured 2026-09-14). Upstream fixed the same shape with immutable brushes (a66b472);
+// WinUI has none, so each editor gets its own.
 public partial class RichEditor
 {
     /// <summary>Fill brush for the text selection highlight. Defaults to a translucent blue.</summary>
     public static readonly DependencyProperty SelectionBrushProperty = DependencyProperty.Register(
         nameof(SelectionBrush), typeof(Brush), typeof(RichEditor),
-        new PropertyMetadata(new SolidColorBrush(Color.FromArgb(80, 0, 120, 215)), OnAppearanceBrushChanged));
+        PropertyMetadata.Create(() => new SolidColorBrush(Color.FromArgb(80, 0, 120, 215)), OnAppearanceBrushChanged));
 
     /// <summary>Fill brush for the text selection highlight.</summary>
     public Brush SelectionBrush
@@ -25,7 +31,7 @@ public partial class RichEditor
     /// <summary>Brush for the blinking caret. Defaults to black.</summary>
     public static readonly DependencyProperty CaretBrushProperty = DependencyProperty.Register(
         nameof(CaretBrush), typeof(Brush), typeof(RichEditor),
-        new PropertyMetadata(new SolidColorBrush(Colors.Black), OnAppearanceBrushChanged));
+        PropertyMetadata.Create(() => new SolidColorBrush(Colors.Black), OnAppearanceBrushChanged));
 
     /// <summary>Brush for the blinking caret.</summary>
     public Brush CaretBrush
@@ -66,7 +72,7 @@ public partial class RichEditor
     /// to black; a dark-theme host assigns a light brush. Runs with their own Foreground are unaffected.</summary>
     public static readonly DependencyProperty TextForegroundProperty = DependencyProperty.Register(
         nameof(TextForeground), typeof(Brush), typeof(RichEditor),
-        new PropertyMetadata(new SolidColorBrush(Colors.Black), OnAppearanceBrushChanged));
+        PropertyMetadata.Create(() => new SolidColorBrush(Colors.Black), OnAppearanceBrushChanged));
 
     /// <summary>Default text color for runs without an explicit foreground.</summary>
     public Brush TextForeground
