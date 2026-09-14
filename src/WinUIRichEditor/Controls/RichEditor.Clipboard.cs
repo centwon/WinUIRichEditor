@@ -128,17 +128,6 @@ public partial class RichEditor
         return Task.CompletedTask;
     }
 
-    // Copies a table cell as a standalone sub-table so it pastes back as a cell (not just text). With a
-    // multi-cell rectangle selected, copies that whole rectangle; otherwise the single cell at the anchor
-    // of (r,c) — a merged cell copies its content as one 1×1 cell. Invoked by the "Copy Cell" menu item.
-    private Task CopyCell(TableBlock tb, int r, int c)
-    {
-        if (SelectedCellRange(tb) is { } rg)
-            return CopyBlockToClipboard(tb.Extract(rg.r0, rg.c0, rg.r1, rg.c1));
-        var (ar, ac) = tb.AnchorOf(r, c);
-        return CopyBlockToClipboard(tb.Extract(ar, ac, ar, ac));
-    }
-
     // Plain-text projection of a single block: a table becomes TSV (tab between cells, newline between
     // rows) so the system clipboard text is meaningful for Excel/Notepad and the internal round-trip guard
     // (clipText == _internalClipboardText) matches; other blocks reuse PlainTextOf.

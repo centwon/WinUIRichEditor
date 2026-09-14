@@ -119,7 +119,11 @@ public partial class RichEditor
     private void InvalidateCanvas() => _canvas.Invalidate();
 
     private bool IsCaretInParagraph(Paragraph p) => ReferenceEquals(_caret.Paragraph, p);
-    private bool HasSelection => _selStart.Paragraph != null && _selEnd.Paragraph != null && ComparePositions(_selStart, _selEnd) != 0;
+    // A selection to act on: a non-empty range, or a one-cell block — which spans an EMPTY cell as a zero-length
+    // range, so an empty cell's F5 read as "nothing selected" and a right-click dropped the block (it moved the caret
+    // there and opened the text menu). Found 2026-09-14 by the cell-block right-click test.
+    private bool HasSelection => (_selStart.Paragraph != null && _selEnd.Paragraph != null && ComparePositions(_selStart, _selEnd) != 0)
+                                 || MarkedCell() != null;
 
     // Document-order paragraph index, built lazily and dropped on any mutation (MarkTextChanged — every
     // edit path goes through PushUndo) and on relayout. Comparing selection endpoints in different
