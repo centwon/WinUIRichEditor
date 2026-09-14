@@ -163,8 +163,13 @@ public partial class RichEditorToolbar
 
     /// <summary>HWND of the owning window, required to show the file picker in an unpackaged app. Set this
     /// from the host (<c>WinRT.Interop.WindowNative.GetWindowHandle(window)</c>); Export/Import are inert
-    /// until it is set.</summary>
-    public nint WindowHandle { get; set; }
+    /// until it is set. It also lets the image button use the built-in picker when no <see cref="ImagePicker"/> is set.</summary>
+    public nint WindowHandle
+    {
+        get => _windowHandle;
+        set { _windowHandle = value; Sync(); }
+    }
+    private nint _windowHandle;
 
     private bool _showFileActions = true;
     /// <summary>Whether the built-in Export / Import (and Print, once <see cref="PrintRequested"/> is

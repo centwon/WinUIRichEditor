@@ -57,10 +57,16 @@ public partial class RichEditorToolbar : UserControl
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return FontFamily.XamlAutoFontFamily; }
     }
 
+    private Func<Task<byte[]?>>? _imagePicker;
     /// <summary>Optional async image-bytes provider (e.g. a file picker). When set, the image button
     /// awaits it and inserts the returned bytes. Hosts supply this because picking a file needs the
-    /// owning window handle, which a control in the tree can't reach on its own.</summary>
-    public Func<Task<byte[]?>>? ImagePicker { get; set; }
+    /// owning window handle, which a control in the tree can't reach on its own. Without it the button uses
+    /// the built-in file picker once <see cref="WindowHandle"/> is set, and is disabled until one of the two is.</summary>
+    public Func<Task<byte[]?>>? ImagePicker
+    {
+        get => _imagePicker;
+        set { _imagePicker = value; Sync(); }
+    }
 
     /// <summary>Host controls shown at the start of the strip, before the formatting buttons (e.g.
     /// app-shell actions like save/open). Add/remove controls and the toolbar rebuilds; they share the
@@ -222,12 +228,20 @@ public partial class RichEditorToolbar : UserControl
         if (_target == null) return;
         _target.StatusChanged -= OnTargetStatusChanged;
         _target.StatusChanged += OnTargetStatusChanged;
+        _target.FontFamilyChoicesChanged -= OnTargetFontChoicesChanged;
+        _target.FontFamilyChoicesChanged += OnTargetFontChoicesChanged;
     }
 
     private void UnhookTarget()
     {
-        if (_target != null) _target.StatusChanged -= OnTargetStatusChanged;
+        if (_target == null) return;
+        _target.StatusChanged -= OnTargetStatusChanged;
+        _target.FontFamilyChoicesChanged -= OnTargetFontChoicesChanged;
     }
+
+    // A rebuild, not an in-place refill: mutating a ComboBox's Items from a sync path is what crashed the toolbar
+    // once already (the storm crash), and a curated font list changes rarely.
+    private void OnTargetFontChoicesChanged(object? sender, EventArgs e) { Content = Build(); Sync(); }
 
     // LanguageChanged is raised synchronously on whatever thread set RichEditorLocalization.Language, and
     // rebuilding the strip touches XAML — so a host that switches language from a background thread (a
@@ -520,10 +534,16 @@ public partial class RichEditorToolbar : UserControl
 
     private async Task PickAndInsertImageAsync()
     {
-        if (Target == null || ImagePicker == null) return;
+        if (Target == null) return;
         try
         {
-            var bytes = await ImagePicker();
+            if (_imagePicker == null)
+            {
+                // No host picker: the editor's own, which only needs the window handle the file actions use.
+                if (WindowHandle != 0) await Target.InsertImageFromFileAsync(WindowHandle);
+                return;
+            }
+            var bytes = await _imagePicker();
             if (bytes is { Length: > 0 }) Target.InsertImageBlock(bytes);
         }
         // host picker failed/cancelled
@@ -761,7 +781,13 @@ public partial class RichEditorToolbar : UserControl
             if (_undo != null) _undo.IsEnabled = rt.CanUndo;
             if (_redo != null) _redo.IsEnabled = rt.CanRedo;
             if (_tableBtn != null) _tableBtn.Visibility = rt.AllowTables ? Visibility.Visible : Visibility.Collapsed;
-            if (_imageBtn != null) _imageBtn.Visibility = rt.AllowImages ? Visibility.Visible : Visibility.Collapsed;
+            if (_imageBtn != null)
+            {
+                _imageBtn.Visibility = rt.AllowImages ? Visibility.Visible : Visibility.Collapsed;
+                // Enabled, it did nothing at all with neither a host picker nor a window handle (measured
+                // 2026-09-14): PickAndInsertImageAsync returned silently. Upstream falls back to its own picker.
+                _imageBtn.IsEnabled = _imagePicker != null || WindowHandle != 0;
+            }
             // The divider belongs to the insert group: shown while tables OR images are allowed, like the
             // context menu's divider item (and upstream's toolbar). It used to stay visible regardless.
             if (_dividerBtn != null) _dividerBtn.Visibility = rt.AllowTables || rt.AllowImages ? Visibility.Visible : Visibility.Collapsed;
