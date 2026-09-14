@@ -181,19 +181,16 @@ public partial class RichEditor
                 _selectedBlock = null; _selectedInline = hitInlineImage; CollapseSelectionToCaret(); InvalidateCanvas();
                 return BuildImageMenu(null, hitInlineImage!.Value.img);
 
+            // A table held whole by its border names no cell: the cell items (셀 선택, rows, columns, merge, cell
+            // alignment and background) are greyed — which cell would they act on? (user decision, 2026-09-14). The
+            // band reaches into the grid, so taking the cell under the pointer made them act on an edge cell nobody chose.
             case ContextMenuKind.InlineTable:
-            {
                 ClearObjectSelection(); _selectedInlineTable = hitInlineTable; CollapseSelectionToCaret(); InvalidateCanvas();
-                var (ir, ic) = PointerCell(ipt, hitInlineTable!.Value.it.Table);
-                return BuildInlineTableMenu(hitInlineTable.Value.host, hitInlineTable.Value.it, ir, ic);
-            }
+                return BuildInlineTableMenu(hitInlineTable!.Value.host, hitInlineTable.Value.it);
 
             case ContextMenuKind.BlockTable:
-            {
                 ClearObjectSelection(); _selectedBlock = edgeTable; CollapseSelectionToCaret(); InvalidateCanvas();
-                var (br, bc) = PointerCell(ipt, edgeTable!);
-                return BuildBlockTableMenu(edgeTable!, br, bc);
-            }
+                return BuildBlockTableMenu(edgeTable!);
 
             case ContextMenuKind.CellBlock:
             {
@@ -342,6 +339,7 @@ public partial class RichEditor
         if (cellLoc is { } loc)
         {
             Item(Sep());
+            Item(SelectCellItem(loc.tb, loc.r, loc.c)); // in reach while editing the cell, not only in the submenu
             menu.Items.Add(BuildTableSubmenu(loc.tb, loc.r, loc.c));
         }
     }
@@ -667,8 +665,20 @@ public partial class RichEditor
         menu.Items.Add(Mi(Loc("Paste"), () => _ = PasteAsync(), true, RichEditorIcon.Paste, "Ctrl+V"));
         menu.Items.Add(Mi(Loc("Delete"), deleteContent, true, RichEditorIcon.Delete, "Del"));
         menu.Items.Add(Sep());
+        menu.Items.Add(SelectCellItem(tb, r, c));
+        menu.Items.Add(Sep());
         AddTableStructureItems(menu.Items, tb, r, c, deleteTable);
         return menu;
+    }
+
+    // 셀 선택 (F5): the cell (r, c) as a one-cell block — Delete clears it, formatting and the background take all
+    // of it, Copy takes it as a 1×1 table, Shift+arrow grows it by cells. In the table menu after the clipboard verbs,
+    // and in a cell's text menu right above the "Table" submenu (user decision, 2026-09-14: in reach while editing).
+    private MenuFlyoutItem SelectCellItem(TableBlock tb, int r, int c)
+    {
+        bool onCell = r >= 0 && c >= 0;
+        return Mi(Loc("SelectCell"), () => { if (onCell) { var (ar, ac) = tb.AnchorOf(r, c); SelectCellAsBlock(tb.Cells[ar][ac]); } },
+                  onCell, null, RichEditorShortcuts.Display(ShortcutId.SelectCell));
     }
 
     // Deleting `tb` from a menu: an inline table leaves its host line (DeleteTable removes blocks only).
@@ -700,19 +710,14 @@ public partial class RichEditor
     }
 
     // The table's own items, shared by the table menu and the text menu's "Table" submenu, in AvaloniaRichEditor's
-    // order: 셀 선택 | rows | columns | merge | 셀 세로 정렬 · 셀 배경 · 여백 · 글자처럼 취급 | 표 삭제. An item that
-    // does not apply is greyed, not dropped (user decision, 2026-09-14), so the same items stand in the same
-    // places. "셀 복사" went: F5 then Copy does it, as does the table menu's Copy on a cell block.
+    // order: rows | columns | merge | 셀 세로 정렬 · 셀 배경 · 여백 · 글자처럼 취급 | 표 삭제 (셀 선택 stands before them,
+    // placed by each menu — SelectCellItem). An item that does not apply is greyed, not dropped (user decision,
+    // 2026-09-14), so the same items stand in the same places. "셀 복사" went: F5 then Copy does it.
     private void AddTableStructureItems(IList<MenuFlyoutItemBase> items, TableBlock tb, int r, int c, Action deleteTable)
     {
         bool onCell = r >= 0 && c >= 0;
         void Add(string text, Action act, bool enabled = true, RichEditorIcon? icon = null) => items.Add(Mi(text, act, enabled, icon));
 
-        // One-cell block (F5): the cell as a unit — Delete clears it, formatting and the background take all of it,
-        // Copy takes it as a 1×1 table, Shift+arrow grows it by cells.
-        items.Add(Mi(Loc("SelectCell"), () => { if (onCell) { var (ar, ac) = tb.AnchorOf(r, c); SelectCellAsBlock(tb.Cells[ar][ac]); } },
-                     onCell, null, RichEditorShortcuts.Display(ShortcutId.SelectCell)));
-        items.Add(Sep());
         // ── Rows ──
         Add(Loc("InsertRowAbove"), () => TableInsertRow(tb, r), r >= 0, RichEditorIcon.InsertRowAbove);
         Add(Loc("InsertRowBelow"), () => TableInsertRow(tb, RowBelowIndex(tb, r, c)), r >= 0, RichEditorIcon.InsertRowBelow);

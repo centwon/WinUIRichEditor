@@ -150,6 +150,21 @@ public class ControlContextMenuTests
     private static void F5(RichEditor ed)
         => typeof(RichEditor).GetMethod("TryCellBlockKey", NP)!.Invoke(ed, new object[] { Windows.System.VirtualKey.F5, false, false, false });
 
+    // Editing inside a cell, 셀 선택 is right in the text menu — just above the "Table" submenu, not only inside it
+    // (user decision, 2026-09-14). The submenu then starts with the rows. Written the same way upstream.
+    [Fact]
+    public void InACell_TheTextMenuOffersSelectCell_RightAboveTheTableSubmenu() => UiThread.Run(() =>
+    {
+        var (ed, tb) = TableEditor(nested: false);
+        Caret(ed, tb.Cells[1][1].Blocks.OfType<Paragraph>().First(), 0);
+
+        var menu = TextMenu(ed);
+        Assert.Equal(new[] { "—", Loc("SelectCell"), Loc("TableOps") }, Labels(menu)[^3..]);
+        Assert.True(menu.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == Loc("SelectCell")).IsEnabled);
+        var sub = menu.Items.OfType<MenuFlyoutSubItem>().Single(s => s.Text == Loc("TableOps"));
+        Assert.Equal(Loc("InsertRowAbove"), TextOf(sub.Items[0]));
+    });
+
     // The two items that went: a list is turned off by its own toggle, and a cell is copied with F5 then Copy.
     [Fact]
     public void TheMenus_HaveNoRemoveList_AndNoCopyCell() => UiThread.Run(() =>
@@ -339,6 +354,11 @@ public class ControlContextMenuTests
             var menu = ed.BuildContextMenuAt(new Windows.Foundation.Point(20, 2040));
             Assert.Equal(TableMenuLabels(inlineToggle: true), Labels(menu)); // the table menu (it was a short object menu)
             Assert.Same(tb, typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed));
+            // Held whole, the table names no cell: the cell items are greyed (user decision, 2026-09-14).
+            foreach (var key in new[] { "SelectCell", "InsertRowAbove", "InsertRowBelow", "DeleteRow", "InsertColumnLeft",
+                                        "UnmergeCells", "CellVerticalAlign", "CellBackground" })
+                Assert.False(menu.Items.Single(i => TextOf(i) == Loc(key)).IsEnabled, key);
+            Assert.True(menu.Items.Single(i => TextOf(i) == Loc("DeleteTable")).IsEnabled);
 
             typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
             Invoke(menu.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == Loc("Copy")));
@@ -370,6 +390,42 @@ public class ControlContextMenuTests
 
             Assert.Equal(TableMenuLabels(inlineToggle: true), Labels(menu));
             Assert.NotNull(typeof(RichEditor).GetMethod("CellBlockSelection", NP)!.Invoke(ed, null));
+        });
+    }
+
+    // The border band reaches into the grid, so a right-click on it can be over an edge cell. That cell must not become
+    // the menu's cell — the table is held whole and names no cell, so the cell items stay greyed (user decision,
+    // 2026-09-14). The border test above seeds its rect far below the content, where no cell is under the pointer, so
+    // it cannot tell "no cell" from "the cell under the pointer"; this one puts the band over a real cell.
+    [Fact]
+    public void RightClickingTheBorderBandOverACell_StillNamesNoCell()
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var tb = new TableBlock(2, 2);
+            var doc = new FlowDocument();
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "above" } } });
+            doc.Blocks.Add(tb);
+            doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "below" } } });
+            ed.IsReadOnly = false;
+            ed.Document = doc;
+            typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+            var cellPara = tb.Cells[1][0].Blocks.OfType<Paragraph>().First();
+            var cellPt = PointAt(ed, cellPara, 0);
+            var rects = (IDictionary<TableBlock, Windows.Foundation.Rect>)typeof(RichEditor).GetField("_tableRects", NP)!.GetValue(ed)!;
+            rects[tb] = new Windows.Foundation.Rect(cellPt.X - 2, cellPt.Y - 30, 200, 80); // left edge just left of the cell's text
+            var band = new Windows.Foundation.Point(cellPt.X - 1, cellPt.Y);
+
+            // Guard: the band point really is over that cell — without it this test would prove nothing.
+            var under = (TextPointer?)typeof(RichEditor).GetMethod("GetPositionFromPoint", NP)!.Invoke(ed, new object[] { band });
+            Assert.Same(cellPara, under?.Paragraph);
+
+            var menu = ed.BuildContextMenuAt(band);
+
+            Assert.Same(tb, typeof(RichEditor).GetField("_selectedBlock", NP)!.GetValue(ed)); // the border: held whole
+            foreach (var key in new[] { "SelectCell", "InsertRowAbove", "UnmergeCells", "CellVerticalAlign", "CellBackground" })
+                Assert.False(menu.Items.Single(i => TextOf(i) == Loc(key)).IsEnabled, key);
         });
     }
 

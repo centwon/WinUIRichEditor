@@ -254,8 +254,8 @@ public class ControlCellBlockTests
     public void TheTableMenu_OffersSelectCell_WithItsKey_AndItSelectsTheCell() => UiThread.Run(() =>
     {
         var (ed, tb) = Grid(2, 2, 1, 1);
-        var sub = ed.BuildTableSubmenu(tb, 1, 1);
-        var item = sub.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == RichEditorLocalization.GetString("SelectCell"));
+        var menu = ed.BuildTableMenu(tb, 1, 1, () => { }, () => { });
+        var item = menu.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == RichEditorLocalization.GetString("SelectCell"));
         Assert.Equal("F5", item.KeyboardAcceleratorTextOverride);
         ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.MenuFlyoutItemAutomationPeer(item)).Invoke();
         Assert.Equal((tb, 1, 1, 1, 1), Block(ed));
