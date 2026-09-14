@@ -30,6 +30,46 @@
 3. 용량·메모리·성능은 **2026-08-15 전수조사**(바로 아래)에서 훑었다. 남은 것들은 그 절의
    "측정된 한계"에 근거와 함께 적어 뒀다 — 다시 파기 전에 그것부터 읽을 것.
 
+### 감사: 호스트 이벤트 (2026-09-14) — 테스트 655 → 666, 결함 4건(상류 공통), 반증 포트 9종·상류 5종
+"공개 멤버 참조 0" 스캔을 지금 표면에 **다시 돌렸다**(`PublicAPI.*.txt` 멤버 이름 × `tests/` 전문 — 일회용 스크립트). 431개 중 158개가
+0이고 대부분 잡음(열거값·DP 필드·아이콘 번호)이다. 동작 계약이 걸린 덩어리는 넷:
+① **호스트가 듣는 이벤트·상태** — `SelectionChanged`·`IsModifiedChanged`·`HasBlockSelection`·`LastFindMatchCase` (이번)
+② **외관 속성** — `CanvasBackground`·`CaretBrush`·`SelectionBrush`·`TextForeground`·`DefaultFontFamily`·`FontFamilyChoices`·`SetFontFamily`·
+  `ShowCaretWhenReadOnly`(편집기·뷰)
+③ **툴바/뷰 호스트 표면** — `LeadingItems`·`TrailingItems`·`ShowFileActions`·`ShowPageControls`·`WindowHandle`·`ImagePicker`·`PrintRequested`·
+  `ShowBuiltInFindBar`·`ZoomFactor`
+④ **모델 잔여** — `PageSetup.IsDefault`·`Paragraph.IsListItem`·`TableBlock.EnsureSpanConsistency`·`TextRange.GetRichRuns/GetRichInlines`·
+  `HtmlDocumentFormatter.ParseHtmlAsync`·`TextPointer` 동등성 연산자
+①을 먼저 — 실패해도 편집기 안에는 증상이 없는 축이다(호스트의 "*" 표시·복사 버튼 활성이 조용히 틀어진다).
+- **측정(일회용 프로브, 수정 전)**: 그림 개체 선택 · 빈 셀 F5 · 셀 글자가 선택된 채 F5 → `SelectionChanged` 0 · 표 테두리 우클릭 →
+  `StatusChanged`까지 0 · 깨끗한 편집기에 `LoadHtml` → `IsModifiedChanged` 2회(참→거짓) · `InsertText` 중 처리기가 편집 전 글자("ab")를 봄.
+  원인: 스냅숏이 **끝점만** 비교(개체 선택은 캐럿을 두고 `CollapseSelectionToCaret`, 빈 셀 F5는 캐럿 자체) · 우클릭 경로에 flush 없음 ·
+  `SetModified`가 `PushUndo`(변경 **전**)에서 바로 발화.
+- **수정(포트)**: 스냅숏 = 끝점 + 선택한 개체 + 셀 블록 표지(`MarkedCell`) · `BuildContextMenuAt`이 끝에 `RaiseStatusChanged` ·
+  `IsModifiedChanged`는 `ReportModified`(마지막으로 알린 값과 다를 때만)로 `TextChanged`와 같은 flush에서, `MarkSaved`는 즉시 ·
+  `LoadDocument` 동안 보고 보류(`_loadingDocument`). `Document` 직접 대입 = 편집(상류 주석과 같은 결정) — 테스트로 고정만.
+- **수정(상류, 브랜치 `fix/host-events`)**: 같은 테스트를 먼저 써서 측정(6개 빨강, 대조군 3 초록) 후 수정. 상류 flush는 렌더에서
+  **게시**라 경로가 다르다: `IsModifiedChanged`를 `Dispatcher.Post`로(명령 뒤) — 열기 깜빡임은 게시된 보고가 돌 때 이미 저장 상태라
+  **가드 없이** 사라진다. 스냅숏엔 블록 캐럿(`_caretBlock`·`_caretBlockAfter` — 테두리로 잡은 표, 포트엔 없는 상태)과 셀 표지의 `whole`도.
+  우클릭은 `ResetCaretBlink`가 이미 알린다(우클릭 무알림은 포트만의 결함). 기존 Round2 `MarkSaved` 테스트에 `RunJobs` — 게시된 "수정됨"을
+  받기 전의 `MarkSaved`는 알릴 변화가 아니다. 상류 1007 → 1016.
+- **명령 퍼즈(포트)에 오라클 둘 + 단계 하나**: 문서를 바꾼 단계는 `IsModifiedChanged`도 올렸는가 · 선택 서명(끝점·개체·셀 블록 —
+  제품 스냅숏이 아니라 편집기 상태에서 읽는다)이 바뀐 단계는 `SelectionChanged`를 올렸는가(키·클릭 처리기의 끝 flush를 대신 불러서) ·
+  개체(그림·표·중첩·인라인 표) 선택 단계. **600시드 클린**.
+- **반증 — 포트 9종·상류 5종, 전부 의도한 테스트만 실패**: 포트 = 스냅숏 개체 누락(퍼즈도 잡음) · 셀 표지 누락(퍼즈도) · 우클릭 flush
+  제거 · 로드 가드 끔 · 옛 동기 보고 · `MarkSaved` 지연(퍼즈도) · flush 보고 제거(퍼즈도) · 가드 안 풀림(대조군이 잡음) · `FindAgain` 대소문자
+  무시. 상류 = 개체 누락 · 블록 캐럿 누락 · 셀 표지 누락 · 옛 동기 보고(열기 깜빡임까지 같이 빨갛다) · `MarkSaved` 무보고.
+  - P5(옛 동기 보고) 실행에서 붙여넣기 테스트 `PastingHtml_WithBothOff…`가 **3회 중 2회** 함께 빨갰다. 구독자가 없어 P5를 관찰할 수 없는
+    테스트이고, 단독·깨끗한 코드·P5 3회차에서 통과, `Set-Clipboard` 정상 — 클립보드 경합 계열로 판단(상류 반증 빌드가 동시에 돌았다).
+- ⚠️ **함정 셋 — 전부 하네스·스크립트였다**: ① PowerShell 5.1은 BOM 없는 `.ps1`을 **ANSI로 읽는다** — 한글 리터럴("실패")이 깨진 정규식이
+  되어 반증이 결과 없이 **두 번** 돌았다(교란은 적용·복원됐다). 스크립트는 ASCII만(`\uXXXX`). ② 상류 `InteractionHost.Render`는 칠하기
+  **전에** 펌프한다 — 게시된 이벤트가 **다음 단계**의 수로 잡혀, 첫 측정에서 선택 테스트 넷이 준비 단계의 캐럿 이벤트로 "통과"하고
+  대조군만 빨갰다. 칠한 뒤 펌프(`Settle`). **대조군이 없었다면 결함 넷을 "상류는 괜찮다"로 기록했을 것이다.** ③ `replace_all`
+  (`host.Render()` → `Settle(host)`)이 `Settle` 자신의 본문까지 바꿔 무한 재귀 — 테스트 호스트가 CPU 0으로 조용히 멈췄고
+  `--blame-hang-timeout`이 스택 오버플로를 보여 줬다.
+- **남은 것**: 덩어리 ②③④. 우클릭 배선(`OnCanvasRightTapped` → `BuildContextMenuAt`)과 실제 키·포인터가 flush에 닿는지는 여전히
+  자동 검증 밖(퍼즈는 처리기의 끝 flush를 대신 부른다). 실기 확인 거리 없음 — 데모는 이 이벤트들을 구독하지 않는다.
+
 ### 제목 재적용 · 뷰어 표 경계 (2026-09-13) — 실기 후속, 테스트 623 → 625, 반증 8종
 실기 확인 뒤 두 가지. 뷰어 표 우클릭 → 한글에 표로 붙여넣기는 **실기 확인 완료**.
 - **제목을 다시 적용하면 제목 서식으로**(사용자 결정): `HeadingStyle.Retype`이 적용 때마다 **모든 run에 프리셋** — 같은 수준

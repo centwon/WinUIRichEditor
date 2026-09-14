@@ -6,6 +6,21 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 호스트가 듣는 이벤트: 선택 변화와 "수정됨" (2026-09-14)
+
+`SelectionChanged`·`IsModifiedChanged`에는 테스트가 하나도 없었다(공개 멤버 참조 0 재스캔의 다음 덩어리). 측정하니 넷이
+틀렸고, AvaloniaRichEditor도 같은 코드였다.
+
+- 그림·표를 **개체로 선택**하거나, **빈 셀에서 F5**, 셀 글자가 이미 선택된 채 **F5** — 선택이 바뀌었는데 `SelectionChanged`가
+  오지 않았다. 캐럿·선택 끝점만 비교했기 때문이다. 이제 선택한 개체와 셀 블록도 본다. 복사·삭제 버튼을 이 이벤트로 켜는 호스트는
+  그림을 골라도 버튼이 흐린 채였다.
+- 표 테두리 **우클릭**이 `StatusChanged`·`SelectionChanged`를 하나도 올리지 않아, 툴바가 클릭 전 상태를 보였다.
+- `IsModifiedChanged`가 편집 **도중에**(문서를 바꾸기 전) 올라, 처리기가 편집 전 문서를 봤다 — "ab" 뒤에 X를 치면 처리기는
+  "ab"를 읽었다. 이제 편집이 끝난 뒤 `TextChanged`와 같은 때에 온다. `MarkSaved`는 전처럼 바로 알린다.
+- 깨끗한 편집기에 문서를 **열 때마다** `IsModifiedChanged`가 두 번(수정됨 → 아님) 올랐다. 이제 오지 않는다(수정된 문서 위에
+  열면 한 번).
+- 그대로인 것: `Document`에 직접 대입하는 것은 편집으로 친다(`IsModified`가 참) — 깨끗하게 시작하는 것은 `Load*`와 `Clear`다.
+
 ### Changed — 표를 잡으면 표 메뉴 (2026-09-14)
 
 우클릭 메뉴가 누른 대상에 맞게 — 문단은 글자 메뉴, 표는 표 메뉴, 그림은 그림 메뉴(사용자 결정). AvaloniaRichEditor와 같은
