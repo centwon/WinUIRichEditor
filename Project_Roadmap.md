@@ -30,6 +30,86 @@
 3. 용량·메모리·성능은 **2026-08-15 전수조사**(바로 아래)에서 훑었다. 남은 것들은 그 절의
    "측정된 한계"에 근거와 함께 적어 뒀다 — 다시 파기 전에 그것부터 읽을 것.
 
+### 감사: 공개 멤버 잔여 ②③④ (2026-09-14) — 테스트 666 → 702, 결함 9건(5건 상류 공통), 반증 포트 13종·상류 11종
+호스트 이벤트(①, 바로 아래 절) 다음으로 남은 세 덩어리를 끝냈다. 순서는 ④ 모델 → ③ 툴바/뷰 → ② 외관.
+- **④ 모델 잔여 — 측정(일회용 프로브) 후 수정, 상류 공통**
+  - 파일의 병합값을 그대로 믿었다(역직렬화가 `ColSpans`/`RowSpans`를 복사만): 음수 = 편집기 크래시(`IndexOutOfRange`), `0,0`
+    전부·`0,1` 짝 = 셀 글자가 편집기·HTML·RTF에서 사라짐(4개 중 0개·3개), 넘침·겹침 = 크래시는 없지만 격자 불일치. 수정:
+    `EnsureSpanConsistency`가 **값까지** 정규화(규칙 넷, 한 번 훑기라 적대적 표에도 선형), 로더와 `Document` 대입에서 호출.
+    일관된 표는 그대로(대조군 테스트).
+  - `"ColSpans":[null]`·이미지 풀 `null` 항목(JSON·`.flow`) → `NullReferenceException`. 쓰레기 입력 11종을 더 훑어 이 둘만 나왔다
+    (`Columns` 10억은 설계대로 1000에서 멈춤).
+  - **연속 용지 손실**: 호스트 기본 A4에서 고른 연속 용지가 "기본값"이라 저장에서 빠져 A4로 다시 열렸다(같은 편집기·다른 A4
+    호스트 둘 다). 문서가 가진 설정은 쓰고, 문서·호스트가 모두 평범할 때만 생략. ⚠️ 상류 `PageSetupTests.PlainDocument_OmitsPageSetup`의
+    후반("기본값 설정도 생략")은 이 결정과 정면으로 부딪혀 **뒤집었다** — 호스트 기본값 규칙(09-12) 뒤로 "생략"은 연속 용지를
+    표현할 수 없다. 편집기가 만든 평범한 문서의 바이트는 그대로다(대조군 테스트). 되돌리고 싶으면 이 결정이다.
+  - 기각(측정): `ParseHtml(Async)`의 정적 상태는 `[ThreadStatic]`이고 비동기판도 await 뒤 동기 구간에서만 설정 — 경합 없음.
+    `TextPointer` 동등성·해시·`IsListItem`·`GetRichRuns/Inlines`는 계약대로 — 테스트로 고정만.
+- **③ 툴바/뷰 호스트 표면**: 이미지 버튼이 `ImagePicker`·`WindowHandle` 없이 **활성인 채 무동작**(포트만 — 상류는 자기 선택기로
+  폴백) → `WindowHandle`만 있으면 편집기의 `InsertImageFromFileAsync`, 둘 다 없으면 비활성. 나머지(호스트 항목의 모든 재빌드 통과·
+  페이지/파일 구역·인쇄 버튼 표시·뷰 전달·줌 클램프·찾기 막대 게이트)는 계약대로 — 고정.
+- **② 외관**: `FontFamilyChoices`에 **변경 신호가 없어** 툴바 글꼴 목록이 그대로(포트만 — 상류 툴바는 속성 변경을 듣는다) →
+  내부 이벤트로 툴바 재빌드(ComboBox Items 제자리 교체는 폭주 크래시 전례). `TextForeground`는 그릴 때 적용돼 캐시 문제 없음(기각).
+  기본 검정 글자·투명 캔버스는 상류와 같은 설계 — 유지.
+- **스레드 친화(② 조사 중 발견, 포트만)**: 편집기 기본 브러시 셋과 툴바 캐시 브러시 여섯이 프로세스 공용 → **두 번째 XAML
+  스레드**에서 편집기·툴바가 `RPC_E_WRONG_THREAD`(실측). 편집기는 `PropertyMetadata.Create` 팩터리로 인스턴스별, 툴바는
+  `[ThreadStatic]`. 상류 `a66b472`의 모양 그대로 "정적 브러시 필드"·"브러시 기본값 공유"를 훑는 테스트 + 두 번째 스레드 실측 테스트.
+- **테스트**: `ControlModelContractTests` 18 · `ControlHostSurfaceTests` 13 · `ControlThreadAffinityTests` 5. 상류
+  `ModelContractTests` 14(1016 → 1030).
+- **반증**: 포트 모델 11종 · 스레드 2종, 상류 모델 10종 + V11 — 전부 의도한 테스트만 실패, **둘을 빼고**:
+  - ⚠️ **M4/V4(앞선 병합 되돌리기 제거)가 살아남았다** — 따져 보니 **도달 불가**였다(병합은 덮인 칸만 차지하므로 앵커 칸이 먼저
+    점유되는 일이 없다). 제 코드의 죽은 경로라 지웠다. 그리고 **M11(병합 안 앵커 충돌 검사 제거)도 살아남았는데**, 두 경로가 서로를
+    대신하고 있었기 때문이다 — 되돌리기를 지운 뒤 M11을 다시 돌리니 테스트 4개가 잡는다. 반증이 "공허한 테스트"가 아니라 "중복된
+    방어"를 드러낸 경우다.
+  - ⚠️ 자기 변경 감사: `Document` 대입 정규화를 처음엔 `BlockWalk.DocumentOrder`로 걸었는데, 그 걸음은 인라인 표의 **안쪽 블록**만
+    내놓고 인라인 표 격자 자체는 안 내놓는다 — 새 테스트(호스트가 만든 인라인 표의 음수 병합)가 크래시로 잡았다. 전용 걷기로.
+  - 반증 스크립트 결과 이름이 빈 줄: 이론 테스트 이름(`(name: "…")`)은 공백이 있어 정규식이 이름만 못 뽑았다 — 실패 수는 맞다.
+- **끝에 OS 클립보드가 막혔다** — PowerShell `Set-Clipboard`도 실패, 스레드 테스트 없이도 클립보드 13개가 빨갛다(환경). 막히기 전
+  마지막 전체 실행은 697/697. 클립보드가 풀리면 전체 스위트를 다시 돌려 702 초록을 확인할 것.
+- **실기 확인 거리**: 이미지 버튼의 기본 선택기 폴백(`WindowHandle`만 준 호스트) · 여러 스레드 창을 쓰는 호스트(데모는 단일 스레드).
+- 병렬 실행 주의: 두 리포의 반증을 동시에 돌리면서 이 세션의 편집이 반증 빌드에 섞였다 — 교란하지 않는 파일만 건드려 결과는
+  유효했지만, 반증 도중엔 같은 리포를 편집하지 말 것(복원이 `git checkout`이면 미커밋 편집을 덮는다).
+
+### 감사: 호스트 이벤트 (2026-09-14) — 테스트 655 → 666, 결함 4건(상류 공통), 반증 포트 9종·상류 5종
+"공개 멤버 참조 0" 스캔을 지금 표면에 **다시 돌렸다**(`PublicAPI.*.txt` 멤버 이름 × `tests/` 전문 — 일회용 스크립트). 431개 중 158개가
+0이고 대부분 잡음(열거값·DP 필드·아이콘 번호)이다. 동작 계약이 걸린 덩어리는 넷:
+① **호스트가 듣는 이벤트·상태** — `SelectionChanged`·`IsModifiedChanged`·`HasBlockSelection`·`LastFindMatchCase` (이번)
+② **외관 속성** — `CanvasBackground`·`CaretBrush`·`SelectionBrush`·`TextForeground`·`DefaultFontFamily`·`FontFamilyChoices`·`SetFontFamily`·
+  `ShowCaretWhenReadOnly`(편집기·뷰)
+③ **툴바/뷰 호스트 표면** — `LeadingItems`·`TrailingItems`·`ShowFileActions`·`ShowPageControls`·`WindowHandle`·`ImagePicker`·`PrintRequested`·
+  `ShowBuiltInFindBar`·`ZoomFactor`
+④ **모델 잔여** — `PageSetup.IsDefault`·`Paragraph.IsListItem`·`TableBlock.EnsureSpanConsistency`·`TextRange.GetRichRuns/GetRichInlines`·
+  `HtmlDocumentFormatter.ParseHtmlAsync`·`TextPointer` 동등성 연산자
+①을 먼저 — 실패해도 편집기 안에는 증상이 없는 축이다(호스트의 "*" 표시·복사 버튼 활성이 조용히 틀어진다).
+- **측정(일회용 프로브, 수정 전)**: 그림 개체 선택 · 빈 셀 F5 · 셀 글자가 선택된 채 F5 → `SelectionChanged` 0 · 표 테두리 우클릭 →
+  `StatusChanged`까지 0 · 깨끗한 편집기에 `LoadHtml` → `IsModifiedChanged` 2회(참→거짓) · `InsertText` 중 처리기가 편집 전 글자("ab")를 봄.
+  원인: 스냅숏이 **끝점만** 비교(개체 선택은 캐럿을 두고 `CollapseSelectionToCaret`, 빈 셀 F5는 캐럿 자체) · 우클릭 경로에 flush 없음 ·
+  `SetModified`가 `PushUndo`(변경 **전**)에서 바로 발화.
+- **수정(포트)**: 스냅숏 = 끝점 + 선택한 개체 + 셀 블록 표지(`MarkedCell`) · `BuildContextMenuAt`이 끝에 `RaiseStatusChanged` ·
+  `IsModifiedChanged`는 `ReportModified`(마지막으로 알린 값과 다를 때만)로 `TextChanged`와 같은 flush에서, `MarkSaved`는 즉시 ·
+  `LoadDocument` 동안 보고 보류(`_loadingDocument`). `Document` 직접 대입 = 편집(상류 주석과 같은 결정) — 테스트로 고정만.
+- **수정(상류, 브랜치 `fix/host-events`)**: 같은 테스트를 먼저 써서 측정(6개 빨강, 대조군 3 초록) 후 수정. 상류 flush는 렌더에서
+  **게시**라 경로가 다르다: `IsModifiedChanged`를 `Dispatcher.Post`로(명령 뒤) — 열기 깜빡임은 게시된 보고가 돌 때 이미 저장 상태라
+  **가드 없이** 사라진다. 스냅숏엔 블록 캐럿(`_caretBlock`·`_caretBlockAfter` — 테두리로 잡은 표, 포트엔 없는 상태)과 셀 표지의 `whole`도.
+  우클릭은 `ResetCaretBlink`가 이미 알린다(우클릭 무알림은 포트만의 결함). 기존 Round2 `MarkSaved` 테스트에 `RunJobs` — 게시된 "수정됨"을
+  받기 전의 `MarkSaved`는 알릴 변화가 아니다. 상류 1007 → 1016.
+- **명령 퍼즈(포트)에 오라클 둘 + 단계 하나**: 문서를 바꾼 단계는 `IsModifiedChanged`도 올렸는가 · 선택 서명(끝점·개체·셀 블록 —
+  제품 스냅숏이 아니라 편집기 상태에서 읽는다)이 바뀐 단계는 `SelectionChanged`를 올렸는가(키·클릭 처리기의 끝 flush를 대신 불러서) ·
+  개체(그림·표·중첩·인라인 표) 선택 단계. **600시드 클린**.
+- **반증 — 포트 9종·상류 5종, 전부 의도한 테스트만 실패**: 포트 = 스냅숏 개체 누락(퍼즈도 잡음) · 셀 표지 누락(퍼즈도) · 우클릭 flush
+  제거 · 로드 가드 끔 · 옛 동기 보고 · `MarkSaved` 지연(퍼즈도) · flush 보고 제거(퍼즈도) · 가드 안 풀림(대조군이 잡음) · `FindAgain` 대소문자
+  무시. 상류 = 개체 누락 · 블록 캐럿 누락 · 셀 표지 누락 · 옛 동기 보고(열기 깜빡임까지 같이 빨갛다) · `MarkSaved` 무보고.
+  - P5(옛 동기 보고) 실행에서 붙여넣기 테스트 `PastingHtml_WithBothOff…`가 **3회 중 2회** 함께 빨갰다. 구독자가 없어 P5를 관찰할 수 없는
+    테스트이고, 단독·깨끗한 코드·P5 3회차에서 통과, `Set-Clipboard` 정상 — 클립보드 경합 계열로 판단(상류 반증 빌드가 동시에 돌았다).
+- ⚠️ **함정 셋 — 전부 하네스·스크립트였다**: ① PowerShell 5.1은 BOM 없는 `.ps1`을 **ANSI로 읽는다** — 한글 리터럴("실패")이 깨진 정규식이
+  되어 반증이 결과 없이 **두 번** 돌았다(교란은 적용·복원됐다). 스크립트는 ASCII만(`\uXXXX`). ② 상류 `InteractionHost.Render`는 칠하기
+  **전에** 펌프한다 — 게시된 이벤트가 **다음 단계**의 수로 잡혀, 첫 측정에서 선택 테스트 넷이 준비 단계의 캐럿 이벤트로 "통과"하고
+  대조군만 빨갰다. 칠한 뒤 펌프(`Settle`). **대조군이 없었다면 결함 넷을 "상류는 괜찮다"로 기록했을 것이다.** ③ `replace_all`
+  (`host.Render()` → `Settle(host)`)이 `Settle` 자신의 본문까지 바꿔 무한 재귀 — 테스트 호스트가 CPU 0으로 조용히 멈췄고
+  `--blame-hang-timeout`이 스택 오버플로를 보여 줬다.
+- **남은 것**: 덩어리 ②③④ — ✅ 같은 날 완료(위 절). 우클릭 배선(`OnCanvasRightTapped` → `BuildContextMenuAt`)과 실제 키·포인터가
+  flush에 닿는지는 여전히 자동 검증 밖(퍼즈는 처리기의 끝 flush를 대신 부른다). 실기 확인 거리 없음 — 데모는 이 이벤트들을 구독하지 않는다.
+
 ### 제목 재적용 · 뷰어 표 경계 (2026-09-13) — 실기 후속, 테스트 623 → 625, 반증 8종
 실기 확인 뒤 두 가지. 뷰어 표 우클릭 → 한글에 표로 붙여넣기는 **실기 확인 완료**.
 - **제목을 다시 적용하면 제목 서식으로**(사용자 결정): `HeadingStyle.Retype`이 적용 때마다 **모든 run에 프리셋** — 같은 수준

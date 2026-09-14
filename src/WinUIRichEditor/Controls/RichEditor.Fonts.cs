@@ -65,7 +65,15 @@ public partial class RichEditor
     /// non-empty list to curate the offered set.</summary>
     public static readonly DependencyProperty FontFamilyChoicesProperty = DependencyProperty.Register(
         nameof(FontFamilyChoices), typeof(IReadOnlyList<string>), typeof(RichEditor),
-        new PropertyMetadata(Array.Empty<string>()));
+        new PropertyMetadata(Array.Empty<string>(), OnFontFamilyChoicesChanged));
+
+    // The toolbar's font combo is built from these. A host curating the list at run time kept seeing the old one
+    // until something else rebuilt the toolbar — this property raised no signal at all (measured 2026-09-14;
+    // upstream's toolbar listens for its property change).
+    internal event EventHandler? FontFamilyChoicesChanged;
+
+    private static void OnFontFamilyChoicesChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        => ((RichEditor)d).FontFamilyChoicesChanged?.Invoke(d, EventArgs.Empty);
 
     /// <summary>Font families offered in the font pickers; defaults to the installed system fonts.</summary>
     public IReadOnlyList<string> FontFamilyChoices

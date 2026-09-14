@@ -196,7 +196,10 @@ public partial class RichEditor
             Footer = PageFooter,
             ShowPageNumbers = ShowPageNumbers,
         };
-        doc.PageSetup = ps.IsDefault ? null : ps;
+        // Null — "no setup", read back as the HOST's — only when the host's defaults are plain too. Under a host
+        // that defaults to A4, a document switched to Continuous stored null, saved without a setup and reopened as
+        // A4 (measured 2026-09-14). A default host keeps plain documents byte-identical, as before.
+        doc.PageSetup = ps.IsDefault && _hostPageSetup.IsDefault ? null : ps;
     }
 
     /// <summary>Paper size for the document. <see cref="RichEditorPageSize.Continuous"/> (the default

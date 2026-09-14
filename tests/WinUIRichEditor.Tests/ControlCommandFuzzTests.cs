@@ -28,8 +28,11 @@ namespace WinUIRichEditor.Tests;
 /// back the shape from before it, Redo the shape after it. A command that mutates without a checkpoint,
 /// or checkpoints halfway through, or whose state Clone does not carry, fails here.</item>
 /// <item><b>Change tracking</b> — the same step must leave <see cref="RichEditor.IsModified"/> set and
-/// must have raised <see cref="RichEditor.TextChanged"/>. The host's "save changes?" prompt is built on
-/// these two, so a mutation that slips past them is a data-loss path.</item>
+/// must have raised <see cref="RichEditor.TextChanged"/> and <see cref="RichEditor.IsModifiedChanged"/>. The
+/// host's "save changes?" prompt is built on these, so a mutation that slips past them is a data-loss path.
+/// And a step that changed the selection — its endpoints, the object selected, the cell block — must have
+/// raised <see cref="RichEditor.SelectionChanged"/> (checked after the flush a key or click handler ends with,
+/// which the steps standing in for keys and clicks skip).</item>
 /// </list>
 /// <para>The history check runs Undo/Redo after every mutating step, and that resets the typing
 /// coalesce key — so each step here is its own undo group by construction. Coalescing itself is pinned
@@ -97,9 +100,16 @@ public class ControlCommandFuzzTests
         var failures = new List<string>();
         var kinds = new Dictionary<string, int>();
 
-        int textChanged = 0;
+        int textChanged = 0, modifiedChanged = 0, selectionChanged = 0;
         void OnTextChanged(object? s, EventArgs e) => textChanged++;
-        UiThread.Run(() => ed.TextChanged += OnTextChanged);
+        void OnModifiedChanged(object? s, EventArgs e) => modifiedChanged++;
+        void OnSelectionChanged(object? s, EventArgs e) => selectionChanged++;
+        UiThread.Run(() =>
+        {
+            ed.TextChanged += OnTextChanged;
+            ed.IsModifiedChanged += OnModifiedChanged;
+            ed.SelectionChanged += OnSelectionChanged;
+        });
         try
         {
             // One marshalled body PER SEED. UiThread gives each body 60 s, and running every seed inside
@@ -121,8 +131,10 @@ public class ControlCommandFuzzTests
                         for (int i = 0; i < StepsPerSeed; i++)
                         {
                             string before = DocumentFuzzTests.Shape(ed.Document!);
+                            Call(ed, "RaiseStatusChanged"); // settle the editor's own selection snapshot first
                             ed.MarkSaved();
-                            textChanged = 0;
+                            string selBefore = SelectionSignature(ed);
+                            textChanged = modifiedChanged = selectionChanged = 0;
 
                             string op = ApplyRandomCommand(ed, rng);
                             step = $"step {i}: {op}";
@@ -130,12 +142,23 @@ public class ControlCommandFuzzTests
                             Check(ed, "after the step");
 
                             string after = DocumentFuzzTests.Shape(ed.Document!);
-                            if (after == before) continue;
+                            bool changed = after != before;
+                            if (changed)
+                            {
+                                if (!ed.IsModified)
+                                    throw new InvalidOperationException("the document changed but IsModified is false");
+                                if (textChanged == 0)
+                                    throw new InvalidOperationException("the document changed but TextChanged was not raised");
+                                if (modifiedChanged == 0)
+                                    throw new InvalidOperationException("the document changed but IsModifiedChanged was not raised");
+                            }
 
-                            if (!ed.IsModified)
-                                throw new InvalidOperationException("the document changed but IsModified is false");
-                            if (textChanged == 0)
-                                throw new InvalidOperationException("the document changed but TextChanged was not raised");
+                            // A step standing in for a key or a click skips the flush its handler ends with; do it here.
+                            Call(ed, "RaiseStatusChanged");
+                            if (selectionChanged == 0 && SelectionSignature(ed) != selBefore)
+                                throw new InvalidOperationException(
+                                    $"the selection changed but SelectionChanged was not raised\n  before: {selBefore}\n  after:  {SelectionSignature(ed)}");
+                            if (!changed) continue;
 
                             // The step's inverse takes the document back to `before`, and the step's own
                             // direction brings it to `after` again. For an ordinary edit the inverse is Undo;
@@ -179,6 +202,8 @@ public class ControlCommandFuzzTests
             UiThread.Run(() =>
             {
                 ed.TextChanged -= OnTextChanged;
+                ed.IsModifiedChanged -= OnModifiedChanged;
+                ed.SelectionChanged -= OnSelectionChanged;
                 ed.Document = new FlowDocument(); // leave the shared editor clean for whoever hosts next
             });
         }
@@ -243,7 +268,7 @@ public class ControlCommandFuzzTests
 
     private static string ApplyRandomCommand(RichEditor ed, Random rng)
     {
-        switch (rng.Next(40))
+        switch (rng.Next(41))
         {
             // -- caret and selection (no mutation; they set up what the next command acts on)
             case 0: return PlaceCaret(ed, rng);
@@ -310,8 +335,56 @@ public class ControlCommandFuzzTests
 
             // -- history, driven as a user would (on top of the per-step check)
             case 38: ed.Undo(); return "undo";
+            case 39: return SelectObject(ed, rng);
             default: ed.Redo(); return "redo";
         }
+    }
+
+    // An object selected the way a click (an image) or a border click (a table, nested or inline too) selects it.
+    // The caret stays where it was — exactly what the SelectionChanged oracle has to see through.
+    private static string SelectObject(RichEditor ed, Random rng)
+    {
+        var targets = new List<Block>();
+        void Walk(IEnumerable<Block> blocks)
+        {
+            foreach (var b in blocks)
+            {
+                if (b is ImageBlock) targets.Add(b);
+                else if (b is TableBlock tb) { targets.Add(tb); foreach (var (_, _, cell) in tb.LogicalCells()) Walk(cell.Blocks); }
+                else if (b is Paragraph p)
+                    foreach (var it in p.Inlines.OfType<InlineTable>())
+                    {
+                        targets.Add(it.Table);
+                        foreach (var (_, _, cell) in it.Table.LogicalCells()) Walk(cell.Blocks);
+                    }
+            }
+        }
+        Walk(ed.Document!.Blocks);
+        if (targets.Count == 0) return "select-object(none)";
+        var t = targets[rng.Next(targets.Count)];
+        if (t is TableBlock table)
+        {
+            Call(ed, "CollapseSelectionToCaret");
+            Call(ed, "SelectTableObject", table);
+            return "select-table";
+        }
+        Call(ed, "SelectBlockObject", t);
+        return "select-image";
+    }
+
+    // The selection as a host sees it — endpoints, the object selected, the cell block — read from the editor's
+    // state rather than from its own snapshot, so the SelectionChanged oracle is not that bookkeeping checking
+    // itself. (The cell block is the derived one too: a structural step could reshape it under fixed endpoints.)
+    private static string SelectionSignature(RichEditor ed)
+    {
+        static string Id(object? o) => o == null ? "-" : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o).ToString();
+        string Tp(FieldInfo f) { var tp = (TextPointer)f.GetValue(ed)!; return $"{Id(tp.Paragraph)}:{tp.Offset}"; }
+        // _selectedInline / _selectedInlineTable are nullable tuples: box-free identity is their object's.
+        object? Held(string field) => T.GetField(field, NP)!.GetValue(ed) is { } v ? v.GetType().GetField("Item2")!.GetValue(v) : null;
+        object? obj = T.GetField("_selectedBlock", NP)!.GetValue(ed) ?? Held("_selectedInline") ?? Held("_selectedInlineTable");
+        var block = ((TableBlock tb, int r0, int c0, int r1, int c1)?)T.GetMethod("CellBlockSelection", NP)!.Invoke(ed, null);
+        string cells = block is { } b ? $"{Id(b.tb)}:{b.r0},{b.c0},{b.r1},{b.c1}" : "-";
+        return $"{Tp(CaretF)}|{Tp(SelStartF)}|{Tp(SelEndF)}|obj={Id(obj)}|cells={cells}";
     }
 
     // A caret anywhere a click could put it: any paragraph the document reaches, any offset in it.

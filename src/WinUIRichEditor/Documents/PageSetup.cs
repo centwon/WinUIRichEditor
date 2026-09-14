@@ -58,7 +58,9 @@ public class PageSetup
     };
 
     /// <summary>True when the setup carries no real information (Continuous paper, no header/footer/page
-    /// numbers) — such a setup is omitted from serialization so plain documents keep their original format.</summary>
+    /// numbers). The editor leaves such a setup off a document when its host's defaults are plain too, so plain
+    /// documents keep their original format; a document that carries one — even a default-looking one — has it
+    /// written, because a missing setup reads back as the host's defaults, which may not be Continuous.</summary>
     public bool IsDefault =>
         PageSize == RichEditorPageSize.Continuous
         && string.IsNullOrEmpty(Header)

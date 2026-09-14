@@ -175,6 +175,10 @@ public partial class RichEditor
             // own model) gets them now, once — the flag rides along in undo snapshots and saved files, so text
             // the user un-bolded is never re-bolded. See HeadingStyle.Materialize.
             HeadingStyle.Materialize(Document);
+            // A host's own model is trusted no more than a file: spans describing no grid took the editor down on
+            // its first layout, or hid cells (see TableBlock.EnsureSpanConsistency). Undo swaps in clones, which are
+            // consistent already, so this is a no-op there.
+            NormalizeTableSpans(Document.Blocks);
             UpdateParents(Document);
             var first = FirstParagraph();
             _caret = new TextPointer(first, 0);
@@ -182,6 +186,25 @@ public partial class RichEditor
             _selEnd = new TextPointer(first, 0);
         }
         else { _caret = _selStart = _selEnd = new TextPointer(null, 0); }
+    }
+
+    // Every table in the blocks — in cells (covered ones too) and inside inline tables — made consistent. Its own
+    // walk, not BlockWalk.DocumentOrder: that one yields the blocks INSIDE an inline table but not the inline
+    // table's grid itself, which is exactly where a bad span crashed the first layout (the test caught it).
+    private static void NormalizeTableSpans(IEnumerable<Block> blocks)
+    {
+        foreach (var b in blocks)
+        {
+            if (b is TableBlock tb)
+            {
+                tb.EnsureSpanConsistency();
+                foreach (var row in tb.Cells)
+                    foreach (var cell in row) NormalizeTableSpans(cell.Blocks);
+            }
+            else if (b is Paragraph p)
+                foreach (var inl in p.Inlines)
+                    if (inl is InlineTable it) NormalizeTableSpans(new Block[] { it.Table });
+        }
     }
 
     private Paragraph? FirstParagraph() => AllParagraphs().FirstOrDefault();
