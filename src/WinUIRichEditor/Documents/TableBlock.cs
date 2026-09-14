@@ -392,8 +392,16 @@ public class TableBlock : Block
     }
 
     /// <summary>Ensures <see cref="ColSpans"/>/<see cref="RowSpans"/> exactly match the <see cref="Cells"/>
-    /// grid dimensions, filling gaps with 1 (plain cell). Safe to call after deserialization.</summary>
+    /// grid dimensions, filling gaps with 1 (plain cell), and that their values describe the grid: every merge
+    /// inside it, no two merges overlapping, and every covered cell inside a merge. Safe to call after
+    /// deserialization; a consistent table is left exactly as it was.</summary>
     public void EnsureSpanConsistency()
+    {
+        EnsureSpanShape();
+        NormalizeSpanValues();
+    }
+
+    private void EnsureSpanShape()
     {
         while (ColSpans.Count < Cells.Count) ColSpans.Add(new List<int>());
         while (RowSpans.Count < Cells.Count) RowSpans.Add(new List<int>());
@@ -407,6 +415,74 @@ public class TableBlock : Block
             if (ColSpans[r].Count > cols) ColSpans[r].RemoveRange(cols, ColSpans[r].Count - cols);
             if (RowSpans[r].Count > cols) RowSpans[r].RemoveRange(cols, RowSpans[r].Count - cols);
         }
+    }
+
+    // The span VALUES, made a consistent description of the grid. A file's spans were trusted as they came: a
+    // negative span took the editor down on load (IndexOutOfRangeException), a covered slot no merge covered —
+    // "0,0" everywhere, or a "0,1" pair — hid its cell's text from the editor and every export, and an
+    // overflowing or overlapping merge drew over its neighbours (measured 2026-09-14). The rules, in order:
+    //   * anything but an anchor (both spans ≥ 1) or a covered slot (both 0) is a plain cell;
+    //   * an anchor is clamped to the grid;
+    //   * merges are claimed in row-major order. One that would reach a slot already claimed, or another anchor,
+    //     shrinks to 1×1; an anchor whose OWN slot an earlier merge already claimed undoes that merge instead —
+    //     either way no anchor, and so no cell's text, ends up hidden under a merge;
+    //   * a covered slot no merge claimed becomes a plain cell.
+    // One pass over the grid (an undone merge is undone once), so a hostile table cannot make it quadratic.
+    private void NormalizeSpanValues()
+    {
+        int rows = Cells.Count;
+        bool InGrid(int r, int c) => r < rows && c < Cells[r].Count;
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < Cells[r].Count; c++)
+            {
+                int cs = ColSpans[r][c], rs = RowSpans[r][c];
+                if ((cs >= 1 && rs >= 1) || (cs == 0 && rs == 0)) continue;
+                ColSpans[r][c] = 1;
+                RowSpans[r][c] = 1;
+            }
+
+        var owner = new (int r, int c)?[rows][];
+        for (int r = 0; r < rows; r++) owner[r] = new (int r, int c)?[Cells[r].Count];
+
+        void Undo((int r, int c) a)
+        {
+            int cs = ColSpans[a.r][a.c], rs = RowSpans[a.r][a.c];
+            for (int rr = a.r; rr < a.r + rs; rr++)
+                for (int cc = a.c; cc < a.c + cs; cc++)
+                    if (InGrid(rr, cc) && owner[rr][cc] == a) owner[rr][cc] = null;
+            ColSpans[a.r][a.c] = 1;
+            RowSpans[a.r][a.c] = 1;
+            owner[a.r][a.c] = a;
+        }
+
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < Cells[r].Count; c++)
+            {
+                int cs = ColSpans[r][c], rs = RowSpans[r][c];
+                if (cs == 0) continue; // a covered slot: claimed by the merge over it, or an orphan below
+                cs = System.Math.Min(cs, Cells[r].Count - c);
+                rs = System.Math.Min(rs, rows - r);
+                if (owner[r][c] is { } earlier) Undo(earlier);
+                bool clash = false;
+                for (int rr = r; rr < r + rs && !clash; rr++)
+                    for (int cc = c; cc < c + cs && !clash; cc++)
+                        if (!(rr == r && cc == c) && (!InGrid(rr, cc) || owner[rr][cc] != null || ColSpans[rr][cc] != 0))
+                            clash = true;
+                if (clash) { cs = 1; rs = 1; }
+                ColSpans[r][c] = cs;
+                RowSpans[r][c] = rs;
+                for (int rr = r; rr < r + rs; rr++)
+                    for (int cc = c; cc < c + cs; cc++)
+                        owner[rr][cc] = (r, c);
+            }
+
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < Cells[r].Count; c++)
+                if (ColSpans[r][c] == 0 && owner[r][c] == null)
+                {
+                    ColSpans[r][c] = 1;
+                    RowSpans[r][c] = 1;
+                }
     }
 
     /// <summary>Extracts the rectangle [<paramref name="r0"/>..<paramref name="r1"/>]×[<paramref name="c0"/>..
