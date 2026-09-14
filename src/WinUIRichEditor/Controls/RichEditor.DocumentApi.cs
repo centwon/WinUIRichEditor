@@ -176,7 +176,9 @@ public partial class RichEditor
     // would skip the undo reset and leave the previous file's history undoable into the new one.
     internal void LoadDocument(FlowDocument doc)
     {
-        Document = doc;
+        _loadingDocument = true; // no "modified" report for the swap — MarkSaved below clears it (see ReportModified)
+        try { Document = doc; }
+        finally { _loadingDocument = false; }
         _undo.Clear();
         _coalesceKey = null;
         MarkSaved(); // freshly loaded content is the baseline, not a pending modification

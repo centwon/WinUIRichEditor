@@ -115,6 +115,16 @@ public partial class RichEditor
     // RightTappedRoutedEventArgs has no public constructor, which kept this whole path untested.
     internal MenuFlyout BuildContextMenuAt(Point pos)
     {
+        var menu = BuildContextMenuCore(pos);
+        // The right-click moved the caret or selected what it landed on: tell the host now, not with whatever
+        // input comes next — a table selected by its border raised neither StatusChanged nor SelectionChanged
+        // (measured 2026-09-14), so a toolbar kept showing the state from before the click.
+        RaiseStatusChanged();
+        return menu;
+    }
+
+    private MenuFlyout BuildContextMenuCore(Point pos)
+    {
         CancelTableDraw(); // a right-click abandons an armed table-draw
         _ctxMenuPos = pos;
         var ipt = ViewToDoc(new Point(pos.X, pos.Y)); // doc space — for hit-testing

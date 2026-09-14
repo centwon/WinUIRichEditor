@@ -39,25 +39,43 @@ public partial class RichEditor
     /// not a content diff against the saved state.</summary>
     public bool IsModified { get; private set; }
 
-    /// <summary>Raised when <see cref="IsModified"/> changes.</summary>
+    /// <summary>Raised when <see cref="IsModified"/> changes — after the edit that changed it is complete,
+    /// so a handler sees the edited document.</summary>
     public event EventHandler? IsModifiedChanged;
 
     /// <summary>Clears the modified flag; call after persisting the document.</summary>
-    public void MarkSaved() => SetModified(false);
+    public void MarkSaved() { IsModified = false; ReportModified(); }
 
-    private void SetModified(bool value)
+    // An edit sets the flag at its START — PushUndo checkpoints before mutating — so raising the event there
+    // ran the host's handler in the middle of the command, looking at the document from before the edit
+    // (measured 2026-09-14: typing "X" after "ab", the handler read "ab"). The flag flips at once; the event
+    // waits for the flush that raises TextChanged (RaiseStatusChanged). MarkSaved, a host call, reports at once.
+    private void SetModified(bool value) => IsModified = value;
+
+    // The IsModified value handlers were last told, so a flag that flips and flips back unseen raises nothing.
+    private bool _modifiedReported;
+    // Set while LoadDocument swaps the document in: the swap marks it modified (a raw Document assignment is an
+    // edit) and flushes, and the load clears it again at once — reporting in between announced "modified" at
+    // every open (measured: LoadHtml into a clean editor raised IsModifiedChanged twice, true then false).
+    private bool _loadingDocument;
+    private void ReportModified()
     {
-        if (IsModified == value) return;
-        IsModified = value;
+        if (_loadingDocument || _modifiedReported == IsModified) return;
+        _modifiedReported = IsModified;
         IsModifiedChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    // Last-seen caret/selection, so SelectionChanged fires only on real movement (not on every repaint).
-    private (Paragraph? cp, int co, Paragraph? ss, int so, Paragraph? se, int eo) _selSnapshot;
+    // Last-seen selection, so SelectionChanged fires only on a real change (not on every repaint). It records
+    // what the selection IS, not only where its endpoints are: selecting an image or a table as an object leaves
+    // the caret where it was, and F5 can mark exactly the range already selected — or, in an empty cell, the
+    // caret itself. The endpoints did not move, so SelectionChanged never came while HasBlockSelection, Copy
+    // and Delete all changed meaning (measured 2026-09-14).
+    private (Paragraph? cp, int co, Paragraph? ss, int so, Paragraph? se, int eo, object? obj, bool cell) _selSnapshot;
     private bool SelectionMovedSinceLastSnapshot()
     {
+        object? obj = (object?)_selectedInlineTable?.it ?? (object?)_selectedInline?.img ?? _selectedBlock;
         var now = (_caret.Paragraph, _caret.Offset, _selStart.Paragraph, _selStart.Offset,
-                   _selEnd.Paragraph, _selEnd.Offset);
+                   _selEnd.Paragraph, _selEnd.Offset, obj, MarkedCell() != null);
         if (now == _selSnapshot) return false;
         _selSnapshot = now;
         return true;
@@ -75,6 +93,7 @@ public partial class RichEditor
             TextChanged?.Invoke(this, EventArgs.Empty);
             NotifyAutomation(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.TextPatternOnTextChanged);
         }
+        ReportModified();
         if (SelectionMovedSinceLastSnapshot())
         {
             SelectionChanged?.Invoke(this, EventArgs.Empty);
