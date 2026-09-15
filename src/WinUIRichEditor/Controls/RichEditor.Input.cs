@@ -2279,7 +2279,8 @@ public partial class RichEditor
                     // line spacing does. (Using the line box instead left the caret sitting low — the same
                     // defect list markers had, fixed the same way on 2026-07-16.)
                     double lineBaseline = BaselineOfLineAt(layout, probe, len);
-                    bool tallInlineObject = rb.Height > textH * 1.5 && !ParagraphHasCustomSpacing(p);
+                    bool tallInlineObject = rb.Height > textH * 1.5
+                        && layout.LineSpacingMode != Microsoft.Graphics.Canvas.Text.CanvasLineSpacingMode.Uniform;
                     if (tallInlineObject)
                     {
                         // The line is tall because a big image/table is on it. An inline object's baseline
@@ -2315,12 +2316,6 @@ public partial class RichEditor
         }
         return lines.Length > 0 ? lines[^1].Baseline : double.NaN;
     }
-
-    // Whether this paragraph asks for a line height other than the font's natural one — i.e. whether
-    // CreateLayout switched the layout to Uniform spacing with an explicit baseline. Mirrors
-    // ResolveLineHeight's rule that a proportional spacing of 1.0 or less keeps the natural metrics.
-    private static bool ParagraphHasCustomSpacing(Paragraph p)
-        => (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 1.0) || (!double.IsNaN(p.LineHeight) && p.LineHeight > 0);
 
     // Whether the paragraph's last character is a soft line break, so the caret at its end sits on a
     // fresh (empty) visual line. Walks back over the inlines instead of building the whole plain string.

@@ -777,10 +777,11 @@ public class FormatterRoundTripTests
         Assert.Contains(@"\trautofit0", rtf);
         Assert.Contains(@"\trftsWidth3\trwWidth3000", rtf);
 
-        // Saying nothing about spacing means "the reader's default", and HWP's is 160% — single-spaced
-        // text arrived looser. The tag next to it keeps OUR reader from turning unset into an explicit
-        // 1.0, which is a different rule in this model (natural baseline vs uniform spacing).
-        Assert.Contains(@"\sl240\slmult1", rtf);
+        // Saying nothing about spacing means "the reader's default" — Word's is single — while an unset
+        // paragraph is drawn at the HWP default 160% here, so it is stated: 1.6 × 200 = \sl320 (Word's
+        // multiple of the natural line ≈ HWP ratio ÷ 1.2). The tag next to it keeps OUR reader from turning
+        // unset into an explicit 1.6, so the paragraph keeps following the default.
+        Assert.Contains(@"\sl320\slmult1", rtf);
         Assert.Contains(@"{\*\arsl}", rtf);
 
         var back = RtfDocumentFormatter.Parse(rtf);
@@ -949,7 +950,7 @@ public class FormatterRoundTripTests
         var foreign = HtmlDocumentFormatter.ParseHtml("<p style=\"margin-top:80px;margin-bottom:80px;margin-right:80px\">web</p>");
         var fp = foreign.Blocks.OfType<Paragraph>().First();
         Assert.Equal(0, fp.MarginTop);
-        Assert.Equal(10, fp.MarginBottom); // the model's default, untouched
+        Assert.Equal(0, fp.MarginBottom); // a paragraph's default (0, as in HWP), untouched
         Assert.Equal(0, fp.MarginRight);
     }
 

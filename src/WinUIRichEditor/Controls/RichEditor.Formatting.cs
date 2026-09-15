@@ -191,8 +191,9 @@ public partial class RichEditor
         AfterFormat();
     }
 
-    /// <summary>Sets a proportional line spacing (e.g. 1.0 single, 1.5, 2.0) on the paragraphs in the
-    /// selection; scales with font size. Pass <see cref="double.NaN"/> to clear back to natural spacing.</summary>
+    /// <summary>Sets a proportional line spacing on the paragraphs in the selection as HWP % ÷ 100 — line
+    /// box = largest font size × <paramref name="spacing"/> (1.6 = 160%). Pass <see cref="double.NaN"/> to
+    /// clear back to the HWP default 160%.</summary>
     public void SetLineSpacing(double spacing)
     {
         if (_caret.Paragraph == null || IsReadOnly) return;

@@ -22,6 +22,9 @@ public partial class RichEditor : ContentControl
     // ---- layout constants (mirror the Avalonia original) -------------------
     internal const double BodyFontSizePt = 10;
     internal const double NaturalLineFactor = 1.2;
+    // HWP's default line spacing (160%), applied when a paragraph sets neither LineSpacing nor LineHeight.
+    // Paragraph.LineSpacing is HWP's "글자에 따라" ratio: line box = largest font size × ratio.
+    internal const double DefaultLineSpacing = 1.6;
     // Where the text baseline sits inside a line box, as a fraction of its height. Used BOTH to tell
     // DirectWrite where to put the baseline under custom (Uniform) line spacing and to work back from a
     // baseline to the glyph top when placing the caret. One constant, because if the two disagree the
@@ -502,6 +505,7 @@ public partial class RichEditor : ContentControl
 
         int pos = 0;
         double maxRunPt = 0;
+        double maxObjectH = 0; // tallest inline image/table — decides whether uniform spacing can apply
         foreach (var inline in p.Inlines)
         {
             int len = InlineLen(inline);
@@ -528,6 +532,7 @@ public partial class RichEditor : ContentControl
             {
                 double w = img.Width > 0 ? img.Width : 16;
                 double h = img.Height > 0 ? img.Height : 16;
+                maxObjectH = Math.Max(maxObjectH, h);
                 layout.SetInlineObject(pos, 1, new SpacerInlineObject(new Windows.Foundation.Size(w, h)));
             }
             else if (inline is InlineTable itbl)
@@ -535,17 +540,20 @@ public partial class RichEditor : ContentControl
                 // Reserve a box exactly the size of the wrapped table so the grid, hit-test, and selection
                 // highlight all share one rect (no padding gap that would make the highlight sag below).
                 var box = LayoutTable(itbl.Table, 0, 0);
+                maxObjectH = Math.Max(maxObjectH, box.TotalHeight);
                 layout.SetInlineObject(pos, 1, new SpacerInlineObject(new Windows.Foundation.Size(box.TableWidth, box.TotalHeight)));
             }
             pos += len;
         }
 
-        // Custom line spacing: proportional LineSpacing wins (scales with the paragraph's font; ≤1.0
-        // keeps the font's natural metrics so glyphs never clip), else an absolute LineHeight, else auto.
-        // With no text to measure, the size the first typed character will get — a heading's preset (as
-        // EmptyLineHeight), else the default.
+        // Line spacing (HWP "글자에 따라"): line box = largest font size × ratio, else an absolute
+        // LineHeight, else the HWP default 160%. With no text to measure, the size the first typed
+        // character will get — a heading's preset (as EmptyLineHeight), else the default.
+        // Uniform spacing ignores inline object sizes (DirectWrite), so a proportional paragraph holding
+        // an image/table taller than the box keeps content-driven spacing — the line grows to the object.
         double lh = ResolveLineHeight(p, maxRunPt, p.HeadingLevel is >= 1 and <= 6 ? HeadingFontSize(p.HeadingLevel) : defaultSize);
-        if (!double.IsNaN(lh) && lh > 0)
+        bool fixedHeight = double.IsNaN(p.LineSpacing) && !double.IsNaN(p.LineHeight);
+        if (!double.IsNaN(lh) && lh > 0 && (fixedHeight || maxObjectH <= lh))
         {
             layout.LineSpacingMode = CanvasLineSpacingMode.Uniform;
             layout.LineSpacing = (float)lh;
@@ -555,16 +563,14 @@ public partial class RichEditor : ContentControl
         return layout;
     }
 
-    // The resolved fixed line height in DIPs, or NaN for the font's natural spacing. LineSpacing
-    // (proportional, scales with font size) takes priority over LineHeight (absolute DIPs).
+    // The resolved line height in DIPs. LineSpacing (HWP ratio of the largest font size) takes priority
+    // over LineHeight (absolute DIPs); with neither set, the HWP default 160%.
     private double ResolveLineHeight(Paragraph p, double maxRunPt, double basePtFallback)
     {
-        if (!double.IsNaN(p.LineSpacing))
-        {
-            double basePt = maxRunPt > 0 ? maxRunPt : basePtFallback;
-            return p.LineSpacing <= 1.0 + 1e-6 ? double.NaN : p.LineSpacing * PtToPx(basePt) * NaturalLineFactor;
-        }
-        return !double.IsNaN(p.LineHeight) ? p.LineHeight : double.NaN;
+        if (double.IsNaN(p.LineSpacing) && !double.IsNaN(p.LineHeight)) return p.LineHeight;
+        double ratio = double.IsNaN(p.LineSpacing) ? DefaultLineSpacing : p.LineSpacing;
+        double basePt = maxRunPt > 0 ? maxRunPt : basePtFallback;
+        return ratio * PtToPx(basePt);
     }
 
     // A cheap content+formatting fingerprint of a paragraph; when it (and the wrap width) are unchanged
