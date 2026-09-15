@@ -455,13 +455,20 @@ public partial class RichEditor
         }
     }
 
-    // Grey preview caret at the pending drop position while dragging selected text (see RichEditor.DragText.cs).
+    // Grey preview caret at the pending drop position while dragging selected text or an object (see
+    // RichEditor.DragText.cs / RichEditor.DragBlock.cs).
     private void DrawDropPreview(CanvasDrawingSession ds, Paragraph p, CanvasTextLayout layout, double px, double oy)
     {
-        if (_printMode || !_dragTextActive || _dropPreview is not { } dp || !ReferenceEquals(dp.Paragraph, p)) return;
+        if (_printMode || !DropPreviewActive || _dropPreview is not { } dp || !ReferenceEquals(dp.Paragraph, p)) return;
         var (cx, cy, ch, _, _) = CaretInLayout(layout, p, dp.Offset, dp.AtLineEnd);
-        float x = (float)(px + cx);
-        ds.DrawLine(x, (float)(oy + cy), x, (float)(oy + cy + ch), GrayBorderColor, 2f);
+        float x = (float)(px + cx), top = (float)(oy + cy);
+        ds.DrawLine(x, top, x, (float)(oy + cy + ch), GrayBorderColor, 2f);
+        // Ctrl at the release makes it a copy: a "+" beside the caret says so before the release does.
+        if (Ctrl)
+        {
+            ds.DrawLine(x + 4, top + 4, x + 12, top + 4, GrayBorderColor, 2f);
+            ds.DrawLine(x + 8, top, x + 8, top + 8, GrayBorderColor, 2f);
+        }
     }
 
     private void DrawPlaceholder(CanvasDrawingSession ds, Rect rect, string label)

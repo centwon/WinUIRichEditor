@@ -212,9 +212,10 @@ public partial class RichEditor
                 _canvas.CapturePointer(e.Pointer);
                 return true;
             }
-            case PointerTarget.CellImage:  SelectObject(cellImage, null); return true;
-            case PointerTarget.InlineImage: SelectObject(null, inlineImage); return true;
-            case PointerTarget.BlockImage: SelectObject(blockImage, null); return true;
+            // A press on the picture itself selects it and arms dragging it (RichEditor.DragBlock.cs).
+            case PointerTarget.CellImage:  SelectObject(cellImage, null); ArmObjectDrag(cellImage, pt, e); return true;
+            case PointerTarget.InlineImage: SelectObject(null, inlineImage); ArmObjectDrag(inlineImage!.Value.img, pt, e); return true;
+            case PointerTarget.BlockImage: SelectObject(blockImage, null); ArmObjectDrag(blockImage, pt, e); return true;
             default: return false;
         }
     }
