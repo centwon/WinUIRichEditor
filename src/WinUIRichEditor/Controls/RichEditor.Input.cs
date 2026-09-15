@@ -62,6 +62,7 @@ public partial class RichEditor
         _canvas.PointerPressed += OnCanvasPointerPressed;
         _canvas.PointerMoved += OnCanvasPointerMoved;
         _canvas.PointerReleased += OnCanvasPointerReleased;
+        _canvas.PointerCaptureLost += OnCanvasPointerCaptureLost;
         _canvas.PointerWheelChanged += OnCanvasPointerWheel;
 
         _canvas.KeyDown += OnEditorKeyDown;
@@ -164,6 +165,13 @@ public partial class RichEditor
         ClearObjectSelection();
         _resizingImage = null;
         _resizingInline = null;
+        // The table drags too, not only the image ones — every drag belongs to a block of the document being
+        // replaced. Left armed, the first pointer move after a load (or an undo, which swaps in a snapshot)
+        // wrote into the old table and pushed an undo step onto the NEW document, marking a file that had just
+        // been opened as modified (measured 2026-09-15). Upstream's ResetInteractionState clears them all.
+        _resizingColumn = false; _resizingColTable = null;
+        _resizingRow = false; _resizingRowTable = null;
+        _dragUndoPending = false;
         // State that belongs to the document being replaced: an armed format painter would paint the NEW
         // document's next selection with the OLD one's format, and a pending caret style would land on the
         // new document's first typed text (upstream's ResetInteractionState drops the latter the same way).
@@ -481,6 +489,21 @@ public partial class RichEditor
         if (delta == 0) return;
         SetZoom(EffectiveZoom * Math.Pow(1.1, delta / 120.0));
         e.Handled = true;
+    }
+
+    // Capture can end without a release reaching the canvas (the window deactivated mid-drag, another element
+    // took the pointer). Nothing else clears a drag, so it outlived the button: the next plain hover went on
+    // resizing the column, row or image under the pointer, or extending the selection. End whatever is live.
+    // A normal release clears its own drag first (see EndColumnResize), so arriving after one is a no-op.
+    // Text drag & drop is left alone: ending it drops the text, and a lost capture is not a drop.
+    private void OnCanvasPointerCaptureLost(object sender, PointerRoutedEventArgs e) => EndPointerDrags();
+
+    private void EndPointerDrags()
+    {
+        if (_resizingColumn) FinishColumnResize();
+        if (_resizingRow) FinishRowResize();
+        if (_resizingImage != null || _resizingInline != null) FinishImageResize();
+        if (_isSelecting) { _isSelecting = false; StopAutoScroll(); }
     }
 
     private void OnCanvasPointerReleased(object sender, PointerRoutedEventArgs e)

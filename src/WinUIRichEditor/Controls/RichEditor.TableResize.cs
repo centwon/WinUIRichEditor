@@ -115,23 +115,33 @@ public partial class RichEditor
     }
 
     // Starts a column resize if the press lands on a column boundary. Returns true when it consumed it.
+    // The pointer capture is the only part that needs the event; the rest is BeginColumnResizeAt, which
+    // tests drive with a document point.
     private bool TryBeginColumnResize(Point pt, PointerRoutedEventArgs e)
+    {
+        if (!BeginColumnResizeAt(pt)) return false;
+        _canvas.CapturePointer(e.Pointer);
+        return true;
+    }
+
+    private bool BeginColumnResizeAt(Point pt)
     {
         if (IsReadOnly) return false;
         foreach (var (tb, list) in _columnBoundaries)
         foreach (var (col, rect) in list)
             if (rect.Contains(pt))
             {
-                EnsureColumnWidths(tb);
+                // Nothing is written on press — not even the missing widths LayoutTable already draws as 100.
+                // Padding here changed the document with no undo step and no IsModified (measured 2026-09-15:
+                // ColumnWidths 1 → 3 on a click); ResizeColumn pads after its undo checkpoint instead.
                 _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
                 _resizingColumn = true;
                 _resizingColTable = tb;
                 _resizingColIndex = col;
                 _resizingLastCol = col >= tb.Columns - 1;
                 _colResizeStartX = pt.X;
-                _initColW = tb.ColumnWidths[col];
+                _initColW = col < tb.ColumnWidths.Count ? tb.ColumnWidths[col] : 100;
                 _initNextColW = (col + 1 < tb.ColumnWidths.Count) ? tb.ColumnWidths[col + 1] : 100;
-                _canvas.CapturePointer(e.Pointer);
                 return true;
             }
         return false;
@@ -148,7 +158,19 @@ public partial class RichEditor
         if (_resizingLastCol)
         {
             // Outer-right edge: grow/shrink this column, changing the table's total width.
-            tb.ColumnWidths[_resizingColIndex] = Math.Max(minW, _initColW + diff);
+            double w = Math.Max(minW, _initColW + diff);
+            // A table inside a cell — nested, or inline in a cell's paragraph — is bound to that cell's content
+            // box: growing its last column past it drew the table through the neighbouring cells (measured
+            // 2026-09-15: a nested table in a 190px cell dragged to 480, an inline one to 420). Shrinking stays
+            // free, and the cap never falls below the width the drag started from, so a table that already
+            // overflows (a file says so) does not snap narrower the moment it is grabbed.
+            if (EnclosingContentWidth(tb) is { } room)
+            {
+                double others = 0;
+                for (int k = 0; k < tb.Columns; k++) if (k != _resizingColIndex) others += tb.ColumnWidths[k];
+                w = Math.Min(w, Math.Max(_initColW, room - others));
+            }
+            tb.ColumnWidths[_resizingColIndex] = w;
         }
         else
         {
@@ -181,15 +203,48 @@ public partial class RichEditor
         return Math.Clamp(diff, minDiff, maxDiff);
     }
 
+    // The width a table inside a cell has to fit in: the cell's content box for a nested table, the host
+    // paragraph's wrap width for an inline table in a cell's paragraph. Null anywhere else — a top-level table
+    // may grow past the margin, as in upstream and Word. (Upstream caps the nested case the same way,
+    // EnclosingCellInnerWidth.)
+    private double? EnclosingContentWidth(TableBlock tb)
+    {
+        switch (tb.Parent)
+        {
+            case TableCell cell when cell.Parent is TableBlock outer:
+                for (int r = 0; r < outer.Rows; r++)
+                    for (int c = 0; c < outer.Columns; c++)
+                        if (ReferenceEquals(outer.Cells[r][c], cell))
+                        {
+                            var (cs, _) = outer.SpanOf(r, c);
+                            double w = 0;
+                            for (int k = c; k < c + cs && k < outer.Columns; k++)
+                                w += k < outer.ColumnWidths.Count ? outer.ColumnWidths[k] : 100;
+                            return Math.Max(10, w - 2 * CellPad);
+                        }
+                return null;
+            case InlineTable { Parent: Paragraph host } when host.Parent is TableCell:
+                return ParagraphWrapWidth(host);
+            default:
+                return null;
+        }
+    }
+
+    // Finish BEFORE releasing: the release raises PointerCaptureLost, whose handler must find nothing live.
     private bool EndColumnResize(PointerRoutedEventArgs e)
     {
         if (!_resizingColumn) return false;
+        FinishColumnResize();
+        _canvas.ReleasePointerCapture(e.Pointer);
+        return true;
+    }
+
+    private void FinishColumnResize()
+    {
         _resizingColumn = false;
         _resizingColTable = null;
         _dragUndoPending = false; // released without dragging: nothing was pushed, nothing to keep armed
-        _canvas.ReleasePointerCapture(e.Pointer);
         RaiseStatusChanged();
-        return true;
     }
 
     private bool OverColumnBoundary(Point pt)
@@ -204,19 +259,25 @@ public partial class RichEditor
     // Starts a row resize if the press lands on a row boundary. Returns true when it consumed it.
     private bool TryBeginRowResize(Point pt, PointerRoutedEventArgs e)
     {
+        if (!BeginRowResizeAt(pt)) return false;
+        _canvas.CapturePointer(e.Pointer);
+        return true;
+    }
+
+    private bool BeginRowResizeAt(Point pt)
+    {
         if (IsReadOnly) return false;
         foreach (var (tb, list) in _rowBoundaries)
         foreach (var (row, height, rect) in list)
             if (rect.Contains(pt))
             {
-                EnsureRowHeights(tb);
+                // No padding on press (see BeginColumnResizeAt); ResizeRow pads after its checkpoint.
                 _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
                 _resizingRow = true;
                 _resizingRowTable = tb;
                 _resizingRowIndex = row;
                 _rowResizeStartY = pt.Y;
                 _initRowH = height; // current rendered height (content- or user-driven)
-                _canvas.CapturePointer(e.Pointer);
                 return true;
             }
         return false;
@@ -238,12 +299,17 @@ public partial class RichEditor
     private bool EndRowResize(PointerRoutedEventArgs e)
     {
         if (!_resizingRow) return false;
+        FinishRowResize(); // before the release (see EndColumnResize)
+        _canvas.ReleasePointerCapture(e.Pointer);
+        return true;
+    }
+
+    private void FinishRowResize()
+    {
         _resizingRow = false;
         _resizingRowTable = null;
         _dragUndoPending = false;
-        _canvas.ReleasePointerCapture(e.Pointer);
         RaiseStatusChanged();
-        return true;
     }
 
     private bool OverRowBoundary(Point pt)

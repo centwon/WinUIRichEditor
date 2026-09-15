@@ -252,12 +252,17 @@ public partial class RichEditor
     private bool EndImageResize(PointerRoutedEventArgs e)
     {
         if (_resizingImage == null && _resizingInline == null) return false;
+        FinishImageResize(); // before the release (see EndColumnResize)
+        _canvas.ReleasePointerCapture(e.Pointer);
+        return true;
+    }
+
+    private void FinishImageResize()
+    {
         _resizingImage = null;
         _resizingInline = null;
         _dragUndoPending = false; // released without dragging: nothing was pushed
-        _canvas.ReleasePointerCapture(e.Pointer);
         RaiseStatusChanged();
-        return true;
     }
 
     private static bool OnResizeHandle(Rect rect, Point pt)
