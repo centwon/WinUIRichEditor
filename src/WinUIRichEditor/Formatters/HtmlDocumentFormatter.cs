@@ -478,9 +478,9 @@ public static class HtmlDocumentFormatter
         return false;
     }
 
-    // Block.MarginBottom's default. A paragraph at the default writes no margin at all, which is what
-    // keeps an ordinary document's HTML unchanged.
-    private const double DefaultMarginBottom = 10;
+    // A Paragraph's MarginBottom default (0, as in HWP). A paragraph at the default writes no margin at
+    // all, which is what keeps an ordinary document's HTML unchanged.
+    private const double DefaultMarginBottom = 0;
 
     // The paragraph-level formatting an element carries. Only values the element actually states are
     // written, so applying this to a paragraph the walk already produced cannot clobber that

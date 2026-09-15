@@ -772,12 +772,12 @@ public partial class RichEditorToolbar : UserControl
             if (_heading != null) SelectByTag(_heading, f.Heading);
             if (_align != null) SelectByTag(_align, f.Align);
 
-            // Spacing box shows the caret paragraph's current % (unset / ≤1.0 = single = 100%). Don't
+            // Spacing box shows the caret paragraph's current % (unset = the HWP default 160%). Don't
             // overwrite while the user is editing the field.
             if (_spacingBox != null && _spacingBox.FocusState == FocusState.Unfocused)
             {
                 double ls = f.LineSpacing;
-                int pct = double.IsNaN(ls) || ls <= 0 ? 100 : (int)Math.Round(ls * 100);
+                int pct = (int)Math.Round((double.IsNaN(ls) || ls <= 0 ? RichEditor.DefaultLineSpacing : ls) * 100);
                 _spacingBox.Text = pct + "%";
             }
 

@@ -200,7 +200,9 @@ internal sealed class RtfParser
     private void ApplyLineSpacingWords()
     {
         if (_slTwips == 0) { _para.LineSpacing = double.NaN; _para.LineHeight = double.NaN; return; }
-        if (_slMult) { _para.LineSpacing = _slTwips / 240.0; _para.LineHeight = double.NaN; }
+        // \slmult is Word's multiple of the natural line (≈1.2 × the size); LineSpacing is HWP's ratio of
+        // the size, so ratio = N/240 × 1.2 = N/200 (the writer's inverse).
+        if (_slMult) { _para.LineSpacing = _slTwips / 200.0; _para.LineHeight = double.NaN; }
         else { _para.LineHeight = Math.Abs(_slTwips) / 15.0; _para.LineSpacing = double.NaN; } // "at least" ≈ exact
     }
 
@@ -1470,26 +1472,24 @@ internal sealed class RtfWriter
         // index 0 means "no shading" here.
         int paraShade = ColorIndex(p.Background, blackIsDefault: false);
         if (paraShade > 0) _body.Append($@"\cbpat{paraShade}");
-        // Line spacing (see the parser's \sl/\slmult cases): proportional = N/240 lines with \slmult1,
-        // absolute = negative twips ("exactly") with \slmult0.
+        // Line spacing (see the parser's \sl/\slmult cases): proportional = \slmult1, absolute = negative
+        // twips ("exactly") with \slmult0. LineSpacing is HWP's ratio of the font size while \slmult is
+        // Word's multiple of the natural line (≈1.2 × the size), so N = ratio × 240 / 1.2 = ratio × 200.
         //
-        // The unset case is stated EXPLICITLY as single, then tagged as "this was the default". Writing
-        // nothing means "use the reader's default", and HWP's default is 160% — so single-spaced text
-        // arrived visibly looser and it read as the editor having changed the spacing.
+        // The unset case is stated EXPLICITLY as the HWP default 160% (\sl320), then tagged as "this was
+        // the default". Writing nothing means "use the reader's default" — Word's is single — so the text
+        // would arrive tighter than the editor drew it.
         //
-        // The tag is needed because unset and 1.0 are NOT the same thing here: an unset paragraph uses the
-        // font's natural baseline, a custom one uses the uniform-spacing formula (~0.3px apart, and the
-        // caret geometry follows that split). Letting a round trip turn unset into 1.0 would silently move
-        // every paragraph onto the other rule. Other readers ignore the ignorable group and just get
-        // single spacing, which is the whole point.
+        // The tag keeps a round trip from turning unset into an explicit 1.6, so the paragraph keeps
+        // following the default. Other readers ignore the ignorable group and just get 160%.
         bool defaulted = false;
         if (!double.IsNaN(p.LineSpacing) && p.LineSpacing > 0)
-            _body.Append($@"\sl{(int)Math.Round(p.LineSpacing * 240)}\slmult1");
+            _body.Append($@"\sl{(int)Math.Round(p.LineSpacing * 200)}\slmult1");
         else if (!double.IsNaN(p.LineHeight) && p.LineHeight > 0)
             _body.Append($@"\sl-{(int)Math.Round(p.LineHeight * 15)}\slmult0");
         else
         {
-            _body.Append(@"\sl240\slmult1");
+            _body.Append(@"\sl320\slmult1");
             defaulted = true;
         }
         // The delimiter for the last CONTROL WORD goes here, before the tag. A space after a group's `}`

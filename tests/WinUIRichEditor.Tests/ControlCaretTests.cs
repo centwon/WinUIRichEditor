@@ -110,8 +110,10 @@ public class ControlCaretTests
     // A line box is taller than the glyphs it holds, and at 300% spacing it is three times taller. The
     // caret must not grow with it: it marks where you type, and a caret twice the height of the text was
     // the visible symptom users reported.
+    // 1.2 rather than 1.0: LineSpacing is HWP's ratio of the font size, so 1.0 is a box smaller than the
+    // glyphs (they overlap the next line, as in HWP) and 1.2 is where box and text height coincide.
     [Theory]
-    [InlineData(1.0)]
+    [InlineData(1.2)]
     [InlineData(2.0)]
     [InlineData(3.0)]
     public void CaretHeight_IsTheTextHeight_AtEveryLineSpacing(double spacing)
@@ -123,7 +125,7 @@ public class ControlCaretTests
             var g = CaretGeometry(ed);
 
             // The line box really does grow with the spacing — otherwise this test proves nothing.
-            if (spacing > 1.0)
+            if (spacing >= 2.0)
                 Assert.True(g.LineBoxHeight > 20, $"line box did not grow at {spacing:0.0}x (was {g.LineBoxHeight:0.0})");
 
             // 10pt body text: 10 * 4/3 px * 1.2 natural line factor = 16px.
@@ -158,8 +160,9 @@ public class ControlCaretTests
     // What has to hold at EVERY spacing: the caret lies within its own line box. "Drifted off the text"
     // is what the two-rules-for-one-thing version produced, and at 300% it was far enough out to break
     // vertical movement as well.
+    // 1.2, not 1.0: below it the box is smaller than the glyphs (see CaretHeight_IsTheTextHeight).
     [Theory]
-    [InlineData(1.0)]
+    [InlineData(1.2)]
     [InlineData(2.0)]
     [InlineData(3.0)]
     public void Caret_StaysInsideItsLineBox_AtEveryLineSpacing(double spacing)
@@ -245,6 +248,26 @@ public class ControlCaretTests
         Assert.True(at300 > at100 + 10,
             $"the gap a vertical probe must clear barely changed ({at100:0.0} -> {at300:0.0}); " +
             "if that were so the 300% regression could not have happened, so this test is measuring the wrong thing");
+    }
+
+    // HWP "글자에 따라": a line box is font size × ratio (not × the font's natural line height), so one
+    // extra 100% on 10pt body text adds exactly 10pt = 13.33px. Unset = the HWP default 160%.
+    [Fact]
+    public void LineSpacing_IsHwpPercentOfFontSize_AndDefaultsTo160()
+    {
+        double LineBox(double spacing)
+        {
+            double box = 0;
+            Hosted(Lines(spacing, "x"), ed =>
+            {
+                SetCaret(ed, Paragraphs(ed)[0]);
+                box = CaretGeometry(ed).LineBoxHeight;
+            });
+            return box;
+        }
+
+        Assert.Equal(10 * 96.0 / 72, LineBox(3.0) - LineBox(2.0), 1);
+        Assert.Equal(LineBox(1.6), LineBox(double.NaN), 2);
     }
 
     // ---- the case the 300% regression was actually reported as ----------------------------------------
