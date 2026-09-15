@@ -307,8 +307,13 @@ public partial class RichEditor
         var tp = GetPositionFromPoint(ptp);
         if (tp == null) return;
 
+        var now = DateTime.UtcNow;
+        bool repeat = (now - _lastPressTime).TotalMilliseconds < _multiClickMs
+            && Math.Abs(ptp.X - _lastPressPos.X) + Math.Abs(ptp.Y - _lastPressPos.Y) < MultiClickSlop;
+        var press = ChooseTextPress(Ctrl, Shift, repeat, CanArmTextDragAt(tp));
+
         // Ctrl+click on a hyperlink opens it (Word/browser convention); the caret still moves there.
-        if (Ctrl && !Shift && tp.Paragraph != null)
+        if (press == TextPress.CtrlClick && tp.Paragraph != null)
         {
             _caret = tp;
             CollapseSelectionToCaret();
@@ -329,17 +334,13 @@ public partial class RichEditor
         if (IsReadOnly && !Shift && LinkRunAtPoint(ptp)?.NavigateUri is { Length: > 0 } roUri)
             _pressLink = (roUri, new Point(ptp.X, ptp.Y));
 
-        var now = DateTime.UtcNow;
-        bool repeat = (now - _lastPressTime).TotalMilliseconds < _multiClickMs
-            && Math.Abs(ptp.X - _lastPressPos.X) + Math.Abs(ptp.Y - _lastPressPos.Y) < MultiClickSlop;
         _clickCount = repeat ? _clickCount + 1 : 1;
         _lastPressTime = now;
         _lastPressPos = new Point(ptp.X, ptp.Y);
 
         // A single (non-repeat) press strictly inside the existing selection arms text drag & drop —
         // caret/selection stay put; release decides click vs move/copy (RichEditor.DragText.cs).
-        // Multi-clicks fall through so a fast triple-click still selects the paragraph.
-        if (_clickCount == 1 && !Shift && ArmTextDragAt(tp, new Point(ptp.X, ptp.Y), e)) return;
+        if (press == TextPress.ArmDrag) { ArmTextDrag(new Point(ptp.X, ptp.Y), e); return; }
 
         _caret = tp;
         _desiredCaretX = ptp.X;

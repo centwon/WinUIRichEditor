@@ -120,6 +120,40 @@ public class ExtractedGateTests
         Assert.Equal(Target.None, RichEditor.ChoosePointerTarget(false, false, false, false, false, false));
     }
 
+    // ---- what a press on text does -------------------------------------------------------------------
+
+    // The defect this order fixes: the Ctrl+click branch collapses the selection, and it used to run
+    // first — so holding Ctrl and dragging the selection (Word's copy-drag) started a new selection.
+    // Ctrl must not matter to whether a drag arms; it only decides move vs copy at the drop.
+    [Fact]
+    public void CtrlHeld_InsideTheSelection_StillArmsTheDrag()
+    {
+        Assert.Equal(RichEditor.TextPress.ArmDrag, RichEditor.ChooseTextPress(ctrl: true, shift: false, repeat: false, insideDraggableSelection: true));
+        Assert.Equal(RichEditor.TextPress.ArmDrag, RichEditor.ChooseTextPress(ctrl: false, shift: false, repeat: false, insideDraggableSelection: true));
+    }
+
+    // Outside the selection (or with none, or read-only — CanArmTextDragAt folds those in) Ctrl+click is
+    // what it always was: caret there, open the link under the pointer.
+    [Fact]
+    public void CtrlClick_OutsideTheSelection_IsUnchanged()
+    {
+        Assert.Equal(RichEditor.TextPress.CtrlClick, RichEditor.ChooseTextPress(ctrl: true, shift: false, repeat: false, insideDraggableSelection: false));
+        Assert.Equal(RichEditor.TextPress.Click, RichEditor.ChooseTextPress(ctrl: false, shift: false, repeat: false, insideDraggableSelection: false));
+    }
+
+    // A multi-click never arms (a fast triple-click inside a word selection must still take the paragraph),
+    // and keeps its old Ctrl behaviour; Shift extends the selection, so it never arms either.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MultiClicksAndShift_NeverArmTheDrag(bool ctrl)
+    {
+        var repeatExpected = ctrl ? RichEditor.TextPress.CtrlClick : RichEditor.TextPress.Click;
+        Assert.Equal(repeatExpected, RichEditor.ChooseTextPress(ctrl, shift: false, repeat: true, insideDraggableSelection: true));
+        Assert.Equal(RichEditor.TextPress.Click, RichEditor.ChooseTextPress(ctrl, shift: true, repeat: false, insideDraggableSelection: true));
+        Assert.Equal(RichEditor.TextPress.Click, RichEditor.ChooseTextPress(ctrl, shift: true, repeat: true, insideDraggableSelection: true));
+    }
+
     // ---- the IME's offset arithmetic ------------------------------------------------------------------
 
     [Fact]
