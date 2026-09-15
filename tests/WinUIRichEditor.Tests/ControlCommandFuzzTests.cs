@@ -268,7 +268,7 @@ public class ControlCommandFuzzTests
 
     private static string ApplyRandomCommand(RichEditor ed, Random rng)
     {
-        switch (rng.Next(41))
+        switch (rng.Next(42))
         {
             // -- caret and selection (no mutation; they set up what the next command acts on)
             case 0: return PlaceCaret(ed, rng);
@@ -336,8 +336,43 @@ public class ControlCommandFuzzTests
             // -- history, driven as a user would (on top of the per-step check)
             case 38: ed.Undo(); return "undo";
             case 39: return SelectObject(ed, rng);
+            case 40: return DropObject(ed, rng);
             default: ed.Redo(); return "redo";
         }
+    }
+
+    // An object dragged somewhere a pointer could drop it (RichEditor.DragBlock.cs): any table, image, inline
+    // image or inline table, to any offset of any paragraph — its own cells included, which a move must
+    // refuse and a copy may take.
+    private static string DropObject(RichEditor ed, Random rng)
+    {
+        var objects = new List<object>();
+        void Walk(IEnumerable<Block> blocks)
+        {
+            foreach (var b in blocks)
+            {
+                if (b is ImageBlock) objects.Add(b);
+                else if (b is TableBlock tb) { objects.Add(tb); foreach (var (_, _, cell) in tb.LogicalCells()) Walk(cell.Blocks); }
+                else if (b is Paragraph p)
+                    foreach (var inl in p.Inlines)
+                    {
+                        if (inl is InlineImage) objects.Add(inl);
+                        else if (inl is InlineTable it)
+                        {
+                            objects.Add(it);
+                            foreach (var (_, _, cell) in it.Table.LogicalCells()) Walk(cell.Blocks);
+                        }
+                    }
+            }
+        }
+        Walk(ed.Document!.Blocks);
+        if (objects.Count == 0) return "drop-object(none)";
+        var obj = objects[rng.Next(objects.Count)];
+        var paras = Paragraphs(ed.Document!.Blocks).ToList();
+        var p2 = paras[rng.Next(paras.Count)];
+        bool copy = rng.Next(3) == 0;
+        Call(ed, "DropObject", obj, new TextPointer(p2, rng.Next(Len(p2) + 1)), copy);
+        return copy ? "drop-object(copy)" : "drop-object(move)";
     }
 
     // An object selected the way a click (an image) or a border click (a table, nested or inline too) selects it.

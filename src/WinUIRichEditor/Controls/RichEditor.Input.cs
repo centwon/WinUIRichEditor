@@ -66,6 +66,7 @@ public partial class RichEditor
         _canvas.PointerWheelChanged += OnCanvasPointerWheel;
 
         _canvas.KeyDown += OnEditorKeyDown;
+        _canvas.KeyUp += OnEditorKeyUp; // Ctrl let go mid-drag (RichEditor.DragBlock.cs)
         _canvas.CharacterReceived += OnEditorCharacterReceived;
         _canvas.GotFocus += (_, _) =>
         {
@@ -172,6 +173,7 @@ public partial class RichEditor
         _resizingColumn = false; _resizingColTable = null;
         _resizingRow = false; _resizingRowTable = null;
         _dragUndoPending = false;
+        CancelObjectDrag(); // the dragged object is the old document's; a release would drop it into the new one
         // State that belongs to the document being replaced: an armed format painter would paint the NEW
         // document's next selection with the OLD one's format, and a pending caret style would land on the
         // new document's first typed text (upstream's ResetInteractionState drops the latter the same way).
@@ -300,8 +302,9 @@ public partial class RichEditor
         if (TableDrawPointerPressed(ptp, e)) return;  // "draw table" mode: drag from the caret to size it
         if (TryBeginColumnResize(ptp, e)) return;     // table column boundary drag
         if (TryBeginRowResize(ptp, e)) return;        // table row boundary drag
-        if (TrySelectTableBlock(ptp)) return;         // table left/top border -> select whole table
-        if (TrySelectInlineTable(ptp)) return;        // inline table left/top border -> select it
+        // Table left/top border -> select the whole table, and arm dragging it (RichEditor.DragBlock.cs).
+        if (TrySelectTableBlock(ptp)) { ArmObjectDrag(_selectedBlock, ptp, e); return; }
+        if (TrySelectInlineTable(ptp)) { ArmObjectDrag(_selectedInlineTable?.it, ptp, e); return; }
         if (TryBeginImageInteraction(ptp, e)) return; // image resize handle or selection
         ClearObjectSelection(); // any other press clears an image selection
         var tp = GetPositionFromPoint(ptp);
@@ -391,6 +394,7 @@ public partial class RichEditor
         if (_resizingColumn) { ResizeColumn(pt); return; }
         if (_resizingRow) { ResizeRow(pt); return; }
         if (_resizingImage != null || _resizingInline != null) { TryResizeImage(pt); return; }
+        if (_dragObject != null) { DragObjectMoved(pt); return; }
         if (_dragTextArmed) { DragTextMoved(pt); return; }
         UpdateHoverCursor(pt);
         if (!_isSelecting) return;
@@ -496,7 +500,8 @@ public partial class RichEditor
     // took the pointer). Nothing else clears a drag, so it outlived the button: the next plain hover went on
     // resizing the column, row or image under the pointer, or extending the selection. End whatever is live.
     // A normal release clears its own drag first (see EndColumnResize), so arriving after one is a no-op.
-    // Text drag & drop is left alone: ending it drops the text, and a lost capture is not a drop.
+    // Text drag & drop is left alone: ending it drops the text, and a lost capture is not a drop. An object
+    // drag is cancelled for the same reason — cancelled, not finished.
     private void OnCanvasPointerCaptureLost(object sender, PointerRoutedEventArgs e) => EndPointerDrags();
 
     private void EndPointerDrags()
@@ -504,6 +509,7 @@ public partial class RichEditor
         if (_resizingColumn) FinishColumnResize();
         if (_resizingRow) FinishRowResize();
         if (_resizingImage != null || _resizingInline != null) FinishImageResize();
+        CancelObjectDrag();
         if (_isSelecting) { _isSelecting = false; StopAutoScroll(); }
     }
 
@@ -513,6 +519,7 @@ public partial class RichEditor
         if (EndColumnResize(e)) return;
         if (EndRowResize(e)) return;
         if (EndImageResize(e)) return;
+        if (_dragObject != null) { EndObjectDrag(e); return; }
         if (_dragTextArmed) { EndTextDrag(e); return; }
         _isSelecting = false;
         StopAutoScroll();
@@ -772,6 +779,7 @@ public partial class RichEditor
 
     private void OnEditorKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key == VirtualKey.Control && DropPreviewActive) OnDragModifierChanged(); // copy mark follows Ctrl
         if (_composing) return; // let the IME consume keys while a composition is active
         if (e.Key == VirtualKey.Escape && _pendingTableDraw != null) { CancelTableDraw(); e.Handled = true; return; }
         bool shift = Shift, ctrl = Ctrl, alt = Alt;
