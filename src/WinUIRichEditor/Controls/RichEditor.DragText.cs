@@ -16,23 +16,44 @@ public partial class RichEditor
     private bool _dragTextActive;       // past the slop: drop preview showing, release performs the drop
     private Point _dragTextStart;       // press point, doc space
     private TextPointer? _dropPreview;  // current drop position while dragging (drawn by DrawDropPreview)
+    private bool _dragTextPressCtrl;    // Ctrl was down at the press — an undragged release is then a Ctrl+click
+
+    // What a press on text does once no object or table chrome has taken it.
+    internal enum TextPress { ArmDrag, CtrlClick, Click }
+
+    /// <summary>The order of the text-press branches. A single press strictly inside the selection arms a drag
+    /// BEFORE the Ctrl+click branch sees it: Ctrl is the drag's copy modifier (Word convention), and the Ctrl+click
+    /// branch collapses the selection — tested first, it turned "hold Ctrl, drag the selection" into a new
+    /// selection, so a copy-drag could only be had by pressing Ctrl mid-drag. A Ctrl+click on a link inside the
+    /// selection still opens it, from the release (EndTextDrag). Multi-clicks never arm (a fast triple-click
+    /// still selects the paragraph), and Shift extends the selection instead.</summary>
+    internal static TextPress ChooseTextPress(bool ctrl, bool shift, bool repeat, bool insideDraggableSelection)
+    {
+        if (!shift && !repeat && insideDraggableSelection) return TextPress.ArmDrag;
+        if (ctrl && !shift) return TextPress.CtrlClick;
+        return TextPress.Click;
+    }
 
     // Whether tp sits STRICTLY inside the current selection (boundary clicks place the caret instead,
     // matching Word). Cell-block selections are excluded — their "content" is a grid rectangle, not a
     // linear range this move understands.
-    private bool ArmTextDragAt(TextPointer tp, Point docPt, PointerRoutedEventArgs e)
+    private bool CanArmTextDragAt(TextPointer tp)
     {
         if (IsReadOnly || !HasSelection || CellBlockSelection() != null) return false;
         TextPointer s = _selStart, e2 = _selEnd;
         if (ComparePositions(s, e2) > 0) (s, e2) = (e2, s);
-        if (!(ComparePositions(s, tp) < 0 && ComparePositions(tp, e2) < 0)) return false;
+        return ComparePositions(s, tp) < 0 && ComparePositions(tp, e2) < 0;
+    }
 
+    // Arms the drag; the caller has checked CanArmTextDragAt (via ChooseTextPress).
+    private void ArmTextDrag(Point docPt, PointerRoutedEventArgs e)
+    {
         _dragTextArmed = true;
         _dragTextActive = false;
         _dragTextStart = docPt;
+        _dragTextPressCtrl = Ctrl;
         _dropPreview = null;
         _canvas.CapturePointer(e.Pointer);
-        return true;
     }
 
     // Pointer move while armed: past the slop the drag activates and the drop preview follows the pointer.
@@ -76,6 +97,11 @@ public partial class RichEditor
                 RaiseStatusChanged();
             }
             InvalidateCanvas();
+            // A Ctrl+click on a link inside the selection armed this drag instead of reaching the press's
+            // Ctrl+click branch (ChooseTextPress), so the link opens here. Ctrl as it was at the PRESS — a click
+            // is decided by its press, and the release may come after Ctrl has already been let go.
+            if (_dragTextPressCtrl && LinkRunAtPoint(pt)?.NavigateUri is { Length: > 0 } link)
+                _ = OpenUriAsync(link);
             return;
         }
 
