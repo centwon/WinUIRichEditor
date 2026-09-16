@@ -63,23 +63,30 @@ public partial class RichEditor
         // as CRLF — otherwise the high-fidelity in-app rich paste is silently missed.
         plain = plain.ReplaceLineEndings();
 
+        var dp = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+        if (!string.IsNullOrEmpty(plain)) dp.SetText(plain);
+
+        // One flavour at a time: each is handed to the package (which keeps its own copy) and let go before
+        // the next is built. With a picture in the selection both carry its bytes as text — base64 in the
+        // HTML twice over (the fragment and CF_HTML), hex in the RTF — and building all of them before
+        // handing any over held 93 MB of strings at once for one 10 MB picture (CopyAllocationProbeTests).
         string? html = BuildSelectionHtml(selDoc);
+        if (!string.IsNullOrEmpty(html))
+            try { dp.SetHtmlFormat(HtmlFormatHelper.CreateHtmlFormat(html)); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+        html = null;
+
         string? rtf = null;
         // RTF is best-effort
         try { rtf = RtfDocumentFormatter.Write(selDoc); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
-
-        _internalClipboardDoc = selDoc.Clone();
-        _internalClipboardText = plain;
-
-        var dp = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
-        if (!string.IsNullOrEmpty(plain)) dp.SetText(plain);
-        if (!string.IsNullOrEmpty(html))
-            try { dp.SetHtmlFormat(HtmlFormatHelper.CreateHtmlFormat(html)); }
-            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         if (!string.IsNullOrEmpty(rtf))
             try { dp.SetRtf(rtf); }
             catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+        rtf = null;
+
+        _internalClipboardDoc = selDoc.Clone();
+        _internalClipboardText = plain;
         try { Clipboard.SetContent(dp); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
@@ -609,10 +616,15 @@ public partial class RichEditor
     // multi-word / CJK names), matching ToHtml. Null when there is nothing to emit.
     private string? BuildSelectionHtml(FlowDocument doc)
     {
-        string inner = HtmlDocumentFormatter.ToHtml(doc);
-        if (string.IsNullOrEmpty(inner)) return null;
+        // Written into one pre-sized builder: formatting the HTML to a string and then interpolating it into
+        // the <div> copied a picture's whole base64 payload once more (see HtmlDocumentFormatter.EstimateCapacity).
         string family = (DefaultFontFamily ?? "").Replace("'", "").Replace("\"", "");
-        return $"<div style=\"font-family:'{family}';font-size:10pt\">{inner}</div>";
+        string open = $"<div style=\"font-family:'{family}';font-size:10pt\">";
+        var sb = new System.Text.StringBuilder(HtmlDocumentFormatter.EstimateCapacity(doc) + open.Length + 6);
+        sb.Append(open);
+        HtmlDocumentFormatter.AppendHtml(sb, doc);
+        if (sb.Length == open.Length) return null; // nothing to put in it
+        return sb.Append("</div>").ToString();
     }
 
     // Inline-only fallback: builds a FlowDocument from a selection's rich inlines, splitting paragraphs at

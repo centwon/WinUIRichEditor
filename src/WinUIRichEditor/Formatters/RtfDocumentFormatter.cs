@@ -1322,6 +1322,12 @@ internal sealed class RtfWriter
         // nested ordered lists number 1,2,… per level instead of continuing the parent's count; bullets
         // keep the context alive, non-list blocks reset it.
         var ordCounters = new List<int>();
+        // Pictures are written as hex — 2 chars per byte — and dominate the output. Sized up front, the body
+        // is one allocation of that payload instead of a chain of doubling re-allocations (measured
+        // 2026-09-16, CopyAllocationProbeTests: one 10 MB picture allocated 160 MB writing RTF).
+        long hexChars = 4096;
+        foreach (var bytes in BlockWalk.PictureBytes(doc.Blocks)) hexChars += bytes.Length * 2L + 128;
+        _body.EnsureCapacity((int)Math.Min(hexChars, int.MaxValue / 2));
         foreach (var block in doc.Blocks)
         {
             int ordered = 0;
@@ -1356,9 +1362,19 @@ internal sealed class RtfWriter
         // or HWP simply lost it, while the model and .flow carried it correctly (the same one-sided gap
         // this round found for paragraph fills).
         WritePageChrome(sb, doc.PageSetup);
-        sb.Append(_body);
-        sb.Append('}');
-        return sb.ToString();
+        // The header is small and the body holds the pictures: build the result straight from both, rather
+        // than appending the body into the header's builder (a whole copy) and then calling ToString (another).
+        return string.Create(sb.Length + _body.Length + 1, (sb, _body), static (dest, parts) =>
+        {
+            parts.sb.CopyTo(0, dest, parts.sb.Length);
+            int at = parts.sb.Length;
+            foreach (var chunk in parts._body.GetChunks())
+            {
+                chunk.Span.CopyTo(dest[at..]);
+                at += chunk.Length;
+            }
+            dest[at] = '}';
+        });
     }
 
     private void WriteBlock(Block block, int ordered)
@@ -1823,10 +1839,29 @@ internal sealed class RtfWriter
         if (w > 0) _body.Append($@"\picwgoal{(int)(w * 15)}");
         if (h > 0) _body.Append($@"\pichgoal{(int)(h * 15)}");
         _body.Append(' ');
-        // Single-allocation hex: the per-byte ToString("x2") loop allocated one string per byte, and
-        // this runs on EVERY copy that contains an image (SetClipboardFromSelection writes RTF).
-        _body.Append(Convert.ToHexStringLower(bytes));
+        // This runs on EVERY copy that contains an image (SetClipboardFromSelection writes RTF). A per-byte
+        // ToString("x2") loop once allocated a string per byte; one ToHexStringLower after it still made a
+        // string of the whole payload before appending it.
+        AppendHexLower(_body, bytes);
         _body.Append("}}");
+    }
+
+    // Hex straight into the builder, a slice at a time: no string of the whole payload is ever made.
+    private static void AppendHexLower(StringBuilder sb, ReadOnlySpan<byte> data)
+    {
+        const int SliceBytes = 32 * 1024;
+        char[] chars = System.Buffers.ArrayPool<char>.Shared.Rent(SliceBytes * 2);
+        try
+        {
+            while (!data.IsEmpty)
+            {
+                var slice = data[..Math.Min(SliceBytes, data.Length)];
+                Convert.TryToHexStringLower(slice, chars, out int written);
+                sb.Append(chars, 0, written);
+                data = data[slice.Length..];
+            }
+        }
+        finally { System.Buffers.ArrayPool<char>.Shared.Return(chars); }
     }
 
     private int FontIndex(string? family)
