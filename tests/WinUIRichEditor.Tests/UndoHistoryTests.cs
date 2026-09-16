@@ -289,6 +289,96 @@ public class UndoHistoryTests
         Assert.Equal(10, depth);
     }
 
+    // ---- image bytes in the budget (2026-09-16) ------------------------------------------------------
+    // The budget used to leave image bytes out entirely, "shared with the live document". Measured with
+    // MemBaseline's images mode: 18 photos inserted and deleted by editing left 67 MB of JPEG bytes held by a
+    // history charged well under its 64 MB budget — once a picture leaves the document, only the history
+    // keeps it. A megabyte per picture against a few-megabyte budget makes each trim a countable step.
+
+    private const int Mb = 1024 * 1024;
+
+    private static FlowDocument DocWithPicture(byte[] bytes)
+    {
+        var d = Doc("p");
+        var img = new ImageBlock { Width = 10, Height = 10 };
+        img.SetImageData(bytes, "image/png");
+        d.Blocks.Add(img);
+        return d;
+    }
+
+    private static int UndoDepth(UndoManager undo, FlowDocument current)
+    {
+        int depth = 0;
+        while (undo.Undo(current, CaretOn(current, "p")) != null) depth++;
+        return depth;
+    }
+
+    // Each checkpoint holds a picture the NEXT edit removed: only the history keeps those alive.
+    [Fact]
+    public void PicturesOnlyTheHistoryKeeps_CountAgainstTheBudget()
+    {
+        var undo = new UndoManager(maxBytes: 3 * Mb + Mb / 2);
+        for (int i = 0; i < 6; i++)
+        {
+            var doc = DocWithPicture(new byte[Mb]);
+            undo.PushState(doc, CaretOn(doc, "p"));
+        }
+        // newest: its picture is still live (free); then 1, 2, 3 MB — the next would be 4 MB > 3.5.
+        Assert.Equal(4, UndoDepth(undo, Doc("p")));
+    }
+
+    // Pictures still in the document cost the history nothing — charging them would trim history that
+    // frees no memory.
+    [Fact]
+    public void PicturesStillInTheDocument_AreNotCharged()
+    {
+        var shared = new byte[Mb];
+        var undo = new UndoManager(maxBytes: Mb / 2);
+        for (int i = 0; i < 6; i++)
+        {
+            var doc = DocWithPicture(shared);
+            undo.PushState(doc, CaretOn(doc, "p"));
+        }
+        Assert.Equal(6, UndoDepth(undo, DocWithPicture(shared)));
+    }
+
+    // One removed picture held by five checkpoints is one megabyte, not five.
+    [Fact]
+    public void APictureSharedBySeveralCheckpoints_IsChargedOnce()
+    {
+        var removed = new byte[Mb];
+        var undo = new UndoManager(maxBytes: Mb + Mb / 2);
+        for (int i = 0; i < 5; i++)
+        {
+            var doc = DocWithPicture(removed);
+            undo.PushState(doc, CaretOn(doc, "p"));
+        }
+        var after = Doc("p"); // the edit removed it
+        undo.PushState(after, CaretOn(after, "p"));
+
+        Assert.Equal(6, UndoDepth(undo, after));
+    }
+
+    // Undo moves the CURRENT document onto the redo stack; when the restored snapshot doesn't have its
+    // pictures, the redo stack is the only thing holding them.
+    [Fact]
+    public void TheRedoStack_IsChargedForPicturesTheRestoredDocumentDoesNotHave()
+    {
+        var undo = new UndoManager(maxBytes: 3 * Mb + Mb / 2);
+        var plain = Doc("p");
+        for (int i = 0; i < 6; i++) undo.PushState(plain, CaretOn(plain, "p"));
+
+        for (int i = 0; i < 6; i++)
+        {
+            var current = DocWithPicture(new byte[Mb]);
+            Assert.NotNull(undo.Undo(current, CaretOn(current, "p")));
+        }
+
+        int redoDepth = 0;
+        while (undo.Redo(plain, CaretOn(plain, "p")) != null) redoDepth++;
+        Assert.Equal(3, redoDepth); // 1, 2, 3 MB — every one of them unshared with the plain restored doc
+    }
+
     // A caret with no paragraph is what an editor with no document has. Snapshotting it would push a
     // state nothing could restore to.
     [Fact]
