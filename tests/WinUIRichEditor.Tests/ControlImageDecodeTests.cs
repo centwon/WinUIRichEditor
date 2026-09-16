@@ -60,6 +60,9 @@ public class ControlImageDecodeTests
     private static ImageCache Cache(RichEditor ed) => (ImageCache)typeof(RichEditor).GetField("_images", NP)!.GetValue(ed)!;
 
     // One ImageBlock of the given source, displayed at w×h DIPs; returns the RawBytes the loaded document holds.
+    // ⚠ Every test uses a source of its OWN size. The cache is keyed by content and the editor is shared, so
+    // two tests loading identical pictures share one entry — whichever runs first decides what the other sees
+    // (CI's order made the print test find a bitmap an earlier test had decoded: green locally, red there).
     private static byte[] LoadPicture(RichEditor ed, byte[] source, double w, double h)
     {
         var img = new ImageBlock { Width = w, Height = h };
@@ -110,7 +113,7 @@ public class ControlImageDecodeTests
         var ed = Shared.Value;
         UiThread.RunAsync(async () =>
         {
-            var raw = LoadPicture(ed, SolidBmp(2000, 1500, 255, 0, 0), 200, 150);
+            var raw = LoadPicture(ed, SolidBmp(2001, 1500, 255, 0, 0), 200, 150);
             Draw(ed);
             await Decoded(ed, raw);
             var small = Cache(ed).CachedBitmap(raw)!;
@@ -152,7 +155,7 @@ public class ControlImageDecodeTests
         UiThread.Run(() =>
         {
             // Loaded but never drawn — what a host does when it opens a file and prints it at once.
-            var raw = LoadPicture(ed, SolidBmp(64, 48, 255, 0, 0), 200, 150);
+            var raw = LoadPicture(ed, SolidBmp(66, 50, 255, 0, 0), 200, 150);
 
             using var page = ed.RenderPrintPage(0, 96);
             int red = CountRed(page);
