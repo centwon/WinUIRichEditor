@@ -90,6 +90,7 @@ public partial class RichEditor
         if (_textChangedPending)
         {
             _textChangedPending = false;
+            SweepRemovedImages();
             TextChanged?.Invoke(this, EventArgs.Empty);
             NotifyAutomation(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.TextPatternOnTextChanged);
         }

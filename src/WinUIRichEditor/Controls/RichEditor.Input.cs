@@ -1308,7 +1308,9 @@ public partial class RichEditor
 
     private void ApplyHistoryState(UndoState st)
     {
-        Document = st.Document; // fires OnDocumentChanged (wires parents, resets caret to first paragraph)
+        _applyingHistory = true; // OnDocumentChanged keeps the pictures this step removes (see ImageRetainBytes)
+        try { Document = st.Document; } // fires OnDocumentChanged (wires parents, resets caret to first paragraph)
+        finally { _applyingHistory = false; }
         var tp = _undo.GetPointerFromGlobalIndex(st.Document, st.CaretGlobalIndex);
         int off = Math.Clamp(st.CaretOffset, 0, GetParagraphLength(tp.Paragraph));
         _caret = new TextPointer(tp.Paragraph, off);
