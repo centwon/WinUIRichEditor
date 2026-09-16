@@ -9,17 +9,21 @@ internal readonly struct UndoState
     public FlowDocument Document { get; }
     public int CaretGlobalIndex { get; }
     public int CaretOffset { get; }
-    /// <summary>Approximate retained size of this snapshot: its element count times a measured
-    /// per-element cost (the text and any image bytes are shared with the live document, so they are not
-    /// charged). Used to bound total undo memory.</summary>
+    /// <summary>Approximate retained size of this snapshot's structure: its element count times a measured
+    /// per-element cost (the text is shared with the live document, so it is not charged). Image bytes are
+    /// charged separately when trimming — see <see cref="Images"/>. Used to bound total undo memory.</summary>
     public int ApproxBytes { get; }
+    /// <summary>Every distinct image byte array the snapshot references. Shared with the live document while
+    /// the picture is in it; once an edit removes the picture, the history is what keeps these alive.</summary>
+    public byte[][] Images { get; }
 
-    public UndoState(FlowDocument document, int caretGlobalIndex, int caretOffset, int approxBytes)
+    public UndoState(FlowDocument document, int caretGlobalIndex, int caretOffset, int approxBytes, byte[][] images)
     {
         Document = document;
         CaretGlobalIndex = caretGlobalIndex;
         CaretOffset = caretOffset;
         ApproxBytes = approxBytes;
+        Images = images;
     }
 }
 
@@ -60,10 +64,12 @@ internal class UndoManager
         if (currentDoc == null || currentCaret == null || currentCaret.Paragraph == null) return;
 
         int caretGlobal = GetGlobalIndex(currentDoc, currentCaret);
-        var clonedDoc = currentDoc.Clone();
+        var state = Snapshot(currentDoc, caretGlobal, currentCaret.Offset);
 
-        _undoStack.Push(new UndoState(clonedDoc, caretGlobal, currentCaret.Offset, EstimateBytes(clonedDoc)));
-        Trim(_undoStack);
+        _undoStack.Push(state);
+        // The snapshot was just cloned from the live document, so its pictures ARE the live ones. A picture
+        // the coming edit removes is charged from the next checkpoint on — one step late, never missed.
+        Trim(_undoStack, state.Images);
         _redoStack.Clear();
     }
 
@@ -71,32 +77,54 @@ internal class UndoManager
     {
         if (_undoStack.Count == 0) return null;
         int caretGlobal = GetGlobalIndex(currentDoc, currentCaret);
-        var clone = currentDoc.Clone();
-        _redoStack.Push(new UndoState(clone, caretGlobal, currentCaret.Offset, EstimateBytes(clone)));
-        Trim(_redoStack);
-        return _undoStack.Pop();
+        _redoStack.Push(Snapshot(currentDoc, caretGlobal, currentCaret.Offset));
+        var restored = _undoStack.Pop();
+        // The restored snapshot is the live document from here on. Only the stack that grew is trimmed: the
+        // other one just shrank, and it is trimmed again, against the live document then, whenever it grows.
+        Trim(_redoStack, restored.Images);
+        return restored;
     }
 
     public UndoState? Redo(FlowDocument currentDoc, TextPointer currentCaret)
     {
         if (_redoStack.Count == 0) return null;
         int caretGlobal = GetGlobalIndex(currentDoc, currentCaret);
-        var clone = currentDoc.Clone();
-        _undoStack.Push(new UndoState(clone, caretGlobal, currentCaret.Offset, EstimateBytes(clone)));
-        Trim(_undoStack);
-        return _redoStack.Pop();
+        _undoStack.Push(Snapshot(currentDoc, caretGlobal, currentCaret.Offset));
+        var restored = _redoStack.Pop();
+        Trim(_undoStack, restored.Images);
+        return restored;
+    }
+
+    private static UndoState Snapshot(FlowDocument doc, int caretGlobal, int caretOffset)
+    {
+        var clone = doc.Clone();
+        var (elements, images) = Scan(clone);
+        return new UndoState(clone, caretGlobal, caretOffset,
+            (int)System.Math.Min((long)elements * BytesPerElement, int.MaxValue), images);
     }
 
     // Keeps the newest states within both the count and byte budgets (but never fewer than MinSteps).
-    private void Trim(Stack<UndoState> stack)
+    //
+    // A state is charged its elements plus the image bytes that ONLY the history keeps alive: arrays the live
+    // document doesn't reference, each charged once — to the newest state holding it, since dropping older
+    // states can't free what a newer one still points at. Images used to be excluded outright, on the grounds
+    // that Clone shares them with the live document. That holds only while the picture is IN the document:
+    // measured 2026-09-16 (MemBaseline images mode), 18 photos inserted and deleted by editing left 67 MB of
+    // JPEG bytes in a history charged well under its 64 MB budget. Arrays are compared by reference, which
+    // can only overcharge (two equal pictures loaded separately), never let bytes through uncounted.
+    private void Trim(Stack<UndoState> stack, byte[][] liveImages)
     {
         if (stack.Count <= MinSteps) return;
+        var live = new HashSet<byte[]>(liveImages, ReferenceEqualityComparer.Instance);
+        var charged = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
         var arr = stack.ToArray(); // index 0 = newest (top)
         int keep = 0;
         long bytes = 0;
         for (int i = 0; i < arr.Length; i++)
         {
             bytes += arr[i].ApproxBytes;
+            foreach (var img in arr[i].Images)
+                if (!live.Contains(img) && charged.Add(img)) bytes += img.Length;
             bool withinBudget = keep < MaxStackSize && (bytes <= _maxBytes || keep < MinSteps);
             if (!withinBudget) break;
             keep++;
@@ -118,7 +146,7 @@ internal class UndoManager
     //
     // The cost tracks the ELEMENT COUNT at a stable ~155 bytes per block/inline across every shape
     // measured (155 paragraph-dominated, 120 inline-dominated; 40000 elements retained 6037 KB).
-    // Images stay excluded for the original reason: Clone reference-shares their bytes.
+    // Image bytes are charged separately, in Trim, and only when the history alone keeps them.
     //
     // Re-measure with UndoBudgetProbeTests if the model classes or the runtime change — the constant is
     // an observation, not a rule.
@@ -127,13 +155,21 @@ internal class UndoManager
     internal static int EstimateBytes(FlowDocument doc) // internal: covered directly by the test suite
         => (int)System.Math.Min((long)ElementCount(doc) * BytesPerElement, int.MaxValue);
 
-    // Blocks and inlines at any depth. A cell counts as an element itself, and an inline table's cells
+    internal static int ElementCount(FlowDocument doc) => Scan(doc).elements;
+
+    // Blocks and inlines at any depth, and the distinct image byte arrays among them — one walk for both,
+    // since every checkpoint pays it. A cell counts as an element itself, and an inline table's cells
     // hold real content that is deep-cloned with the snapshot — charging a flat placeholder for one made
     // a document whose content lives in inline tables look tiny, which is the exact case the budget
     // exists for. WalkParagraphs already recurses this way.
-    internal static int ElementCount(FlowDocument doc)
+    internal static (int elements, byte[][] images) Scan(FlowDocument doc)
     {
         int n = 0;
+        HashSet<byte[]>? images = null;
+        void Image(byte[]? bytes)
+        {
+            if (bytes != null) (images ??= new HashSet<byte[]>(ReferenceEqualityComparer.Instance)).Add(bytes);
+        }
         void Walk(IEnumerable<Block> blocks)
         {
             foreach (var b in blocks)
@@ -143,11 +179,13 @@ internal class UndoManager
                 {
                     n += p.Inlines.Count;
                     foreach (var inl in p.Inlines)
-                        if (inl is InlineTable it)
+                        if (inl is InlineImage ii) Image(ii.RawBytes);
+                        else if (inl is InlineTable it)
                             foreach (var row in it.Table.Cells)
                                 foreach (var cell in row)
                                 { n++; Walk(cell.Blocks); }
                 }
+                else if (b is ImageBlock ib) Image(ib.RawBytes);
                 else if (b is TableBlock tb)
                 {
                     foreach (var row in tb.Cells)
@@ -157,7 +195,7 @@ internal class UndoManager
             }
         }
         Walk(doc.Blocks);
-        return n;
+        return (n, images == null ? [] : [.. images]);
     }
 
     // Document-order paragraph walk shared by GetGlobalIndex / GetPointerFromGlobalIndex. The order and
