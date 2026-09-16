@@ -189,8 +189,9 @@ public partial class RichEditor : ContentControl
         ed.ClearLayoutCache();
         // Prune (not Clear): dispose bitmaps the new document doesn't reference. Undo/redo swaps in a
         // snapshot whose images share RawBytes with the cached entries, so those stay warm — no
-        // placeholder flash / full re-decode on every Ctrl+Z. A genuine document swap frees everything.
-        ed._images.Prune(ed.CollectLiveImageKeys());
+        // placeholder flash / full re-decode on every Ctrl+Z — and the pictures the step took out are
+        // kept within the edit budget, so the matching redo is warm too. A genuine swap frees everything.
+        ed._images.Prune(ed.CollectLiveImageKeys(), ed._applyingHistory ? ed.ImageRetainBytes : 0);
         ed.OnDocumentAssigned();
         ed.SyncPageSetupOnDocumentChanged(); // apply the loaded doc's page setup (or adopt current into it)
         ed.RelayoutToViewport();

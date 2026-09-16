@@ -89,28 +89,76 @@ internal sealed class ImageCache
         if (_decoded.TryGetValue(k, out var bmp)) bmp?.Dispose();
         _decoded.Remove(k);
         _inflight.Remove(k);
+        Unretire(k);
     }
 
-    /// <summary>Drops (and disposes) cache entries whose key is not in <paramref name="live"/> — called
-    /// with the set of RawBytes referenced by the current document, so a document swap frees the old
-    /// document's bitmaps while undo/redo (whose snapshots share RawBytes) keeps its cache warm.</summary>
-    public void Prune(HashSet<object> live)
+    // Entries the document no longer references but that are kept decoded anyway, oldest first, so undoing
+    // the edit that removed a picture finds it warm. Bounded by the retainBytes each Prune passes.
+    //
+    // Why this exists (measured 2026-09-16, MemBaseline images mode): Prune used to run only on a document
+    // swap, so a picture removed by EDITING — Delete, Backspace, cut, paste over it — stayed decoded until the
+    // next swap. Six 4000x3000 photos inserted and deleted three times held 18 full-size bitmaps with none
+    // in the document: Private bytes 112 -> 1404 MB. Disposing on the spot instead would re-decode (placeholder
+    // flash) on every Ctrl+Z of a delete, the reason a swap prunes rather than clears.
+    private readonly LinkedList<(object key, long bytes)> _retired = new();
+    private readonly Dictionary<object, LinkedListNode<(object key, long bytes)>> _retiredIndex = new();
+    private long _retiredBytes;
+
+    /// <summary>True when nothing is decoded or decoding — the edit-path sweep skips its document walk.</summary>
+    public bool IsEmpty => _decoded.Count == 0 && _inflight.Count == 0;
+
+    /// <summary>Drops cache entries whose key is not in <paramref name="live"/> — the set of RawBytes the
+    /// current document references. Entries leaving the document are kept, oldest disposed first, while their
+    /// decoded pixels total at most <paramref name="retainBytes"/>; 0 disposes every one of them (a genuine
+    /// document swap, a lost device). An entry back in the document (undo) stops counting against the budget.</summary>
+    public void Prune(HashSet<object> live, long retainBytes = 0)
     {
         // Map the live byte arrays to the cache's content-hash key space first.
         var liveKeys = new HashSet<object>();
         foreach (var k in live) liveKeys.Add(k is byte[] b ? KeyFor(b, k) : k);
 
-        var stale = new List<object>();
-        foreach (var k in _decoded.Keys) if (!liveKeys.Contains(k)) stale.Add(k);
-        foreach (var k in stale)
+        foreach (var (k, bmp) in _decoded)
         {
+            if (liveKeys.Contains(k)) Unretire(k);
+            else if (!_retiredIndex.ContainsKey(k))
+            {
+                long bytes = PixelBytes(bmp);
+                _retiredIndex[k] = _retired.AddLast((k, bytes));
+                _retiredBytes += bytes;
+            }
+        }
+        while (_retired.First is { } oldest && (retainBytes <= 0 || _retiredBytes > retainBytes))
+        {
+            var k = oldest.Value.key;
+            Unretire(k);
             if (_decoded.TryGetValue(k, out var bmp)) bmp?.Dispose();
             _decoded.Remove(k);
         }
         _inflight.RemoveWhere(k => !liveKeys.Contains(k)); // their decodes self-dispose on completion
     }
 
+    private void Unretire(object key)
+    {
+        if (!_retiredIndex.Remove(key, out var node)) return;
+        _retiredBytes -= node.Value.bytes;
+        _retired.Remove(node);
+    }
+
+    // What a decoded bitmap holds: 4 bytes per pixel (Win2D decodes to BGRA8). A failed decode holds nothing.
+    private static long PixelBytes(CanvasBitmap? bmp)
+    {
+        if (bmp == null) return 0;
+        var px = bmp.SizeInPixels;
+        return (long)px.Width * px.Height * 4;
+    }
+
+    // ---- test seams: decodes are async and device-bound, so tests place entries directly ----
+    internal int DecodedCount => _decoded.Count;
+    internal long RetiredBytes => _retiredBytes;
+    internal bool IsCached(byte[] rawBytes) => _decoded.ContainsKey(KeyFor(rawBytes, rawBytes));
+    internal void Seed(byte[] rawBytes, CanvasBitmap? bitmap) => _decoded[KeyFor(rawBytes, rawBytes)] = bitmap;
+
     // No Clear(): the document-swap path deliberately uses Prune(liveKeys) instead, so undo/redo
     // snapshots that share RawBytes keep their bitmaps warm (a Clear there caused a placeholder flash
-    // and a full re-decode on every Ctrl+Z). Prune with an empty set is a Clear if one is ever needed.
+    // and a full re-decode on every Ctrl+Z). Prune with an empty set (retainBytes 0) is a Clear.
 }

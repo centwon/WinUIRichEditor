@@ -114,8 +114,25 @@ public partial class RichEditor
         AfterEdit();
     }
 
+    // Decoded pictures an edit took out of the document stay cached up to this many pixel bytes, so undoing
+    // the edit doesn't re-decode them (ImageCache.Prune). The undo history's own budget is 64 MB too.
+    // internal, not const: tests shrink it instead of allocating 64 MB of bitmaps.
+    internal long ImageRetainBytes = 64L * 1024 * 1024;
+
+    // True while an undo/redo snapshot is being swapped in (ApplyHistoryState), which prunes like an edit.
+    private bool _applyingHistory;
+
+    // Releases the bitmaps of pictures an EDIT removed, called when an edit's TextChanged is flushed. Before
+    // this, only a document swap pruned, so deleted pictures stayed decoded until the next load (see
+    // ImageCache._retired). A document with no decoded picture pays nothing — not even the walk.
+    private void SweepRemovedImages()
+    {
+        if (_images.IsEmpty) return;
+        _images.Prune(CollectLiveImageKeys(), ImageRetainBytes);
+    }
+
     // Every RawBytes array the current document references (blocks, inline images, table cells at any
-    // nesting depth, inline tables) — the live-key set for ImageCache.Prune on a document swap.
+    // nesting depth, inline tables) — the live-key set for ImageCache.Prune.
     private HashSet<object> CollectLiveImageKeys()
     {
         var live = new HashSet<object>();
