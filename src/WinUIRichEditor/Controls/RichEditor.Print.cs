@@ -69,7 +69,13 @@ public partial class RichEditor
         _pageBreaks = ComputePageBreaks(PaperContentWidth, PaperContentHeight);
         _printMode = true;
         try { body(); }
-        finally { _layoutWidth = savedWidth; _pageBreaks = savedBreaks; _printMode = savedPrint; }
+        finally
+        {
+            _layoutWidth = savedWidth; _pageBreaks = savedBreaks; _printMode = savedPrint;
+            // Print-resolution bitmaps live for the print only. Everything that draws them — a render target,
+            // a command list added to the print control, the printer's session — has used them by now.
+            if (!savedPrint) _images.EndPrint();
+        }
     }
 
     private CanvasRenderTarget RenderPageToTarget(int pageIndex, double dpi, int pageCount)

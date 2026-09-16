@@ -156,9 +156,9 @@ public partial class RichEditor
             else if (block is ImageBlock img)
             {
                 double imgX = listIndent + img.Indent;
-                var bmp = _images.Get(_canvas, img, img.RawBytes, img.Image);
                 var (w, _) = BlockImageDims(img); // single source with measure/hit-test (no drift)
                 var rect = new Rect(imgX, y, w, h);
+                var bmp = ImageToDraw(ds, img, img.RawBytes, img.Image, rect);
                 if (bmp != null)
                     ds.DrawImage(bmp, rect);
                 else
@@ -363,7 +363,7 @@ public partial class RichEditor
                         double w = Math.Max(8, ii.Width > 0 ? ii.Width : 16);
                         double h = Math.Max(8, ii.Height > 0 ? ii.Height : 16);
                         var rect = new Rect(px + lb.X, oy + lb.Bottom - h, w, h);
-                        var bmp = _images.Get(_canvas, ii, ii.RawBytes, ii.Image);
+                        var bmp = ImageToDraw(ds, ii, ii.RawBytes, ii.Image, rect);
                         if (bmp != null) ds.DrawImage(bmp, rect);
                         else DrawPlaceholder(ds, rect, "");
                         TrackInlineImage(ds, p, ii, rect);

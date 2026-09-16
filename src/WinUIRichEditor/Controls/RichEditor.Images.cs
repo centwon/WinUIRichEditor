@@ -114,6 +114,25 @@ public partial class RichEditor
         AfterEdit();
     }
 
+    // Pictures print at up to this resolution (never above the source's own). 300 DPI is print quality; the
+    // print paths hand over DIP-based sessions, whose own scale would otherwise ask for screen resolution.
+    internal const double PrintImageDpi = 300;
+
+    // The bitmap to draw an image element with, decoded for the device pixels `rect` covers on `ds`: its
+    // transform (zoom, a print fit) times its DPI. Printing decodes synchronously at print resolution.
+    private Microsoft.Graphics.Canvas.CanvasBitmap? ImageToDraw(Microsoft.Graphics.Canvas.CanvasDrawingSession ds,
+        object element, byte[]? rawBytes, Microsoft.Graphics.Canvas.CanvasBitmap? already, Windows.Foundation.Rect rect)
+    {
+        var m = ds.Transform;
+        double scale = Math.Max(Math.Sqrt(m.M11 * m.M11 + m.M12 * m.M12), Math.Sqrt(m.M21 * m.M21 + m.M22 * m.M22))
+            * ds.Dpi / 96.0;
+        if (_printMode) scale = Math.Max(scale, PrintImageDpi / 96.0);
+        int w = (int)Math.Ceiling(Math.Max(1, rect.Width) * scale), h = (int)Math.Ceiling(Math.Max(1, rect.Height) * scale);
+        return _printMode
+            ? _images.GetForPrint(element, rawBytes, already, w, h)
+            : _images.Get(_canvas, element, rawBytes, already, w, h);
+    }
+
     // Decoded pictures an edit took out of the document stay cached up to this many pixel bytes, so undoing
     // the edit doesn't re-decode them (ImageCache.Prune). The undo history's own budget is 64 MB too.
     // internal, not const: tests shrink it instead of allocating 64 MB of bitmaps.
