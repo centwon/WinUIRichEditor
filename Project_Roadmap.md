@@ -59,7 +59,7 @@
   live = push 시 새 스냅샷 자신(지운 그림은 한 단계 늦게 청구), undo/redo 시 복원되는 상태. 커진 쪽 스택만 트림.
   하네스(6사이클, 36장): managed가 133MB로 유지되던 구간에서 67MB로 수렴. 테스트 744 → 748, 반증 4종(청구 제거 2 · live도
   청구 2 · 상태마다 중복 청구 1 · undo 시 live 오지정 1) 전부 빨강. 전체 스위트 1회 `ControlContextMenuTests.TheMenus_HaveNoRemoveList_AndNoCopyCell`
-  실패(1분44초로 느린 회차) — 단독·전체 재실행 통과, 원인 미확인. **상류도 같은 주석·같은 구멍**(모델이 디코드 비트맵까지 보유) → 백포트 후보.
+  실패(1분44초로 느린 회차) — 단독·전체 재실행 통과, 원인 미확인. **상류도 같은 주석·같은 구멍**(모델이 디코드 비트맵까지 보유) → 백포트 완료: 상류 PR #38(바이트 + 캐시된 비트맵 청구).
 - 이하는 A 착수 전 메모: (표시 크기×DPI 상한 디코드, 인쇄 경로
   `DrawContentWalk`가 같은 캐시를 씀에 주의; 상류는 삽입 시 1920×1080 축소로 **데이터를** 바꾼다 — 포트는 원본 보존 유지).
   재현: `MEMTEST_MODE=images MEMTEST_IMGPX=4000x3000 MEMTEST_COUNT=6 MEMTEST_CYCLES=3`, Release, 로그 `%TEMP%\membaseline_images.txt`.
