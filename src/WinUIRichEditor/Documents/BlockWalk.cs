@@ -60,6 +60,19 @@ internal static class BlockWalk
                 yield return p;
     }
 
+    /// <summary>The encoded bytes of every picture under <paramref name="blocks"/> (block and inline, at any
+    /// depth) — what the text formatters size their output by, since a picture dominates it.</summary>
+    internal static IEnumerable<byte[]> PictureBytes(IEnumerable<Block> blocks)
+    {
+        foreach (var block in DocumentOrder(blocks))
+        {
+            if (block is ImageBlock { RawBytes: { } ib }) yield return ib;
+            else if (block is Paragraph p)
+                foreach (var inline in p.Inlines)
+                    if (inline is InlineImage { RawBytes: { } ii }) yield return ii;
+        }
+    }
+
     /// <summary>True when <paramref name="block"/> is <paramref name="paragraph"/> or holds it at any
     /// depth (through table cells and inline tables).</summary>
     internal static bool Holds(Block block, Paragraph paragraph)

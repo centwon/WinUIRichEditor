@@ -6,6 +6,17 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — copying a picture allocates less than half as much (2026-09-16)
+
+- Copy puts the selection on the clipboard as HTML (the picture as base64) and RTF (as hex). Both writers built each
+  picture as strings of the whole payload several times over — the encoded text, the tag around it, the paragraph
+  around that, the builder growing, the final string, the clipboard `<div>`/RTF header wrap. Copying one 10 MB picture
+  allocated **352 MB** (`CopyAllocationProbeTests`, `RICHEDITOR_PERF=1`).
+- The encoders now write a slice at a time into a builder sized for the payload, and the wrappers write into the same
+  builder: **160 MB** for the same copy (HTML 166 → 54, RTF 160 → 80). Output is unchanged byte for byte.
+- The HTML is handed to the clipboard package before the RTF is built, so the two payloads aren't held at once.
+- Also applies to `HtmlDocumentFormatter.ToHtml` and `RtfDocumentFormatter.Write` for files. No public API change.
+
 ### Fixed — 되돌리기 기록이 지운 그림의 원본 바이트를 메모리 예산 밖에서 붙잡았다 (2026-09-16)
 
 - 되돌리기 기록의 64MB 예산은 그림 바이트를 "살아 있는 문서와 공유된다"며 계산에서 뺐다. 그림이 문서에 있는 동안은

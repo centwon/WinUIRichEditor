@@ -962,7 +962,27 @@ public static class HtmlDocumentFormatter
     /// <summary>Serializes <paramref name="doc"/> to an HTML string.</summary>
     public static string ToHtml(FlowDocument doc)
     {
-        var sb = new StringBuilder();
+        var sb = new StringBuilder(EstimateCapacity(doc));
+        AppendHtml(sb, doc);
+        return sb.ToString();
+    }
+
+    // Pictures are written as base64 data URIs, so a document's HTML is about 4/3 of its image bytes in chars.
+    // A builder sized for that up front is ONE allocation of the payload; left to grow, it re-allocated on the
+    // way up, and every picture's tag used to be built as its own strings first (the base64, then the <img>,
+    // then the <p> around it). Measured 2026-09-16 (CopyAllocationProbeTests): copying one 10 MB picture
+    // allocated 166 MB building its HTML.
+    internal static int EstimateCapacity(FlowDocument doc)
+    {
+        long chars = 4096;
+        foreach (var bytes in BlockWalk.PictureBytes(doc.Blocks)) chars += (bytes.Length + 2) / 3 * 4 + 256;
+        return (int)Math.Min(chars, int.MaxValue / 2);
+    }
+
+    /// <summary>Appends the HTML for <paramref name="doc"/> to <paramref name="sb"/> — for a caller wrapping it
+    /// (the clipboard's selection &lt;div&gt;), which would otherwise copy the whole payload once more.</summary>
+    internal static void AppendHtml(StringBuilder sb, FlowDocument doc)
+    {
         var lists = new ListNesting(sb);
 
         foreach (var block in doc.Blocks)
@@ -986,11 +1006,12 @@ public static class HtmlDocumentFormatter
             else if (block is ImageBlock ib && (ib.RawBytes != null || ib.Image != null))
             {
                 lists.CloseAll();
-                sb.Append($"<p>{ImgTag(ib.RawBytes, ib.MimeType, ib.RawBytes == null ? ib.Image : null, ib.Width, ib.Height, ib.AltText)}</p>\n");
+                sb.Append("<p>");
+                AppendImgTag(sb, ib.RawBytes, ib.MimeType, ib.RawBytes == null ? ib.Image : null, ib.Width, ib.Height, ib.AltText);
+                sb.Append("</p>\n");
             }
         }
         lists.CloseAll();
-        return sb.ToString();
     }
 
     // Opens and closes the <ul>/<ol> nesting around a run of list-item paragraphs. One instance per block
@@ -1177,7 +1198,7 @@ public static class HtmlDocumentFormatter
                             EmitInline(sb, plain.Inlines[i], i == 0, i == plain.Inlines.Count - 1);
                     }
                     else if (cblk is ImageBlock cib && (cib.RawBytes != null || cib.Image != null))
-                    { cellLists.CloseAll(); sb.Append(ImgTag(cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText)); }
+                    { cellLists.CloseAll(); AppendImgTag(sb, cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText); }
                     else if (cblk is TableBlock nt)
                         // tight: a <td>'s content is parsed as inline, so the pretty-printing newline
                         // after a nested </table> lands INSIDE the cell as a whitespace text node and
@@ -1215,7 +1236,7 @@ public static class HtmlDocumentFormatter
     {
         if (inline is InlineImage im && (im.RawBytes != null || im.Image != null))
         {
-            sb.Append(ImgTag(im.RawBytes, im.MimeType, im.RawBytes == null ? im.Image : null, im.Width, im.Height, im.AltText, opensParagraph));
+            AppendImgTag(sb, im.RawBytes, im.MimeType, im.RawBytes == null ? im.Image : null, im.Width, im.Height, im.AltText, opensParagraph);
             return;
         }
         if (inline is InlineTable itbl)
@@ -1339,27 +1360,49 @@ public static class HtmlDocumentFormatter
     // a bitmap set without bytes is PNG-encoded. `alt` round-trips the accessibility description.
     // `opensParagraph` carries the same meaning as it does for an inline table: this image was the FIRST
     // thing in its paragraph, so on import there is no earlier paragraph of its own to rejoin.
-    private static string ImgTag(byte[]? raw, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp, double w, double h, string? alt = null, bool opensParagraph = false)
+    private static void AppendImgTag(StringBuilder sb, byte[]? raw, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp, double w, double h, string? alt = null, bool opensParagraph = false)
     {
-        string b64, m;
+        byte[] data;
+        string m;
         if (raw != null)
         {
-            b64 = System.Convert.ToBase64String(raw);
+            data = raw;
             m = mime ?? "image/png";
         }
         else if (bmp != null)
         {
             var encoded = ImageEncoder.ToPngBytes(bmp);
-            if (encoded == null) return "";
-            b64 = System.Convert.ToBase64String(encoded);
+            if (encoded == null) return;
+            data = encoded;
             m = "image/png";
         }
-        else return "";
-        string size = "";
-        if (!double.IsNaN(w) && w > 0) size += $" width=\"{(int)w}\"";
-        if (!double.IsNaN(h) && h > 0) size += $" height=\"{(int)h}\"";
-        if (!string.IsNullOrEmpty(alt)) size += $" alt=\"{AttrEscape(alt)}\"";
-        if (opensParagraph) size += " data-are-opens=\"1\"";
-        return $"<img src=\"data:{m};base64,{b64}\"{size}/>";
+        else return;
+        sb.Append("<img src=\"data:").Append(m).Append(";base64,");
+        AppendBase64(sb, data);
+        sb.Append('"');
+        if (!double.IsNaN(w) && w > 0) sb.Append(" width=\"").Append((int)w).Append('"');
+        if (!double.IsNaN(h) && h > 0) sb.Append(" height=\"").Append((int)h).Append('"');
+        if (!string.IsNullOrEmpty(alt)) sb.Append(" alt=\"").Append(AttrEscape(alt)).Append('"');
+        if (opensParagraph) sb.Append(" data-are-opens=\"1\"");
+        sb.Append("/>");
+    }
+
+    // Base64 straight into the builder, a slice at a time: no string of the whole payload is ever made.
+    // Slices are whole multiples of 3 bytes, so no padding appears between them.
+    internal static void AppendBase64(StringBuilder sb, ReadOnlySpan<byte> data)
+    {
+        const int SliceBytes = 3 * 16 * 1024;
+        char[] chars = System.Buffers.ArrayPool<char>.Shared.Rent(SliceBytes / 3 * 4);
+        try
+        {
+            while (!data.IsEmpty)
+            {
+                var slice = data[..Math.Min(SliceBytes, data.Length)];
+                Convert.TryToBase64Chars(slice, chars, out int written);
+                sb.Append(chars, 0, written);
+                data = data[slice.Length..];
+            }
+        }
+        finally { System.Buffers.ArrayPool<char>.Shared.Return(chars); }
     }
 }
