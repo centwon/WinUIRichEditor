@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Windows.Storage.Streams;
 using Microsoft.Graphics.Canvas;
 using WinUIRichEditor.Documents;
 
 namespace WinUIRichEditor.Controls;
 
 /// <summary>Decodes image bytes to device-bound <see cref="CanvasBitmap"/>s off the render path.
-/// A Win2D bitmap is async + device-bound, unlike Avalonia's synchronous device-free <c>Bitmap</c>,
+/// A Win2D bitmap is device-bound, unlike Avalonia's device-free <c>Bitmap</c>,
 /// so the model keeps the encoded <c>RawBytes</c> and this cache holds the decoded GPU bitmap.
 /// <see cref="Get"/> returns null until the decode finishes, then fires <see cref="OnReady"/> so the
 /// control can repaint. Keyed by the bytes' CONTENT hash: pasting the same picture twice (distinct
@@ -17,16 +16,25 @@ namespace WinUIRichEditor.Controls;
 /// array identity (<see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/>),
 /// so the per-draw <see cref="Get"/>
 /// never rehashes. It never mutates the model's <c>RawBytes</c> (the <c>Image</c> setter would
-/// discard them).</summary>
+/// discard them).
+/// <para>Pictures are decoded to the pixel size they are DRAWN at (<see cref="ImageDecoder"/>), with headroom,
+/// and re-decoded larger when a draw asks for more (zoom in, a resize handle) — the old bitmap keeps drawing
+/// until the sharper one lands. Printing decodes synchronously at print resolution into bitmaps that live only
+/// for the print (<see cref="GetForPrint"/> / <see cref="EndPrint"/>).</para></summary>
 internal sealed class ImageCache
 {
     private readonly Dictionary<object, CanvasBitmap?> _decoded = new(); // value null = decode failed
+    // Keys whose bitmap is the source's full size: no request can get more detail, so none re-decodes.
+    private readonly HashSet<object> _atSourceSize = new();
     private readonly HashSet<object> _inflight = new();
     // Array identity -> content-hash key, computed once per array (weak: dropped with the array).
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte[], string> _hashOf = new();
 
     /// <summary>Raised on the UI thread when a decode completes (the control re-invalidates).</summary>
     public event Action? OnReady;
+
+    // Decodes aim this much above the requested size, so a slow zoom doesn't re-decode on every notch.
+    internal const double Headroom = 1.25;
 
     // The cache key for an image: content hash of its bytes (memoized per array), or the element
     // itself when there are no bytes. Callers passing byte[] keys (Invalidate/Prune) map through this
@@ -43,40 +51,107 @@ internal sealed class ImageCache
     }
 
     /// <summary>Returns the decoded bitmap for an image element, or null while decoding/failed.
-    /// <paramref name="already"/> is an in-model bitmap (the rare "set a bitmap directly" path).</summary>
-    public CanvasBitmap? Get(ICanvasResourceCreator device, object key, byte[]? rawBytes, CanvasBitmap? already)
+    /// <paramref name="already"/> is an in-model bitmap (the rare "set a bitmap directly" path).
+    /// <paramref name="pixelWidth"/> × <paramref name="pixelHeight"/> is the device-pixel size it is about to
+    /// be drawn at: a cached bitmap smaller than that is still returned, and a sharper one is decoded behind it.</summary>
+    public CanvasBitmap? Get(ICanvasResourceCreator device, object key, byte[]? rawBytes, CanvasBitmap? already,
+        int pixelWidth, int pixelHeight)
     {
         if (already != null) return already;
         object k = KeyFor(rawBytes, key);
-        if (_decoded.TryGetValue(k, out var bmp)) return bmp;
+        if (_decoded.TryGetValue(k, out var bmp))
+        {
+            if (bmp != null && rawBytes != null && NeedsMore(k, bmp, pixelWidth, pixelHeight) && _inflight.Add(k))
+                _ = DecodeAsync(device, k, rawBytes, pixelWidth, pixelHeight);
+            return bmp;
+        }
         if (rawBytes != null && _inflight.Add(k))
-            _ = DecodeAsync(device, k, rawBytes);
+            _ = DecodeAsync(device, k, rawBytes, pixelWidth, pixelHeight);
         return null;
     }
 
-    private async Task DecodeAsync(ICanvasResourceCreator device, object key, byte[] rawBytes)
+    // +1 in Smaller: rounding between the request and the aspect-fitted size.
+    private bool NeedsMore(object key, CanvasBitmap bmp, int w, int h)
+        => !_atSourceSize.Contains(key) && Smaller(bmp, w, h);
+
+    private static (int w, int h) Target(int w, int h)
+        => ((int)Math.Ceiling(Math.Max(1, w) * Headroom), (int)Math.Ceiling(Math.Max(1, h) * Headroom));
+
+    private async Task DecodeAsync(ICanvasResourceCreator device, object key, byte[] rawBytes, int w, int h)
     {
+        var (tw, th) = Target(w, h);
+        (byte[] Pixels, int Width, int Height, int NaturalWidth, int NaturalHeight)? decoded = null;
+        try { decoded = await Task.Run(() => ImageDecoder.Decode(rawBytes, tw, th)); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+        // If the key was invalidated/cleared/pruned while decoding, don't resurrect a stale entry.
+        if (!_inflight.Remove(key)) return;
         CanvasBitmap? result = null;
+        try { if (decoded is { } d) result = CreateBitmap(device, d.Pixels, d.Width, d.Height); }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+
+        if (_decoded.TryGetValue(key, out var old) && old != null)
+        {
+            if (result == null) return; // a failed UPGRADE keeps the picture it has
+            old.Dispose();
+        }
+        Unretire(key); // its recorded size is stale; the next Prune measures it again
+        _decoded[key] = result; // null = undecodable: cached so it isn't retried every frame
+        if (decoded is { } full && full.Width == full.NaturalWidth && full.Height == full.NaturalHeight) _atSourceSize.Add(key);
+        else _atSourceSize.Remove(key);
+        OnReady?.Invoke();
+    }
+
+    private static CanvasBitmap CreateBitmap(ICanvasResourceCreator device, byte[] pixels, int w, int h)
+        => CanvasBitmap.CreateFromBytes(device, pixels, w, h,
+            Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized, 96, CanvasAlphaMode.Premultiplied);
+
+    // ---- printing ----------------------------------------------------------------------------------------
+
+    // Bitmaps decoded for the print in progress. Separate from _decoded so a print at 300 DPI doesn't leave
+    // screen memory holding print-sized pictures; EndPrint disposes them.
+    // full = the source's own size, so a bigger request on a later page can't get more from a re-decode.
+    private readonly Dictionary<object, (CanvasBitmap? bmp, bool full)> _print = new();
+
+    /// <summary>The bitmap to print an image element with, decoded NOW if the screen cache has nothing sharp
+    /// enough — printing draws synchronously, and an async decode would print the loading placeholder.</summary>
+    public CanvasBitmap? GetForPrint(object key, byte[]? rawBytes, CanvasBitmap? already, int pixelWidth, int pixelHeight)
+    {
+        if (already != null) return already;
+        object k = KeyFor(rawBytes, key);
+        if (_decoded.TryGetValue(k, out var screen) && screen != null && !NeedsMore(k, screen, pixelWidth, pixelHeight))
+            return screen;
+        if (_print.TryGetValue(k, out var printed)
+            && (printed.bmp == null || printed.full || !Smaller(printed.bmp, pixelWidth, pixelHeight)))
+            return printed.bmp ?? screen;
+        if (rawBytes == null) return screen;
+
+        CanvasBitmap? result = null;
+        bool full = false;
         try
         {
-            using var stream = new InMemoryRandomAccessStream();
-            using (var writer = new DataWriter(stream))
+            if (ImageDecoder.Decode(rawBytes, pixelWidth, pixelHeight) is { } d)
             {
-                writer.WriteBytes(rawBytes);
-                await writer.StoreAsync();
-                await writer.FlushAsync();
-                writer.DetachStream();
+                result = CreateBitmap(CanvasDevice.GetSharedDevice(), d.Pixels, d.Width, d.Height);
+                full = d.Width == d.NaturalWidth && d.Height == d.NaturalHeight;
             }
-            stream.Seek(0);
-            result = await CanvasBitmap.LoadAsync(device, stream);
         }
-        // undecodable: cache the failure so we don't retry every frame
-        catch (Exception ex) { RichEditorDiagnostics.Report(ex); result = null; }
-        // If the key was invalidated/cleared/pruned while decoding, don't resurrect a stale entry —
-        // dispose the freshly decoded bitmap instead of publishing it.
-        if (!_inflight.Remove(key)) { result?.Dispose(); return; }
-        _decoded[key] = result;
-        OnReady?.Invoke();
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+        printed.bmp?.Dispose();
+        _print[k] = (result, full);
+        return result ?? screen;
+    }
+
+    private static bool Smaller(CanvasBitmap bmp, int w, int h)
+    {
+        var px = bmp.SizeInPixels;
+        return w > px.Width + 1 || h > px.Height + 1;
+    }
+
+    /// <summary>Disposes the bitmaps decoded for the print that just finished.</summary>
+    public void EndPrint()
+    {
+        foreach (var (bmp, _) in _print.Values) bmp?.Dispose();
+        _print.Clear();
     }
 
     /// <summary>Drops the cached bitmap for one element so its (changed) bytes are re-decoded.
@@ -86,10 +161,16 @@ internal sealed class ImageCache
     public void Invalidate(object key)
     {
         object k = key is byte[] b ? KeyFor(b, key) : key;
-        if (_decoded.TryGetValue(k, out var bmp)) bmp?.Dispose();
-        _decoded.Remove(k);
+        Evict(k);
         _inflight.Remove(k);
-        Unretire(k);
+    }
+
+    private void Evict(object key)
+    {
+        if (_decoded.TryGetValue(key, out var bmp)) bmp?.Dispose();
+        _decoded.Remove(key);
+        _atSourceSize.Remove(key);
+        Unretire(key);
     }
 
     // Entries the document no longer references but that are kept decoded anyway, oldest first, so undoing
@@ -128,13 +209,8 @@ internal sealed class ImageCache
             }
         }
         while (_retired.First is { } oldest && (retainBytes <= 0 || _retiredBytes > retainBytes))
-        {
-            var k = oldest.Value.key;
-            Unretire(k);
-            if (_decoded.TryGetValue(k, out var bmp)) bmp?.Dispose();
-            _decoded.Remove(k);
-        }
-        _inflight.RemoveWhere(k => !liveKeys.Contains(k)); // their decodes self-dispose on completion
+            Evict(oldest.Value.key);
+        _inflight.RemoveWhere(k => !liveKeys.Contains(k)); // their decodes discard themselves on completion
     }
 
     private void Unretire(object key)
@@ -144,7 +220,7 @@ internal sealed class ImageCache
         _retired.Remove(node);
     }
 
-    // What a decoded bitmap holds: 4 bytes per pixel (Win2D decodes to BGRA8). A failed decode holds nothing.
+    // What a decoded bitmap holds: 4 bytes per pixel (BGRA8). A failed decode holds nothing.
     private static long PixelBytes(CanvasBitmap? bmp)
     {
         if (bmp == null) return 0;
@@ -156,7 +232,15 @@ internal sealed class ImageCache
     internal int DecodedCount => _decoded.Count;
     internal long RetiredBytes => _retiredBytes;
     internal bool IsCached(byte[] rawBytes) => _decoded.ContainsKey(KeyFor(rawBytes, rawBytes));
-    internal void Seed(byte[] rawBytes, CanvasBitmap? bitmap) => _decoded[KeyFor(rawBytes, rawBytes)] = bitmap;
+    internal bool IsDecoding(byte[] rawBytes) => _inflight.Contains(KeyFor(rawBytes, rawBytes));
+    internal CanvasBitmap? CachedBitmap(byte[] rawBytes) => _decoded.GetValueOrDefault(KeyFor(rawBytes, rawBytes));
+    // Seeded entries count as source-size, so a draw never starts a real decode that would replace them.
+    internal void Seed(byte[] rawBytes, CanvasBitmap? bitmap)
+    {
+        var k = KeyFor(rawBytes, rawBytes);
+        _decoded[k] = bitmap;
+        _atSourceSize.Add(k);
+    }
 
     // No Clear(): the document-swap path deliberately uses Prune(liveKeys) instead, so undo/redo
     // snapshots that share RawBytes keep their bitmaps warm (a Clear there caused a placeholder flash

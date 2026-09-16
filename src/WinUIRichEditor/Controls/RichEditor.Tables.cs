@@ -396,8 +396,8 @@ public partial class RichEditor
                 case ImageBlock cimg:
                 {
                     var (iw, _) = CellImageSize(cimg, innerW);
-                    var bmp = _images.Get(_canvas, cimg, cimg.RawBytes, cimg.Image);
                     var ir = new Rect(ox, slot.Y, iw, slot.Height);
+                    var bmp = ImageToDraw(ds, cimg, cimg.RawBytes, cimg.Image, ir);
                     if (bmp != null) ds.DrawImage(bmp, ir); else DrawPlaceholder(ds, ir, "");
                     TrackCellImage(ds, cimg, ir); // selection/resize registry — see _cellImageRects
                     break;
