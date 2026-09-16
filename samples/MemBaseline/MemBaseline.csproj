@@ -12,6 +12,8 @@
     <WinUISDKReferences>false</WinUISDKReferences>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- GpuMemory calls DXGI through vtable function pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <!-- Unpackaged, framework-dependent (relies on the WinAppSDK runtime installed on this dev box).
          Framework-dependent avoids the self-contained PRI277 merge, so no PRI-strip workaround needed

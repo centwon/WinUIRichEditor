@@ -18,6 +18,8 @@ namespace MemBaseline;
 ///   editor    — one empty RichEditor (fixed control + Win2D device cost)
 ///   editorbig — one RichEditor with a large parsed document (variable per-content cost)
 ///   reclaim   — load big doc, then clear it + GC, logging WS before/after (reclaim/leak check)
+///   images    — insert photos / delete them by EDITING / swap / drop history, logging Priv AND GPU memory
+///               (see ImageScenario)
 /// Results are read externally via Get-Process; reclaim mode also writes a small text log.
 /// </summary>
 public sealed class MainWindow : Window
@@ -76,6 +78,11 @@ public sealed class MainWindow : Window
                 var fragDoc = HtmlDocumentFormatter.ParseHtml(FragHtml(parasF, 20));
                 editor.Document = fragDoc;
                 LogRunCount(fragDoc, parasF);
+                break;
+            case "images":
+                AppWindow.Resize(new Windows.Graphics.SizeInt32(1400, 1000)); // every inserted photo on screen, so every one decodes
+                editor.Document = new FlowDocument();
+                editor.Loaded += async (_, _) => await new ImageScenario(editor).RunAsync();
                 break;
             case "reclaim":
                 editor.Document = HtmlDocumentFormatter.ParseHtml(BigHtml(200));
