@@ -93,5 +93,10 @@ public partial class RichEditor
         RestartBlink();
         _automationPeer?.NotifyReadOnlyChanged(!readOnly, readOnly); // let assistive tech know
         InvalidateCanvas();
+        // The toolbar re-reads IsReadOnly on StatusChanged (edit toolbar ⇄ view toolbar), and this did not raise
+        // it: a host that made the editor read-only at run time kept the whole edit toolbar — Import included,
+        // which replaces the viewer's document — until the next caret move (measured 2026-09-19). Same channel
+        // as the feature flags (OnToolbarFlagChanged); upstream's toolbar subscribes to the property itself.
+        RaiseStatusChanged();
     }
 }
