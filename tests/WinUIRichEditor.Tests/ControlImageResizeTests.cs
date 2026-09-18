@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -177,6 +177,55 @@ public class ControlImageResizeTests
             var after = DrawnRect(ed, img);
             Assert.Equal(before.Width, after.Width, 1);
             Assert.Equal(before.Height + 30, after.Height, 1);
+        });
+    }
+
+    // A picture that fills its cell has its right-edge handle ON the column boundary. The selected picture's
+    // handle wins there (the peer's order, decided 2026-09-19) — with the boundary first, the handle could not be
+    // grabbed at all. Unselected, or along the boundary away from the handle, the column is grabbed as before.
+    [Fact]
+    public void OnAColumnBoundary_ASelectedPicturesHandleWins_AndOnlyThere()
+    {
+        Hosted(ed =>
+        {
+            var tb = new TableBlock(1, 2);
+            tb.ColumnWidths[0] = 150; tb.ColumnWidths[1] = 150;
+            tb.Cells[0][0].Blocks.Insert(0, Picture(400, 300)); // wider than the cell: drawn at the cell's width
+            Load(ed, tb);
+            var table = ed.Document!.Blocks.OfType<TableBlock>().Single();
+            var img = table.Cells[0][0].Blocks.OfType<ImageBlock>().Single();
+            Select(ed, img);
+            var rect = DrawnRect(ed, img);
+            var bands = ((System.Collections.IEnumerable)((System.Collections.IDictionary)T.GetField("_columnBoundaries", NP)!
+                .GetValue(ed)!)[table]!).Cast<object>().Select(o => (Rect)o.GetType().GetFields()[^1].GetValue(o)!).ToList();
+            bool OnColumn(Point p) => bands.Any(b => b.Contains(p));
+
+            // The cell pads the picture in from the boundary, so the overlap is where the handle's grab area
+            // meets the boundary's band: the band's middle, at the handle's height.
+            var band = bands.OrderBy(b => Math.Abs(b.X + b.Width / 2 - rect.Right)).First();
+            var onHandle = new Point(band.X + band.Width / 2, rect.Top + rect.Height / 2);
+            Assert.Equal(Grip.Right, RichEditor.GripAt(rect, onHandle));
+            bool Resizing(string field) => T.GetField(field, NP)!.GetValue(ed) is true or ImageBlock;
+            void Release() { Call(ed, "FinishImageResize"); Call(ed, "FinishColumnResize"); }
+
+            Assert.True(OnColumn(onHandle), "the handle is not on the column boundary — this test proves nothing");
+
+            Assert.True(ed.BeginResizeDragAt(onHandle));
+            Assert.True(Resizing("_resizingImage"), "the selected picture's handle must win on the boundary");
+            Assert.False(Resizing("_resizingColumn"));
+            Release();
+
+            var alongBoundary = new Point(onHandle.X, rect.Top + 2); // on the boundary, clear of every handle
+            Assert.True(OnColumn(alongBoundary));
+            Assert.True(ed.BeginResizeDragAt(alongBoundary));
+            Assert.True(Resizing("_resizingColumn"), "away from the handles the boundary is grabbed as before");
+            Release();
+
+            T.GetField("_selectedBlock", NP)!.SetValue(ed, null);
+            Draw(ed);
+            Assert.True(ed.BeginResizeDragAt(onHandle));
+            Assert.True(Resizing("_resizingColumn"), "an unselected picture has no handle to win");
+            Release();
         });
     }
 
