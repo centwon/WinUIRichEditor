@@ -174,6 +174,7 @@ public partial class RichEditor
         _resizingRow = false; _resizingRowTable = null;
         _dragUndoPending = false;
         CancelObjectDrag(); // the dragged object is the old document's; a release would drop it into the new one
+        CancelTableDraw();  // an armed "draw table" pick too: its first click would insert into the new document
         // State that belongs to the document being replaced: an armed format painter would paint the NEW
         // document's next selection with the OLD one's format, and a pending caret style would land on the
         // new document's first typed text (upstream's ResetInteractionState drops the latter the same way).
@@ -514,6 +515,7 @@ public partial class RichEditor
         if (_resizingRow) FinishRowResize();
         if (_resizingImage != null || _resizingInline != null) FinishImageResize();
         CancelObjectDrag();
+        if (_tableDrawStart != null) CancelTableDraw(); // abandoned, not inserted: a lost capture is not a release
         if (_isSelecting) { _isSelecting = false; StopAutoScroll(); }
     }
 

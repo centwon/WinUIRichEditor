@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -292,7 +293,14 @@ public partial class RichEditorToolbar
         var buffer = await FileIO.ReadBufferAsync(file);
         byte[] bytes = new byte[buffer.Length];
         using (var reader = DataReader.FromBuffer(buffer)) reader.ReadBytes(bytes);
-        if (bytes.Length == 0) return;
+        await ImportBytesAsync(bytes);
+    }
+
+    /// <summary>Loads an imported file's bytes into the target, whatever format they are — Import minus its
+    /// picker, so a test can hand it the bytes of any file.</summary>
+    internal async Task ImportBytesAsync(byte[] bytes)
+    {
+        if (Target == null || bytes.Length == 0) return;
 
         // Sniff the content: ZIP magic ("PK") = .flow package, "{\rtf" = RTF, "<" = HTML, else JSON.
         // Faults land in ImportAsync's guard; the RTF branch reports through TryParse before that.
@@ -303,19 +311,37 @@ public partial class RichEditorToolbar
             return;
         }
 
-        string latin1 = System.Text.Encoding.Latin1.GetString(bytes);
-        string utf8 = System.Text.Encoding.UTF8.GetString(bytes);
+        // A byte-order mark goes before the sniff. Windows tools write one (Notepad before 1903, Visual Studio,
+        // PowerShell 5's -Encoding utf8, "Unicode" = UTF-16), and it is not whitespace to TrimStart: the sniff
+        // saw neither "<" nor "{\rtf" and every such file went to the JSON reader, which failed on it
+        // (measured 2026-09-19: HTML, JSON and RTF with a UTF-8 BOM, HTML and JSON in UTF-16 — all five).
+        // The failure lands in the diagnostics channel only, so on screen the import did nothing.
+        var (encoding, bom) = TextEncodingOf(bytes);
+        string text = encoding.GetString(bytes, bom, bytes.Length - bom);
+
         // RTF is parsed here rather than through LoadRtf so a damaged file reports on the same channel
         // as every other import fault: LoadRtf deliberately keeps the open document and stays silent,
-        // which on a file-open reads as "nothing happened".
-        if (RtfDocumentFormatter.LooksLikeRtf(latin1))
+        // which on a file-open reads as "nothing happened". RTF is 7-bit ASCII with its own escapes, so
+        // its bytes are read as Latin1 (one char per byte), whatever mark precedes them.
+        if (RtfDocumentFormatter.LooksLikeRtf(text))
         {
-            if (RtfDocumentFormatter.TryParse(latin1, out var rtfDoc, out var rtfError))
+            string rtf = encoding is UTF8Encoding ? System.Text.Encoding.Latin1.GetString(bytes, bom, bytes.Length - bom) : text;
+            if (RtfDocumentFormatter.TryParse(rtf, out var rtfDoc, out var rtfError))
                 Target.LoadDocument(rtfDoc);
             else
                 System.Diagnostics.Debug.WriteLine($"Import failed: {rtfError}");
         }
-        else if (utf8.TrimStart().StartsWith("<", StringComparison.Ordinal)) Target.LoadHtml(utf8);
-        else await Target.LoadJsonAsync(utf8);
+        else if (text.TrimStart().StartsWith("<", StringComparison.Ordinal)) Target.LoadHtml(text);
+        else await Target.LoadJsonAsync(text);
+    }
+
+    // The encoding a byte-order mark names, and the mark's length; UTF-8 when there is none (what every
+    // exporter here writes).
+    private static (System.Text.Encoding encoding, int bom) TextEncodingOf(byte[] b)
+    {
+        if (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) return (new UTF8Encoding(false), 3);
+        if (b.Length >= 2 && b[0] == 0xFF && b[1] == 0xFE) return (System.Text.Encoding.Unicode, 2);
+        if (b.Length >= 2 && b[0] == 0xFE && b[1] == 0xFF) return (System.Text.Encoding.BigEndianUnicode, 2);
+        return (new UTF8Encoding(false), 0);
     }
 }

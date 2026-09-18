@@ -16,6 +16,8 @@ public sealed partial class ToolbarPage : Page
         InitializeComponent();
 
         var toolbar = new RichEditorToolbar { ToolbarLevel = ToolbarLevel.Maximum, Target = Editor };
+        ReadOnlyBox.Checked += (_, _) => Editor.IsReadOnly = true;
+        ReadOnlyBox.Unchecked += (_, _) => Editor.IsReadOnly = false;
         toolbar.ImagePicker = PickImageBytesAsync;
         Editor.ImageReplacePicker = PickImageBytesAsync;
         // The toolbar now carries the built-in Export/Import (needs the window handle for the unpackaged
