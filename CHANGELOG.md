@@ -6,6 +6,16 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Native AOT: 캐럿이 줄 간격만큼 커지고, 소프트 줄바꿈 뒤 빈 줄을 건너뛰었다 (2026-09-18)
+
+- Native AOT에서는 `CanvasTextLayout.LineMetrics`를 쓸 수 없어 글자 영역으로 줄을 재구성하는 대체 경로를 탄다. 이
+  경로에 두 가지 차이가 있었다(JIT 빌드는 해당 없음).
+- **캐럿 높이**: 대체 경로가 기준선을 몰라, 캐럿이 글자 높이 대신 줄 상자 전체 높이로 그려졌다. 기본 줄 간격이
+  160%가 된 뒤로는 모든 줄에서 보였다. 균일 줄 간격(기본값)에서는 기준선이 정확히 알려져 있으므로 이제 그 값을 쓴다.
+- **소프트 줄바꿈(Shift+Enter)으로 끝나는 문단**: 끝의 빈 줄이 빠져, 위·아래 방향키가 그 줄을 건너뛰었고(빈 줄에서
+  위로 가면 윗줄을 건너뜀) 목록 문단에서는 그 줄의 번호·글머리가 첫 줄 것과 겹쳐 그려졌다.
+- 공개 API 변경 없음.
+
 ### Changed — copying a picture allocates less than half as much (2026-09-16)
 
 - Copy puts the selection on the clipboard as HTML (the picture as base64) and RTF (as hex). Both writers built each
