@@ -101,8 +101,13 @@ public partial class RichEditor
     private bool TableDrawPointerReleased(PointerRoutedEventArgs e)
     {
         if (_pendingTableDraw == null || _tableDrawStart == null) return false;
+        // Insert BEFORE releasing the capture: ReleasePointerCapture raises PointerCaptureLost synchronously, and
+        // that (EndPointerDrags) abandons a draw still in progress — releasing first cancelled every draw right
+        // before it could insert (live check 2026-09-19: no drag inserted anything). The column drag has the same
+        // order for the same reason (EndColumnResize).
+        bool inserted = TableDrawReleaseAt();
         _canvas.ReleasePointerCapture(e.Pointer);
-        return TableDrawReleaseAt();
+        return inserted;
     }
 
     /// <summary>The draw-mode release minus its pointer release, so a test can drive it.</summary>
