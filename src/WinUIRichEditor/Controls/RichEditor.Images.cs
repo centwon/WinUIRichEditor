@@ -133,6 +133,15 @@ public partial class RichEditor
             : _images.Get(_canvas, element, rawBytes, already, w, h);
     }
 
+    // Every picture draw. The bitmap is decoded to COVER its rect with the source's aspect (ImageDecoder.CoverBox),
+    // so a picture squashed out of its proportions still shrinks its short axis several times on the GPU. The
+    // default bilinear sampling skips texels past 2:1 — lines at random spacing, "SHARP" drawn as "SHAKI'" in
+    // the user's test file (2026-09-19). Anisotropic filters each axis by its own ratio; measured 0.6-1.1 ms a
+    // draw against 0.3-0.7 for bilinear and up to 4.5 for HighQualityCubic, which looked the same.
+    private static void DrawPicture(Microsoft.Graphics.Canvas.CanvasDrawingSession ds,
+        Microsoft.Graphics.Canvas.CanvasBitmap bmp, Windows.Foundation.Rect rect)
+        => ds.DrawImage(bmp, rect, bmp.Bounds, 1f, Microsoft.Graphics.Canvas.CanvasImageInterpolation.Anisotropic);
+
     // Decoded pictures an edit took out of the document stay cached up to this many pixel bytes, so undoing
     // the edit doesn't re-decode them (ImageCache.Prune). The undo history's own budget is 64 MB too.
     // internal, not const: tests shrink it instead of allocating 64 MB of bitmaps.

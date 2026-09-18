@@ -155,6 +155,59 @@ public class ControlImageDecodeTests
         });
     }
 
+    // Alternating 1-pixel red and white ROWS: the finest vertical detail a picture can have.
+    private static byte[] StripedBmp(int w, int h)
+    {
+        var bytes = SolidBmp(w, h, 255, 255, 255);
+        int stride = (w * 3 + 3) & ~3;
+        for (int y = 0; y < h; y += 2)
+            for (int x = 0; x < w; x++)
+            {
+                int o = 54 + y * stride + x * 3;
+                bytes[o] = 0; bytes[o + 1] = 0; // B, G = 0: red
+            }
+        return bytes;
+    }
+
+    // A picture squashed out of its proportions is decoded to cover its rect (see above), so the GPU still
+    // has to shrink its short axis by several times. Bilinear — DrawImage's default — samples 2x2 texels and
+    // skips the rest past 2:1: with the user's test file "SHARP" read "SHAKI'" and 12px-apart lines came out
+    // at random spacing. Measured (Documents\interp-probe, 2026-09-19): Anisotropic filters it properly
+    // at 0.6-1.1 ms a draw, HighQualityCubic too at up to 4.5 ms.
+    // Oracle: 1px stripes shrunk ~17:1 must average to one even pink; aliasing leaves some rows red, some white.
+    [Fact]
+    public void ASquashedPicture_IsFiltered_NotAliased()
+    {
+        var ed = Shared.Value;
+        UiThread.RunAsync(async () =>
+        {
+            var raw = LoadPicture(ed, StripedBmp(401, 800), 400, 47); // 17.02:1 — an exact 16:1 samples every texel pair at the same phase and passes by luck
+            Draw(ed);
+            await Decoded(ed, raw);
+
+            typeof(RichEditor).GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
+            using var rt = new CanvasRenderTarget(CanvasDevice.GetSharedDevice(), 1200, 1200, 96);
+            using (var ds = rt.CreateDrawingSession())
+            {
+                ds.Clear(Microsoft.UI.Colors.White);
+                typeof(RichEditor).GetMethod("DrawDocument", NP)!.Invoke(ed, [ds, new Windows.Foundation.Rect(0, 0, 1200, 1200)]);
+            }
+            var px = rt.GetPixelBytes();
+
+            // The picture's rows: those whose middle pixel is not white. Skip the edge rows (partial coverage).
+            var greens = new System.Collections.Generic.List<int>();
+            for (int y = 0; y < 1200; y++)
+            {
+                int o = (y * 1200 + 200) * 4; // BGRA, x = 200 is inside the 400px-wide picture
+                if (px[o + 2] > 200 && px[o + 1] < 250) greens.Add(px[o + 1]);
+            }
+            Assert.True(greens.Count >= 40, $"found {greens.Count} picture rows — the picture was not drawn where expected");
+            var inner = greens.Skip(2).Take(greens.Count - 4).ToList();
+            Assert.True(inner.Max() - inner.Min() < 40,
+                $"rows range from green {inner.Min()} to {inner.Max()}: aliased, not averaged ({string.Join(",", inner.Take(16))})");
+        });
+    }
+
     [Fact]
     public void APictureIsNeverDecodedAboveItsSource_AndThenStopsAskingForMore()
     {
