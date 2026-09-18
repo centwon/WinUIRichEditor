@@ -43,7 +43,8 @@
 - **테스트**: `LineMetricsFallbackTests`(20종 × 간격 5 × 폭 2, 네이티브와 줄 수·글자 수·높이·baseline 비교, 공허 방지 카운트) +
   `ControlCaretTests`에 래치(`_lineMetricsUnsupported`)를 직접 켠 캐럿 높이 4 · 끝 빈 줄 세로 이동 2(JIT 대조군 포함).
 - **반증 3종 — 전부 의도한 테스트만 실패**: baseline NaN(4) · 끝 빈 줄 제거(2) · 빈 문단 baseline NaN(1).
-- **남은 것**: 실제 AOT 게시본 실기 확인(캐럿 높이·Shift+Enter 뒤 방향키·목록 번호). 비균일(키 큰 인라인 그림) 줄의 baseline은
+- **실기 확인 ✅(2026-09-18, AOT 게시본, PR #36 머지 후)**: 캐럿 높이 · Shift+Enter 뒤 방향키 · 목록 번호 셋 다 정상.
+- **남은 것**: 비균일(키 큰 인라인 그림) 줄의 baseline은
   여전히 NaN(그 줄은 `tallInlineObject` 분기라 무관, 같은 문단의 다른 줄만 줄 상자 캐럿). 상류는 Avalonia라 해당 없음.
 
 ### 측정·수정: 그림 복사의 일시 할당 (2026-09-16) — 테스트 +4, 반증 5종
