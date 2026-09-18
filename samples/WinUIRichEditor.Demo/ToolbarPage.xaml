@@ -15,8 +15,17 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <TextBlock x:Name="Caption" Grid.Row="0" Margin="10,8,10,4" Foreground="#666666" FontSize="13"
-                   Text="RichEditor + RichEditorToolbar — 라이브러리 툴바가 컨트롤을 구동합니다." />
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="Caption" Margin="10,8,10,4" Foreground="#666666" FontSize="13"
+                       Text="RichEditor + RichEditorToolbar — 라이브러리 툴바가 컨트롤을 구동합니다." />
+            <!-- Flips IsReadOnly at run time: the toolbar must switch to the view toolbar at once, not on the next key. -->
+            <CheckBox x:Name="ReadOnlyBox" Grid.Column="1" Margin="0,0,10,0" Content="읽기 전용"
+                      ToolTipService.ToolTip="실행 중 IsReadOnly 전환 — 툴바가 즉시 보기 툴바로 바뀌어야 합니다" />
+        </Grid>
         <Border x:Name="ToolbarHost" Grid.Row="1" BorderThickness="0,0,0,1" BorderBrush="#22000000" />
         <editor:RichEditor x:Name="Editor" Grid.Row="2" />
     </Grid>
