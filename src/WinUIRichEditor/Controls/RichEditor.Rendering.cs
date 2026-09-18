@@ -160,7 +160,7 @@ public partial class RichEditor
                 var rect = new Rect(imgX, y, w, h);
                 var bmp = ImageToDraw(ds, img, img.RawBytes, img.Image, rect);
                 if (bmp != null)
-                    ds.DrawImage(bmp, rect);
+                    DrawPicture(ds, bmp, rect);
                 else
                     DrawPlaceholder(ds, rect, "loading image…");
                 DrawBlockImageChrome(ds, img, rect);
@@ -364,7 +364,7 @@ public partial class RichEditor
                         double h = Math.Max(8, ii.Height > 0 ? ii.Height : 16);
                         var rect = new Rect(px + lb.X, oy + lb.Bottom - h, w, h);
                         var bmp = ImageToDraw(ds, ii, ii.RawBytes, ii.Image, rect);
-                        if (bmp != null) ds.DrawImage(bmp, rect);
+                        if (bmp != null) DrawPicture(ds, bmp, rect);
                         else DrawPlaceholder(ds, rect, "");
                         TrackInlineImage(ds, p, ii, rect);
                     }

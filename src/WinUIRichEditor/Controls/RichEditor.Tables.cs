@@ -398,7 +398,7 @@ public partial class RichEditor
                     var (iw, _) = CellImageSize(cimg, innerW);
                     var ir = new Rect(ox, slot.Y, iw, slot.Height);
                     var bmp = ImageToDraw(ds, cimg, cimg.RawBytes, cimg.Image, ir);
-                    if (bmp != null) ds.DrawImage(bmp, ir); else DrawPlaceholder(ds, ir, "");
+                    if (bmp != null) DrawPicture(ds, bmp, ir); else DrawPlaceholder(ds, ir, "");
                     TrackCellImage(ds, cimg, ir); // selection/resize registry — see _cellImageRects
                     break;
                 }
