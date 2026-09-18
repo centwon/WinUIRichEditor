@@ -9,8 +9,8 @@ using WinUIRichEditor.Documents;
 
 namespace WinUIRichEditor.Controls;
 
-// Phase 5: block-image selection chrome (border + bottom-right resize handle), drag-resize (aspect
-// locked), and delete. A top-level block image is selected by clicking it; the selection is cleared by
+// Phase 5: block-image selection chrome (border + resize handles), drag-resize (corner aspect-locked,
+// right/bottom edge one axis — see ResizeGrip), and delete. A top-level block image is selected by clicking it; the selection is cleared by
 // any other press or key. Mirrors the Avalonia original's _selectedBlock / image-resize behavior.
 public partial class RichEditor
 {
@@ -22,6 +22,14 @@ public partial class RichEditor
     private double _imageAspect;            // width/height captured at resize start (aspect lock)
     private double _resizeStartX;           // pointer x at resize start
     private double _resizeStartW;           // image width at resize start
+    private double _resizeStartY;           // pointer y at resize start
+    private double _resizeStartH;           // image height at resize start
+    private ResizeGrip _resizeGrip;         // which handle the resize was started from
+
+    /// <summary>A selected picture's handles: the corner keeps its proportions (as it always did), the
+    /// middle of the right edge changes only the width and the middle of the bottom edge only the height —
+    /// Word's arrangement, and the only way to change a picture's proportions without a file.</summary>
+    internal enum ResizeGrip { None, Corner, Right, Bottom }
 
     // Inline-object rects in document space, recorded whenever an object draws (keyed by object
     // identity, so partial-region redraws just overwrite) and kept until the next relayout drops them
@@ -153,16 +161,7 @@ public partial class RichEditor
     {
         // Hit-test everything first, then let ChoosePointerTarget decide. The drag is seeded from the
         // rect the handle was DRAWN at, for both registries — see _cellImageRects for why.
-        Rect? blockHandleRect = null;
-        if (_selectedBlock is ImageBlock selB)
-            foreach (var rect in BlockImageHandleRects(selB))
-                if (OnResizeHandle(rect, pt)) { blockHandleRect = rect; break; }
-
-        (Paragraph p, InlineImage img)? selInline = null;
-        Rect inlineHandleRect = default;
-        if (_selectedInline is { } selI
-            && _inlineImageRects.TryGetValue(selI.img, out var selRect) && OnResizeHandle(selRect.rect, pt))
-        { selInline = selI; inlineHandleRect = selRect.rect; }
+        var handle = SelectedGripAt(pt);
 
         ImageBlock? cellImage = null;
         foreach (var (img, rect) in _cellImageRects)
@@ -187,31 +186,15 @@ public partial class RichEditor
             RaiseStatusChanged();
         }
 
-        switch (ChoosePointerTarget(IsReadOnly, blockHandleRect != null, selInline != null,
-                                    cellImage != null, inlineImage != null, blockImage != null))
+        switch (ChoosePointerTarget(IsReadOnly,
+                    handle.grip != ResizeGrip.None && !handle.inline, handle.grip != ResizeGrip.None && handle.inline,
+                    cellImage != null, inlineImage != null, blockImage != null))
         {
             case PointerTarget.SelectedBlockImageHandle:
-            {
-                var rect = blockHandleRect!.Value;
-                _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
-                _resizingImage = (ImageBlock)_selectedBlock!;
-                _imageAspect = rect.Height > 0 ? rect.Width / rect.Height : 1;
-                _resizeStartX = pt.X;
-                _resizeStartW = rect.Width;
-                _canvas.CapturePointer(e.Pointer);
-                return true;
-            }
             case PointerTarget.SelectedInlineImageHandle:
-            {
-                var img = selInline!.Value.img;
-                _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
-                _resizingInline = img;
-                _imageAspect = img.Height > 0 ? img.Width / img.Height : 1;
-                _resizeStartX = pt.X;
-                _resizeStartW = img.Width > 0 ? img.Width : inlineHandleRect.Width;
+                BeginImageResize(handle.grip, handle.rect, handle.inline, pt);
                 _canvas.CapturePointer(e.Pointer);
                 return true;
-            }
             // A press on the picture itself selects it and arms dragging it (RichEditor.DragBlock.cs).
             case PointerTarget.CellImage:  SelectObject(cellImage, null); ArmObjectDrag(cellImage, pt, e); return true;
             case PointerTarget.InlineImage: SelectObject(null, inlineImage); ArmObjectDrag(inlineImage!.Value.img, pt, e); return true;
@@ -220,34 +203,76 @@ public partial class RichEditor
         }
     }
 
-    // Live image resize during a pointer drag (aspect-locked). Returns true while a resize is active.
+    /// <summary>Starts resizing the selected picture from the handle under <paramref name="pt"/>, as a press
+    /// there does — without the pointer capture, so a test can drive it. False when no handle is there.</summary>
+    internal bool BeginImageResizeAt(Point pt)
+    {
+        if (IsReadOnly) return false;
+        var (grip, rect, inline) = SelectedGripAt(pt);
+        if (grip == ResizeGrip.None) return false;
+        BeginImageResize(grip, rect, inline, pt);
+        return true;
+    }
+
+    // Everything is seeded from the rect the picture was DRAWN at (see _cellImageRects): a cell draws a
+    // picture scaled down to its width, and a drag has to move the edge that is under the pointer.
+    private void BeginImageResize(ResizeGrip grip, Rect rect, bool inline, Point pt)
+    {
+        _dragUndoPending = true; // pushed on the first move (see PushDragUndoOnce)
+        _resizeGrip = grip;
+        if (inline)
+        {
+            var img = _selectedInline!.Value.img;
+            _resizingInline = img;
+            _resizeStartW = img.Width > 0 ? img.Width : rect.Width;
+            _resizeStartH = img.Height > 0 ? img.Height : rect.Height;
+        }
+        else
+        {
+            _resizingImage = (ImageBlock)_selectedBlock!;
+            _resizeStartW = rect.Width;
+            _resizeStartH = rect.Height;
+        }
+        _imageAspect = _resizeStartH > 0 ? _resizeStartW / _resizeStartH : 1;
+        _resizeStartX = pt.X;
+        _resizeStartY = pt.Y;
+    }
+
+    // A picture this tall is well past any page; the cap only stops a runaway drag.
+    private const double MaxImageHeight = 10000;
+
+    // Live image resize during a pointer drag. Returns true while a resize is active. The corner keeps the
+    // proportions the picture had when the drag began; an edge handle changes one side and keeps the other
+    // at its size as drawn.
     private bool TryResizeImage(Point pt)
     {
+        if (_resizingImage == null && _resizingInline == null) return false;
+        PushDragUndoOnce(); // snapshot before the first actual write
+        double min = _resizingImage != null ? 24 : 16;
+        double w = _resizeStartW, h = _resizeStartH;
+        if (_resizeGrip != ResizeGrip.Bottom)
+            w = Math.Clamp(_resizeStartW + pt.X - _resizeStartX, min, Math.Max(min, _layoutWidth - 40));
+        if (_resizeGrip == ResizeGrip.Bottom)
+            h = Math.Clamp(_resizeStartH + pt.Y - _resizeStartY, min, MaxImageHeight);
+        else if (_resizeGrip == ResizeGrip.Corner && _imageAspect > 0)
+            h = w / _imageAspect;
+
         if (_resizingImage != null)
         {
-            PushDragUndoOnce(); // snapshot before the first actual write
-            double dx = pt.X - _resizeStartX;
-            double newW = Math.Clamp(_resizeStartW + dx, 24, Math.Max(24, _layoutWidth - 40));
-            _resizingImage.Width = newW;
-            _resizingImage.Height = _imageAspect > 0 ? newW / _imageAspect : _resizingImage.Height;
+            _resizingImage.Width = w;
+            _resizingImage.Height = h;
             // A block image in a cell sizes that cell, and so the row. Evict the enclosing table chain
             // the way the column/row drags do, or the row only grows after the NEXT edit.
             if (_resizingImage.Parent is TableCell rc && rc.Parent is TableBlock rtb) InvalidateTableMeasure(rtb);
-            RelayoutToViewport();
-            return true;
         }
-        if (_resizingInline != null)
+        else
         {
-            PushDragUndoOnce(); // snapshot before the first actual write
-            double dx = pt.X - _resizeStartX;
-            double newW = Math.Clamp(_resizeStartW + dx, 16, Math.Max(16, _layoutWidth - 40));
-            _resizingInline.Width = newW;
-            _resizingInline.Height = _imageAspect > 0 ? newW / _imageAspect : _resizingInline.Height;
+            _resizingInline!.Width = w;
+            _resizingInline.Height = h;
             _tableRowHeights.Clear(); // an inline image may live in a table cell — re-measure rows
-            RelayoutToViewport();
-            return true;
         }
-        return false;
+        RelayoutToViewport();
+        return true;
     }
 
     private bool EndImageResize(PointerRoutedEventArgs e)
@@ -266,8 +291,35 @@ public partial class RichEditor
         RaiseStatusChanged();
     }
 
-    private static bool OnResizeHandle(Rect rect, Point pt)
-        => Math.Abs(pt.X - rect.Right) <= ResizeGrab && Math.Abs(pt.Y - rect.Bottom) <= ResizeGrab;
+    /// <summary>The handle of a picture drawn at <paramref name="rect"/> under <paramref name="pt"/>. The corner
+    /// is tested first: on a small picture the three grab areas overlap, and the corner is the one that
+    /// existed before the edge handles did.</summary>
+    internal static ResizeGrip GripAt(Rect rect, Point pt)
+    {
+        bool nearRight = Math.Abs(pt.X - rect.Right) <= ResizeGrab, nearBottom = Math.Abs(pt.Y - rect.Bottom) <= ResizeGrab;
+        if (nearRight && nearBottom) return ResizeGrip.Corner;
+        if (nearRight && Math.Abs(pt.Y - (rect.Top + rect.Height / 2)) <= ResizeGrab) return ResizeGrip.Right;
+        if (nearBottom && Math.Abs(pt.X - (rect.Left + rect.Width / 2)) <= ResizeGrab) return ResizeGrip.Bottom;
+        return ResizeGrip.None;
+    }
+
+    private static Microsoft.UI.Input.InputSystemCursorShape GripCursor(ResizeGrip grip) => grip switch
+    {
+        ResizeGrip.Right => Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast,
+        ResizeGrip.Bottom => Microsoft.UI.Input.InputSystemCursorShape.SizeNorthSouth,
+        _ => Microsoft.UI.Input.InputSystemCursorShape.SizeNorthwestSoutheast,
+    };
+
+    // The handle under the point on the SELECTED picture (block, cell or inline), with the rect it was drawn at.
+    private (ResizeGrip grip, Rect rect, bool inline) SelectedGripAt(Point pt)
+    {
+        if (_selectedBlock is ImageBlock selB)
+            foreach (var rect in BlockImageHandleRects(selB)) // top-level map + cell registry
+                if (GripAt(rect, pt) is var g and not ResizeGrip.None) return (g, rect, false);
+        if (_selectedInline is { } selI && _inlineImageRects.TryGetValue(selI.img, out var ir)
+            && GripAt(ir.rect, pt) is var gi and not ResizeGrip.None) return (gi, ir.rect, true);
+        return (ResizeGrip.None, default, false);
+    }
 
     // Deletes whichever image object is selected (inline takes priority).
     private void DeleteSelectedObject()
@@ -376,8 +428,13 @@ public partial class RichEditor
     private void DrawSelectionChrome(CanvasDrawingSession ds, Rect rect)
     {
         ds.DrawRectangle(rect, BlockSelBorder, 2.5f);
-        var h = new Rect(rect.Right - ResizeHandleSize / 2, rect.Bottom - ResizeHandleSize / 2, ResizeHandleSize, ResizeHandleSize);
-        ds.FillRectangle(h, BlockHandleFill);
-        ds.DrawRectangle(h, Colors.White, 1.5f);
+        if (IsReadOnly) return; // a viewer selects pictures but cannot resize them
+        // The handles GripAt finds: corner, middle of the right edge, middle of the bottom edge.
+        foreach (var (cx, cy) in new[] { (rect.Right, rect.Bottom), (rect.Right, rect.Top + rect.Height / 2), (rect.Left + rect.Width / 2, rect.Bottom) })
+        {
+            var h = new Rect(cx - ResizeHandleSize / 2, cy - ResizeHandleSize / 2, ResizeHandleSize, ResizeHandleSize);
+            ds.FillRectangle(h, BlockHandleFill);
+            ds.DrawRectangle(h, Colors.White, 1.5f);
+        }
     }
 }

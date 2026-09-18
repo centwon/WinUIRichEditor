@@ -466,13 +466,8 @@ public partial class RichEditor
         // it is the sign that a click here takes the whole table (OverColumnBoundary / OverRowBoundary, the
         // resize cursors above, stay edit-only: they self-gate on IsReadOnly).
         if (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt)) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
-        bool onHandle = false;
-        if (_selectedBlock is ImageBlock selB)
-            foreach (var rect in BlockImageHandleRects(selB)) // top-level map + cell registry
-                if (OnResizeHandle(rect, pt)) { onHandle = true; break; }
-        if (!onHandle && _selectedInline is { } selI
-            && _inlineImageRects.TryGetValue(selI.img, out var ir) && OnResizeHandle(ir.rect, pt)) onHandle = true;
-        SetCursorShape(onHandle ? InputSystemCursorShape.SizeNorthwestSoutheast : InputSystemCursorShape.IBeam);
+        var grip = IsReadOnly ? ResizeGrip.None : SelectedGripAt(pt).grip;
+        SetCursorShape(grip != ResizeGrip.None ? GripCursor(grip) : InputSystemCursorShape.IBeam);
     }
 
     // Whether the character under the point is hyperlinked (see LinkRunAtPoint).
