@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Windows.Foundation;
 using Windows.UI;
 using Microsoft.UI.Input;
@@ -31,6 +31,9 @@ public partial class RichEditor
         SetCursorShape(InputSystemCursorShape.Cross);
     }
 
+    // Also run when the document is replaced (a file opened, an undo/redo swap — the pick belonged to the
+    // document being left, and the first click in the new one inserted a table into a file just opened) and
+    // when the pointer capture is lost mid-drag (a lost capture is not a release). Measured 2026-09-19.
     private void CancelTableDraw()
     {
         if (_pendingTableDraw == null) return;
@@ -47,13 +50,45 @@ public partial class RichEditor
     // Pointer hooks, called from the main handlers. Return true when draw mode consumed the event.
     private bool TableDrawPointerPressed(Point docPt, PointerRoutedEventArgs e)
     {
+        if (!TableDrawPressAt(docPt)) return false;
+        _canvas.CapturePointer(e.Pointer);
+        return true;
+    }
+
+    /// <summary>The draw-mode press minus its pointer capture, so a test can drive it.</summary>
+    internal bool TableDrawPressAt(Point docPt)
+    {
         if (_pendingTableDraw == null) return false;
         // Anchor at the caret (where the table will land); the dragged opposite corner sets the size.
         _tableDrawStart = CaretToDocPoint(_caret) is { } cp ? new Point(cp.X, cp.Y) : ClampDocPoint(docPt);
         _tableDrawCurrent = ClampDocPoint(docPt);
-        _canvas.CapturePointer(e.Pointer);
         InvalidateCanvas();
         return true;
+    }
+
+    // The widest table the caret's container can hold: the content box of the cell the caret is in (at any
+    // depth), else the page. The drag is clamped to the DOCUMENT, so drawn from a cell a wide drag made a nested
+    // table wider than the cell holding it — 600px in a 200px cell, drawn over its neighbours (measured
+    // 2026-09-19; the column drag had the same defect, see EnclosingContentWidth).
+    private double TableDrawRoom()
+    {
+        if (_caret.Paragraph is { } p && FindCell(p) is { } loc)
+        {
+            var (ar, ac) = loc.tb.AnchorOf(loc.r, loc.c);
+            var (cs, _) = loc.tb.SpanOf(ar, ac);
+            double w = 0;
+            for (int c = ac; c < ac + cs; c++) w += c < loc.tb.ColumnWidths.Count ? loc.tb.ColumnWidths[c] : 100;
+            return Math.Max(20, w - 2 * CellPad);
+        }
+        return Math.Max(20, _layoutWidth - 20);
+    }
+
+    // The rectangle a drag has drawn, no wider than the table can be — what the preview shows is what inserts.
+    private Rect DrawnTableRect(Point start, Point end)
+    {
+        double left = Math.Min(start.X, end.X), width = Math.Min(Math.Abs(end.X - start.X), TableDrawRoom());
+        if (end.X < start.X) left = start.X - width; // dragged leftwards: keep the edge under the pointer's side
+        return new Rect(left, Math.Min(start.Y, end.Y), width, Math.Abs(end.Y - start.Y));
     }
 
     private bool TableDrawPointerMoved(Point docPt)
@@ -65,11 +100,16 @@ public partial class RichEditor
 
     private bool TableDrawPointerReleased(PointerRoutedEventArgs e)
     {
-        if (_pendingTableDraw is not { } pd || _tableDrawStart is not { } start) return false;
-        var end = _tableDrawCurrent ?? start;
+        if (_pendingTableDraw == null || _tableDrawStart == null) return false;
         _canvas.ReleasePointerCapture(e.Pointer);
-        var rect = new Rect(Math.Min(start.X, end.X), Math.Min(start.Y, end.Y),
-                            Math.Abs(end.X - start.X), Math.Abs(end.Y - start.Y));
+        return TableDrawReleaseAt();
+    }
+
+    /// <summary>The draw-mode release minus its pointer release, so a test can drive it.</summary>
+    internal bool TableDrawReleaseAt()
+    {
+        if (_pendingTableDraw is not { } pd || _tableDrawStart is not { } start) return false;
+        var rect = DrawnTableRect(start, _tableDrawCurrent ?? start);
         _pendingTableDraw = null;
         _tableDrawStart = null;
         _tableDrawCurrent = null;
@@ -105,7 +145,7 @@ public partial class RichEditor
     private void DrawTableDrawRubberBand(CanvasDrawingSession ds)
     {
         if (_pendingTableDraw is not { } pd || _tableDrawStart is not { } s || _tableDrawCurrent is not { } c) return;
-        var rect = new Rect(Math.Min(s.X, c.X), Math.Min(s.Y, c.Y), Math.Abs(c.X - s.X), Math.Abs(c.Y - s.Y));
+        var rect = DrawnTableRect(s, c);
         ds.FillRectangle(rect, RubberFill);
         using var dash = new CanvasStrokeStyle { DashStyle = CanvasDashStyle.Dash };
         ds.DrawRectangle(rect, RubberStroke, 1.5f, dash);
