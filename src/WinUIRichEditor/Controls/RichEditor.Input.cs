@@ -292,6 +292,14 @@ public partial class RichEditor
     // opening on press would make link text unselectable (browser convention: click opens, drag selects).
     private (string uri, Point pos)? _pressLink;
 
+    /// <summary>Starts whichever resize drag a press at <paramref name="pt"/> begins — the press handler minus its
+    /// pointer capture, so a test can drive the ORDER. A selected picture's handles come before the table
+    /// boundaries: a picture that fills its cell has its right-edge and corner handles ON the column boundary, and
+    /// with the boundary first they could not be grabbed at all. Selecting the picture is the sign the user means
+    /// it (the peer's order; decided 2026-09-19). Everywhere else the boundary is grabbed as before.</summary>
+    internal bool BeginResizeDragAt(Point pt)
+        => BeginImageResizeAt(pt) || BeginColumnResizeAt(pt) || BeginRowResizeAt(pt);
+
     private void OnCanvasPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         _pressLink = null; // every press re-arms; a stale value must never fire on a later release
@@ -300,8 +308,7 @@ public partial class RichEditor
         if (e.GetCurrentPoint(_canvas).Properties.IsRightButtonPressed) return;
         var ptp = ViewToDoc(e.GetCurrentPoint(_canvas).Position); // doc space (identity unless paged)
         if (TableDrawPointerPressed(ptp, e)) return;  // "draw table" mode: drag from the caret to size it
-        if (TryBeginColumnResize(ptp, e)) return;     // table column boundary drag
-        if (TryBeginRowResize(ptp, e)) return;        // table row boundary drag
+        if (BeginResizeDragAt(ptp)) { _canvas.CapturePointer(e.Pointer); return; } // picture handle / table boundary
         // Table left/top border -> select the whole table, and arm dragging it (RichEditor.DragBlock.cs).
         if (TrySelectTableBlock(ptp)) { ArmObjectDrag(_selectedBlock, ptp, e); return; }
         if (TrySelectInlineTable(ptp)) { ArmObjectDrag(_selectedInlineTable?.it, ptp, e); return; }
@@ -451,7 +458,7 @@ public partial class RichEditor
 
     private void StopAutoScroll() { _autoScroll?.Stop(); _autoScrollVel = 0; }
 
-    // Shows a diagonal resize cursor over the selected image's corner handle, an I-beam elsewhere.
+    // Shows the resize cursor of whatever a press here would drag (same order as BeginResizeDragAt), else an I-beam.
     // ProtectedCursor is set on the editor (this control); it resolves up the tree for the inner canvas.
     private InputSystemCursorShape _cursorShape = InputSystemCursorShape.IBeam;
 
@@ -460,14 +467,16 @@ public partial class RichEditor
         // Hand cursor over a hyperlink: always in a read-only viewer (plain click opens — browser
         // convention); with Ctrl held when editable (Ctrl+click opens — Word convention).
         if ((Ctrl || IsReadOnly) && LinkAtPoint(pt)) { SetCursorShape(InputSystemCursorShape.Hand); return; }
+        // Same order as the press: a selected picture's handle before a table boundary under it.
+        var grip = IsReadOnly ? ResizeGrip.None : SelectedGripAt(pt).grip;
+        if (grip != ResizeGrip.None) { SetCursorShape(GripCursor(grip)); return; }
         if (OverColumnBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeWestEast); return; }
         if (OverRowBoundary(pt)) { SetCursorShape(InputSystemCursorShape.SizeNorthSouth); return; }
         // Table block-select cursor, matching TrySelectTableBlock / TrySelectInlineTable — in a viewer too, where
         // it is the sign that a click here takes the whole table (OverColumnBoundary / OverRowBoundary, the
         // resize cursors above, stay edit-only: they self-gate on IsReadOnly).
         if (OnTableSelectBorder(pt, out _) || OverInlineTableBorder(pt)) { SetCursorShape(InputSystemCursorShape.SizeAll); return; }
-        var grip = IsReadOnly ? ResizeGrip.None : SelectedGripAt(pt).grip;
-        SetCursorShape(grip != ResizeGrip.None ? GripCursor(grip) : InputSystemCursorShape.IBeam);
+        SetCursorShape(InputSystemCursorShape.IBeam);
     }
 
     // Whether the character under the point is hyperlinked (see LinkRunAtPoint).

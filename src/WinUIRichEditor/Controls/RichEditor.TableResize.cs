@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Windows.Foundation;
 using Microsoft.UI.Xaml.Input;
@@ -117,13 +117,6 @@ public partial class RichEditor
     // Starts a column resize if the press lands on a column boundary. Returns true when it consumed it.
     // The pointer capture is the only part that needs the event; the rest is BeginColumnResizeAt, which
     // tests drive with a document point.
-    private bool TryBeginColumnResize(Point pt, PointerRoutedEventArgs e)
-    {
-        if (!BeginColumnResizeAt(pt)) return false;
-        _canvas.CapturePointer(e.Pointer);
-        return true;
-    }
-
     private bool BeginColumnResizeAt(Point pt)
     {
         if (IsReadOnly) return false;
@@ -257,13 +250,6 @@ public partial class RichEditor
     }
 
     // Starts a row resize if the press lands on a row boundary. Returns true when it consumed it.
-    private bool TryBeginRowResize(Point pt, PointerRoutedEventArgs e)
-    {
-        if (!BeginRowResizeAt(pt)) return false;
-        _canvas.CapturePointer(e.Pointer);
-        return true;
-    }
-
     private bool BeginRowResizeAt(Point pt)
     {
         if (IsReadOnly) return false;
