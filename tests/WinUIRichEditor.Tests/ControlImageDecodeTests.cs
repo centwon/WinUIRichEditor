@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -131,6 +131,30 @@ public class ControlImageDecodeTests
         });
     }
 
+    // A picture resized out of its source's proportions (a handle drag, an <img width height> from HTML) is
+    // drawn STRETCHED into its rect. Decoding to fit INSIDE that rect kept the aspect and came out short on one
+    // axis — 400×100 drawn from a 4:3 source decoded to 167×125 — so every draw saw "smaller than needed" on
+    // the long axis, started the same decode again, and OnReady's repaint drew again: a decode loop for as
+    // long as the picture was on screen, and a blurry picture throughout.
+    [Theory]
+    [InlineData(400, 100)]
+    [InlineData(100, 400)]
+    public void AStretchedPicture_IsDecodedOnce_AndSharpOnBothAxes(double w, double h)
+    {
+        var ed = Shared.Value;
+        UiThread.RunAsync(async () =>
+        {
+            var raw = LoadPicture(ed, SolidBmp(2002 + (int)w, 1500, 255, 0, 0), w, h);
+            Draw(ed);
+            await Decoded(ed, raw);
+            var px = Cache(ed).CachedBitmap(raw)!.SizeInPixels;
+            Assert.True(px.Width >= w && px.Height >= h, $"{w}x{h} drawn from a {px.Width}x{px.Height} bitmap");
+
+            Draw(ed);
+            Assert.False(Cache(ed).IsDecoding(raw), "the same draw must not decode the picture again");
+        });
+    }
+
     [Fact]
     public void APictureIsNeverDecodedAboveItsSource_AndThenStopsAskingForMore()
     {
@@ -167,18 +191,20 @@ public class ControlImageDecodeTests
     }
 
     [Fact]
-    public void FitWithin_KeepsTheAspect_AndNeverEnlarges()
+    public void CoverBox_KeepsTheAspect_CoversBothAxes_AndNeverEnlarges()
     {
-        Assert.Equal((200, 150), ImageDecoder.FitWithin(4000, 3000, 200, 1000));
-        Assert.Equal((100, 75), ImageDecoder.FitWithin(4000, 3000, 1000, 75));
-        Assert.Equal((64, 48), ImageDecoder.FitWithin(64, 48, 4000, 3000));
-        Assert.Equal((10, 1), ImageDecoder.FitWithin(4000, 3, 10, 10)); // the thin side never collapses to 0
+        Assert.Equal((200, 150), ImageDecoder.CoverBox(4000, 3000, 200, 150)); // the source's own proportions
+        Assert.Equal((1334, 1000), ImageDecoder.CoverBox(4000, 3000, 200, 1000)); // stretched tall: height decides
+        Assert.Equal((1000, 750), ImageDecoder.CoverBox(4000, 3000, 1000, 75)); // stretched wide: width decides
+        Assert.Equal((64, 48), ImageDecoder.CoverBox(64, 48, 4000, 3000));
+        Assert.Equal((4000, 3), ImageDecoder.CoverBox(4000, 3, 10, 10)); // covering needs more than the source has
+        Assert.Equal((2, 1), ImageDecoder.CoverBox(4000, 3000, 1, 0)); // a degenerate box still decodes something
     }
 
     [Fact]
     public void TheDecoder_ScalesDownAndKeepsTheColour_AndRejectsGarbage()
     {
-        var d = ImageDecoder.Decode(SolidBmp(400, 300, 255, 0, 0), 100, 100)!.Value;
+        var d = ImageDecoder.Decode(SolidBmp(400, 300, 255, 0, 0), 100, 75)!.Value;
         Assert.Equal((100, 75, 400, 300), (d.Width, d.Height, d.NaturalWidth, d.NaturalHeight));
         Assert.Equal(100 * 75 * 4, d.Pixels.Length);
         int mid = (37 * 100 + 50) * 4; // BGRA

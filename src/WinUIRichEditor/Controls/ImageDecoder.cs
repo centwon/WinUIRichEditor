@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 
 namespace WinUIRichEditor.Controls;
@@ -27,12 +27,12 @@ internal static unsafe class ImageDecoder
     private const int WICBitmapInterpolationModeHighQualityCubic = 4;
     private const int WICBitmapDitherTypeNone = 0, WICBitmapPaletteTypeCustom = 0;
 
-    /// <summary>Decodes <paramref name="encoded"/> to at most <paramref name="maxWidth"/> ×
-    /// <paramref name="maxHeight"/> pixels, keeping the aspect ratio and never enlarging. Returns null for bytes
-    /// WIC can't decode. <c>Natural</c> is the source size, so a caller knows whether a bigger request could
-    /// ever get more detail.</summary>
+    /// <summary>Decodes <paramref name="encoded"/> to the smallest size that covers <paramref name="boxWidth"/> ×
+    /// <paramref name="boxHeight"/> pixels, keeping the aspect ratio and never enlarging (see <see cref="CoverBox"/>).
+    /// Returns null for bytes WIC can't decode. <c>Natural</c> is the source size, so a caller knows whether a
+    /// bigger request could ever get more detail.</summary>
     public static (byte[] Pixels, int Width, int Height, int NaturalWidth, int NaturalHeight)? Decode(
-        byte[] encoded, int maxWidth, int maxHeight)
+        byte[] encoded, int boxWidth, int boxHeight)
     {
         nint factory = 0, stream = 0, decoder = 0, frame = 0, scaler = 0, converter = 0;
         try
@@ -43,7 +43,7 @@ internal static unsafe class ImageDecoder
                 uint natW, natH;
                 if (GetSize(frame, &natW, &natH) < 0 || natW == 0 || natH == 0) return null;
 
-                var (w, h) = FitWithin((int)natW, (int)natH, maxWidth, maxHeight);
+                var (w, h) = CoverBox((int)natW, (int)natH, boxWidth, boxHeight);
                 nint source = frame;
                 bool scaleFirst = IsJpeg(encoded); // no alpha: scaling first keeps the decoder's reduced-size DCT path
                 if (!scaleFirst) source = Convert(factory, source, ref converter);
@@ -77,14 +77,21 @@ internal static unsafe class ImageDecoder
         }
     }
 
-    /// <summary>The largest size inside the box with the source's aspect ratio, never above the source.</summary>
-    internal static (int Width, int Height) FitWithin(int natW, int natH, int maxW, int maxH)
+    /// <summary>The smallest size with the source's aspect ratio that covers the box on BOTH axes, never above
+    /// the source. A picture is drawn stretched into its rect, which need not have the source's proportions (a
+    /// resize handle, an <c>&lt;img width height&gt;</c>); fitting INSIDE the box left one axis short, and the
+    /// cache, seeing it short, re-decoded the same size on every draw. One uniform scale per request also keeps
+    /// requests totally ordered, so pictures sharing a decode at different proportions can't ping-pong.</summary>
+    internal static (int Width, int Height) CoverBox(int natW, int natH, int boxW, int boxH)
     {
-        maxW = Math.Max(1, maxW);
-        maxH = Math.Max(1, maxH);
-        if (natW <= maxW && natH <= maxH) return (natW, natH);
-        double s = Math.Min((double)maxW / natW, (double)maxH / natH);
-        return (Math.Max(1, (int)Math.Round(natW * s)), Math.Max(1, (int)Math.Round(natH * s)));
+        boxW = Math.Max(1, boxW);
+        boxH = Math.Max(1, boxH);
+        double s = Math.Max((double)boxW / natW, (double)boxH / natH);
+        if (s >= 1) return (natW, natH);
+        // Ceiling: rounding down would land a pixel short of the box and read as "needs more" again. The
+        // epsilon keeps an exact fit (200/4000 × 4000) from rounding up past it on floating-point noise.
+        static int Up(double v) => Math.Max(1, (int)Math.Ceiling(v - 1e-9));
+        return (Math.Min(natW, Up(natW * s)), Math.Min(natH, Up(natH * s)));
     }
 
     private static bool IsJpeg(byte[] b) => b.Length >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
