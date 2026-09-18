@@ -134,6 +134,62 @@ public class ControlCaretTests
         });
     }
 
+    // ---- the Native AOT line-metrics fallback -------------------------------------------------------
+
+    // Under AOT CanvasTextLayout.LineMetrics throws and every caller runs on LineMetricsFromRegions
+    // instead. Tests run on JIT, where that never happens — so the latch the AOT path sets on its first
+    // failure is set here by hand, and the same behaviour is asserted on both paths.
+    private static readonly FieldInfo FallbackLatch =
+        T.GetField("_lineMetricsUnsupported", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static void OnPath(bool aotFallback, Action body)
+    {
+        FallbackLatch.SetValue(null, aotFallback);
+        try { body(); }
+        finally { FallbackLatch.SetValue(null, false); }
+    }
+
+    // The fallback used to return a NaN baseline, which sends the caret to "no metrics: fall back to the
+    // line box". Harmless while the default spacing was natural; since 160% became the default it made
+    // the AOT caret as tall as the whole spaced line on every line of every document.
+    [Theory]
+    [InlineData(false, double.NaN)]
+    [InlineData(true, double.NaN)]
+    [InlineData(true, 2.0)]
+    [InlineData(true, 3.0)]
+    public void CaretHeight_IsTheTextHeight_OnTheAotFallback(bool aotFallback, double spacing)
+    {
+        Hosted(Lines(spacing, "first line", "second line"), ed => OnPath(aotFallback, () =>
+        {
+            SetCaret(ed, Paragraphs(ed)[1], 3);
+            var g = CaretGeometry(ed);
+            Assert.True(g.LineBoxHeight > 18, $"the line box is not spaced (was {g.LineBoxHeight:0.0}) — this test proves nothing");
+            Assert.Equal(16.0, g.Height, 1);
+        }));
+    }
+
+    // A paragraph ending in a soft break ends on an empty visual line. The fallback lost it (no character
+    // region covers it), so Down from the text line left the paragraph and Up from the empty line skipped
+    // the text line — on AOT only.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void VerticalMove_VisitsTheEmptyLineAfterATrailingSoftBreak(bool aotFallback)
+    {
+        Hosted(Lines(double.NaN, "above", "one\n", "below"), ed => OnPath(aotFallback, () =>
+        {
+            var paras = Paragraphs(ed);
+            SetCaret(ed, paras[1], 0);
+            Move(ed, down: true);
+            Assert.Same(paras[1], GetCaret(ed).Paragraph);
+            Assert.Equal(4, GetCaret(ed).Offset);
+
+            Move(ed, down: false);
+            Assert.Same(paras[1], GetCaret(ed).Paragraph);
+            Assert.InRange(GetCaret(ed).Offset, 0, 3);
+        }));
+    }
+
     // Under CUSTOM (uniform) spacing the control tells DirectWrite to put the baseline at
     // BaselineFraction of the line box and works the glyph top back from the same constant. Deriving the
     // expected Y that way reproduces the rule exactly, so a change that reintroduces a second rule — or a

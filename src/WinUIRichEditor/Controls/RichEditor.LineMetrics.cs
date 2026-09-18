@@ -22,19 +22,29 @@ namespace WinUIRichEditor.Controls;
 // GetCharacterRegions returns CanvasTextLayoutRegion[] — ints and a Rect, blittable, works under AOT —
 // and per-line Height and CharacterCount can be rebuilt from it.
 //
-// Baseline has no equivalent in the region API and comes back NaN. That is a deliberate, already-handled
-// degradation: every consumer has a NaN branch (see CaretInLayout's "no metrics: fall back to the line
-// box"). Losing exact baseline alignment is a far smaller loss than losing line structure entirely.
+// Baseline has no equivalent in the region API. Under uniform line spacing — every paragraph since
+// 2026-09-15 made 160% the default, unless a tall inline object forces content-driven spacing — it is
+// exactly LineSpacingBaseline for every line, so the fallback returns that. Otherwise it comes back NaN,
+// which every consumer handles (see CaretInLayout's "no metrics: fall back to the line box"). NaN used to
+// be the only answer; once uniform spacing became the default it made the AOT caret as tall as the whole
+// 160% line box on every line.
+//
+// A paragraph ending in a soft break ('\n') ends on an EMPTY visual line that no character region covers.
+// The native metrics report it (0 characters); the fallback recovers it as the part of LayoutBounds the
+// region lines don't cover. Missing it made Up/Down skip that line and drew its list marker over the
+// first line's.
 //
 // The fallback was validated against the real thing, since it can only RUN where the real thing cannot:
 // a temporary Debug-only self-check computed both for every layout the demo built (headings, wrapped
 // body text, table cells, list paragraphs) and reported any disagreement through RichEditorDiagnostics.
 // Line count, per-line CharacterCount and per-line Height (±0.75px) matched everywhere; nothing was
-// reported. Re-add that comparison in LineMetricsOf if this code changes.
+// reported. That check was removed, and the trailing-soft-break gap above was found a month later by its
+// replacement, LineMetricsFallbackTests, which compares the two on the same layouts in every test run.
 public partial class RichEditor
 {
     /// <summary>What the callers of <c>LineMetrics</c> actually read. <see cref="Baseline"/> is
-    /// <see cref="double.NaN"/> when it could not be determined (the Native AOT fallback).</summary>
+    /// <see cref="double.NaN"/> when it could not be determined (the Native AOT fallback, without
+    /// uniform line spacing).</summary>
     private readonly record struct LineMetric(double Height, int CharacterCount, double Baseline);
 
     // Latched after the first failure. Under AOT this never starts working, and the throw is not free:
@@ -68,6 +78,13 @@ public partial class RichEditor
     // when the next region's top drops below the current one.
     private static LineMetric[] LineMetricsFromRegions(CanvasTextLayout layout, int textLength)
     {
+        double baseline = double.NaN;
+        try
+        {
+            if (layout.LineSpacingMode == CanvasLineSpacingMode.Uniform) baseline = layout.LineSpacingBaseline;
+        }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
+
         if (textLength <= 0)
         {
             // An empty paragraph still occupies one line, and callers divide by / index into the line
@@ -75,7 +92,7 @@ public partial class RichEditor
             double h = 0;
             try { h = layout.LayoutBounds.Height; }
             catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
-            return new[] { new LineMetric(h, 0, double.NaN) };
+            return new[] { new LineMetric(h, 0, baseline) };
         }
 
         CanvasTextLayoutRegion[] regions;
@@ -93,7 +110,7 @@ public partial class RichEditor
             bool newLine = double.IsNaN(lineTop) || b.Y > lineTop + 0.5;
             if (newLine)
             {
-                if (!double.IsNaN(lineTop)) lines.Add(new LineMetric(lineHeight, lineChars, double.NaN));
+                if (!double.IsNaN(lineTop)) lines.Add(new LineMetric(lineHeight, lineChars, baseline));
                 lineTop = b.Y;
                 lineHeight = b.Height;
                 lineChars = 0;
@@ -101,7 +118,7 @@ public partial class RichEditor
             else if (b.Height > lineHeight) lineHeight = b.Height; // tallest run sets the line box
             lineChars += r.CharacterCount;
         }
-        if (!double.IsNaN(lineTop)) lines.Add(new LineMetric(lineHeight, lineChars, double.NaN));
+        if (!double.IsNaN(lineTop)) lines.Add(new LineMetric(lineHeight, lineChars, baseline));
         if (lines.Count == 0) return Array.Empty<LineMetric>();
 
         // Callers map an offset to a line by accumulating CharacterCount, so the counts MUST cover the
@@ -115,6 +132,18 @@ public partial class RichEditor
             var last = lines[^1];
             lines[^1] = last with { CharacterCount = last.CharacterCount + (textLength - counted) };
         }
+
+        // The empty line after a trailing soft break has no region, but LayoutBounds includes it: whatever
+        // height the lines above don't account for IS that line. (The caret region at the text's end is
+        // no use here — its Y is the glyph top, not the line top, so it cannot tell the two cases apart.)
+        try
+        {
+            double sum = 0;
+            foreach (var l in lines) sum += l.Height;
+            double rest = layout.LayoutBounds.Height - sum;
+            if (rest > 0.5) lines.Add(new LineMetric(rest, 0, baseline));
+        }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         return lines.ToArray();
     }
 }
