@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -106,6 +106,7 @@ public class ControlCommandFuzzTests
         void OnSelectionChanged(object? s, EventArgs e) => selectionChanged++;
         UiThread.Run(() =>
         {
+            ed.ImageRetainBytes = RetainBudget; // a few seeded pictures, so eviction actually happens
             ed.TextChanged += OnTextChanged;
             ed.IsModifiedChanged += OnModifiedChanged;
             ed.SelectionChanged += OnSelectionChanged;
@@ -121,12 +122,14 @@ public class ControlCommandFuzzTests
                 {
                     var rng = new Random(seed);
                     var log = new List<string>();
+                    var images = new ImageCacheWatch(ed);
                     string step = "(seed)";
                     try
                     {
                         ed.Document = SeedDocument(rng);
                         Call(ed, "RelayoutToViewport");
                         Check(ed, "seed document");
+                        images.Check("seed document", flushed: true);
 
                         for (int i = 0; i < StepsPerSeed; i++)
                         {
@@ -140,6 +143,7 @@ public class ControlCommandFuzzTests
                             step = $"step {i}: {op}";
                             log.Add(step);
                             Check(ed, "after the step");
+                            images.Check("after the step", flushed: false);
 
                             string after = DocumentFuzzTests.Shape(ed.Document!);
                             bool changed = after != before;
@@ -155,6 +159,7 @@ public class ControlCommandFuzzTests
 
                             // A step standing in for a key or a click skips the flush its handler ends with; do it here.
                             Call(ed, "RaiseStatusChanged");
+                            images.Check("after the flush", flushed: true);
                             if (selectionChanged == 0 && SelectionSignature(ed) != selBefore)
                                 throw new InvalidOperationException(
                                     $"the selection changed but SelectionChanged was not raised\n  before: {selBefore}\n  after:  {SelectionSignature(ed)}");
@@ -173,6 +178,7 @@ public class ControlCommandFuzzTests
                                 throw new InvalidOperationException(
                                     "the inverse did not restore the state before this step.\n" + DocumentFuzzTests.Diff(before, undone));
                             Check(ed, $"after the inverse ({(op == "undo" ? "redo" : "undo")})");
+                            images.Check("after the inverse", flushed: true);
 
                             again();
                             string redone = DocumentFuzzTests.Shape(ed.Document!);
@@ -180,6 +186,7 @@ public class ControlCommandFuzzTests
                                 throw new InvalidOperationException(
                                     "repeating the step did not bring it back.\n" + DocumentFuzzTests.Diff(after, redone));
                             Check(ed, $"after repeating it ({(op == "undo" ? "undo" : "redo")})");
+                            images.Check("after repeating it", flushed: true);
                         }
                     }
                     catch (Exception ex)
@@ -204,6 +211,7 @@ public class ControlCommandFuzzTests
                 ed.TextChanged -= OnTextChanged;
                 ed.IsModifiedChanged -= OnModifiedChanged;
                 ed.SelectionChanged -= OnSelectionChanged;
+                ed.ImageRetainBytes = 64L * 1024 * 1024;
                 ed.Document = new FlowDocument(); // leave the shared editor clean for whoever hosts next
             });
         }
@@ -244,9 +252,90 @@ public class ControlCommandFuzzTests
         return tb;
     }
 
-    // A 2×2 PNG — real bytes, so image insertion goes through the real decode/measure path.
-    private static readonly byte[] TinyPng = Convert.FromBase64String(
-        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8//8/AzJgYkAD5AsAAP//A+8DTgn2rL0AAAAASUVORK5CYII=");
+    // Real bytes, so insertion goes through the real measure path; five contents, five cache keys.
+    private static readonly byte[][] Pictures = Enumerable.Range(0, 5)
+        .Select(i => ControlImageDecodeTests.SolidBmp(3 + i, 2, (byte)(40 * i), 90, 200)).ToArray();
+
+    // Seeded bitmaps are 4..8 px square (64..256 bytes), so this retains two or three of them.
+    private const long RetainBudget = 400;
+
+    // ---- the decoded-picture cache ------------------------------------------------------------------
+    //
+    // The fuzz never draws, so without this the cache stayed empty and every edit's sweep returned at its
+    // IsEmpty guard: none of the 2026-09-16 retire/evict logic ran under a random edit sequence. Here a
+    // "draw" places a bitmap for every picture in the document (Seed — standing in for a finished decode),
+    // and the cache is checked at every point it has just been pruned.
+    private sealed class ImageCacheWatch
+    {
+        private static readonly FieldInfo ImagesF = T.GetField("_images", NP)!;
+        private static readonly MethodInfo LiveM = T.GetMethod("CollectLiveImageKeys", NP)!;
+        private static readonly Type C = typeof(ImageCache);
+        private static readonly FieldInfo DecodedF = C.GetField("_decoded", NP)!;
+        private static readonly FieldInfo RetiredIndexF = C.GetField("_retiredIndex", NP)!;
+        private static readonly FieldInfo RetiredF = C.GetField("_retired", NP)!;
+        private static readonly MethodInfo KeyForM = C.GetMethod("KeyFor", NP)!;
+
+        private readonly RichEditor _ed;
+        private HashSet<object> _liveAndCached = new(); // at the previous check
+        public ImageCacheWatch(RichEditor ed) { _ed = ed; }
+
+        private ImageCache Cache => (ImageCache)ImagesF.GetValue(_ed)!;
+
+        private Dictionary<object, byte[]> LiveKeys()
+        {
+            var result = new Dictionary<object, byte[]>();
+            foreach (byte[] raw in ((HashSet<object>)LiveM.Invoke(_ed, null)!).Cast<byte[]>())
+                result[KeyForM.Invoke(Cache, new object?[] { raw, raw })!] = raw;
+            return result;
+        }
+
+        // flushed: the cache was pruned since the last mutation (an edit's TextChanged flush, an undo/redo
+        // swap, a document assignment), so "retired" and "in the document" must not overlap and the budget
+        // must hold. Between a mutation and its flush neither is owed.
+        public void Check(string phase, bool flushed)
+        {
+            var cache = Cache;
+            var decoded = (System.Collections.IDictionary)DecodedF.GetValue(cache)!;
+            var retiredIndex = (System.Collections.IDictionary)RetiredIndexF.GetValue(cache)!;
+            var live = LiveKeys();
+            string Fail(string what) => $"[{phase}] image cache: {what}";
+
+            foreach (System.Collections.DictionaryEntry e in decoded)
+                if (e.Value is Microsoft.Graphics.Canvas.CanvasBitmap bmp)
+                {
+                    try { _ = bmp.SizeInPixels; }
+                    catch (ObjectDisposedException) { throw new InvalidOperationException(Fail("holds a disposed bitmap")); }
+                }
+            foreach (object k in retiredIndex.Keys)
+                if (!decoded.Contains(k)) throw new InvalidOperationException(Fail("a retired key is not decoded"));
+            long sum = 0;
+            foreach (object node in (System.Collections.IEnumerable)RetiredF.GetValue(cache)!)
+                sum += ((ValueTuple<object, long>)node).Item2;
+            if (sum != cache.RetiredBytes)
+                throw new InvalidOperationException(Fail($"retired bytes {cache.RetiredBytes} != sum of entries {sum}"));
+            foreach (object k in _liveAndCached)
+                if (live.ContainsKey(k) && !decoded.Contains(k))
+                    throw new InvalidOperationException(Fail("a picture that never left the document was evicted"));
+
+            if (flushed)
+            {
+                foreach (object k in retiredIndex.Keys)
+                    if (live.ContainsKey(k)) throw new InvalidOperationException(Fail("a picture in the document is retired"));
+                if (cache.RetiredBytes > RetainBudget)
+                    throw new InvalidOperationException(Fail($"retired {cache.RetiredBytes} bytes, budget {RetainBudget}"));
+
+                // "Draw": everything in the document ends up decoded.
+                foreach (var (k, raw) in live)
+                    if (!decoded.Contains(k))
+                    {
+                        int px = 4 + (raw.Length % 5); // 4..8 px square, stable per picture
+                        cache.Seed(raw, Microsoft.Graphics.Canvas.CanvasBitmap.CreateFromColors(
+                            Microsoft.Graphics.Canvas.CanvasDevice.GetSharedDevice(), new Color[px * px], px, px));
+                    }
+            }
+            _liveAndCached = new HashSet<object>(live.Keys.Where(decoded.Contains));
+        }
+    }
 
     private static readonly Color?[] Colors =
     {
@@ -328,8 +417,10 @@ public class ControlCommandFuzzTests
             case 34: ed.InsertInlineTable(1, rng.Next(1, 3)); return "insert-inline-table";
             case 35: ed.InsertDivider(); return "insert-divider";
             case 36:
-                if (rng.Next(2) == 0) ed.InsertImageBlock(TinyPng, "image/png");
-                else ed.InsertInlineImage(TinyPng, "image/png");
+                // Distinct pictures, so the cache holds several keys and retiring/evicting one is observable.
+                var pic = Pictures[rng.Next(Pictures.Length)];
+                if (rng.Next(2) == 0) ed.InsertImageBlock(pic, "image/bmp");
+                else ed.InsertInlineImage(pic, "image/bmp");
                 return "insert-image";
             case 37: return TableCommand(ed, rng);
 
