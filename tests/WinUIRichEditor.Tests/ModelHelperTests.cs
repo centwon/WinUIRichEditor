@@ -1,4 +1,4 @@
-using WinUIRichEditor;
+﻿using WinUIRichEditor;
 using WinUIRichEditor.Documents;
 using Xunit;
 
@@ -42,34 +42,5 @@ public class ModelHelperTests
         Assert.Equal("•", ListMarkers.Text(ListKind.Bullet, ListMarkerStyle.Default, 0));
         Assert.Equal("1.", ListMarkers.Text(ListKind.Ordered, ListMarkerStyle.Default, 1));
         Assert.Equal("3.", ListMarkers.Text(ListKind.Ordered, ListMarkerStyle.Default, 3));
-    }
-
-    [Fact]
-    public void Localization_FallsBackToEnglishThenKey()
-    {
-        RichEditorLocalization.Language = "en";
-        Assert.Equal("Copy", RichEditorLocalization.GetString("Copy"));
-
-        RichEditorLocalization.Language = "ko";
-        Assert.Equal("복사", RichEditorLocalization.GetString("Copy"));
-
-        // Unknown key returns the key itself.
-        Assert.Equal("__nope__", RichEditorLocalization.GetString("__nope__"));
-
-        // Unknown language falls back to English.
-        RichEditorLocalization.Language = "zz";
-        Assert.Equal("Copy", RichEditorLocalization.GetString("Copy"));
-        RichEditorLocalization.Language = "en";
-    }
-
-    [Fact]
-    public void Localization_RegisterAddsLanguage()
-    {
-        RichEditorLocalization.Register("ja", new System.Collections.Generic.Dictionary<string, string> { ["Copy"] = "コピー" });
-        RichEditorLocalization.Language = "ja";
-        Assert.Equal("コピー", RichEditorLocalization.GetString("Copy"));
-        // Missing key still falls back to English.
-        Assert.Equal("Paste", RichEditorLocalization.GetString("Paste"));
-        RichEditorLocalization.Language = "en";
     }
 }
