@@ -6,6 +6,12 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — AltGr 문자를 Ctrl+Alt 단축키가 가로챘다 (2026-09-19)
+
+- AltGr는 Windows에서 Ctrl+Alt로 들어온다. 그래서 AltGr 문자가 있는 자판(독일어·폴란드어·프랑스어 등)에서 제목 단축키 Ctrl+Alt+1~6이
+  AltGr+2(²)·AltGr+3(³) 입력을 가로챘고, 그림·표를 선택한 채 AltGr+C(ć)를 누르면 복사가 됐다. 이제 그 키 조합이 현재 자판에서 문자를
+  만들면 문자로 입력된다. AltGr가 없는 자판(한국어·영어 등)에서는 단축키가 그대로다.
+
 ### Added — XAML에서 바인딩할 수 있는 툴바·뷰 속성 (2026-09-19)
 
 - `RichEditorToolbar.TargetProperty`·`ToolbarLevelProperty`·`ShowPageControlsProperty`·`ShowFileActionsProperty`,
