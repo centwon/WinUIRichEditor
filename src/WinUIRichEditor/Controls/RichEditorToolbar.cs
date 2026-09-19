@@ -247,6 +247,8 @@ public partial class RichEditorToolbar : UserControl
         _target.StatusChanged += OnTargetStatusChanged;
         _target.FontFamilyChoicesChanged -= OnTargetFontChoicesChanged;
         _target.FontFamilyChoicesChanged += OnTargetFontChoicesChanged;
+        _target.FindUiChanged -= OnTargetStatusChanged;
+        _target.FindUiChanged += OnTargetStatusChanged;
     }
 
     private void UnhookTarget()
@@ -254,6 +256,7 @@ public partial class RichEditorToolbar : UserControl
         if (_target == null) return;
         _target.StatusChanged -= OnTargetStatusChanged;
         _target.FontFamilyChoicesChanged -= OnTargetFontChoicesChanged;
+        _target.FindUiChanged -= OnTargetStatusChanged;
     }
 
     // A rebuild, not an in-place refill: mutating a ComboBox's Items from a sync path is what crashed the toolbar
@@ -808,7 +811,7 @@ public partial class RichEditorToolbar : UserControl
             // The divider belongs to the insert group: shown while tables OR images are allowed, like the
             // context menu's divider item (and upstream's toolbar). It used to stay visible regardless.
             if (_dividerBtn != null) _dividerBtn.Visibility = rt.AllowTables || rt.AllowImages ? Visibility.Visible : Visibility.Collapsed;
-            if (_findBtn != null) _findBtn.Visibility = rt.AllowFindReplace ? Visibility.Visible : Visibility.Collapsed;
+            if (_findBtn != null) _findBtn.Visibility = rt.AllowFindReplace && rt.HasFindUi ? Visibility.Visible : Visibility.Collapsed;
             SyncPage();        // reflect zoom/paper/orientation state
             SyncFileActions(); // Print/Import button visibility
         }

@@ -6,6 +6,12 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 찾기 막대에서 F3, 아무것도 열지 않던 찾기 버튼 (2026-09-19)
+
+- 찾기 막대에서 Enter로 검색한 뒤 F3·Shift+F3가 동작하지 않았다(포커스가 검색 상자에 남아 있어서). 이제 검색·바꾸기 상자에서도 다음/이전을 찾는다.
+- 도구 모음의 찾기 버튼은 Ctrl+F를 받는 찾기 UI가 있을 때만 보인다(`RichEditorView`, 또는 `FindRequested`를 구독한 호스트). 편집기와 툴바만
+  쓰는 구성에서는 눌러도 아무것도 열리지 않는 버튼이 보였다.
+
 ### Fixed — AltGr 문자를 Ctrl+Alt 단축키가 가로챘다 (2026-09-19)
 
 - AltGr는 Windows에서 Ctrl+Alt로 들어온다. 그래서 AltGr 문자가 있는 자판(독일어·폴란드어·프랑스어 등)에서 제목 단축키 Ctrl+Alt+1~6이

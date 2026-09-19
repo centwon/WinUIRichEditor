@@ -91,11 +91,7 @@ public partial class RichEditorView
         if (_findBar != null) return;
 
         _findBox = new TextBox { MinWidth = 200, PlaceholderText = L("Find"), FontSize = 12 };
-        _findBox.KeyDown += (_, e) =>
-        {
-            if (e.Key == VirtualKey.Enter) { DoFind(backwards: IsShiftDown()); e.Handled = true; }
-            else if (e.Key == VirtualKey.Escape) { HideFindBar(); e.Handled = true; }
-        };
+        _findBox.KeyDown += (_, e) => { if (FindBoxKey(e.Key, IsShiftDown())) e.Handled = true; };
         // Live highlight-all while the user types (browser find behavior); counter tracks it.
         _findBox.TextChanged += (_, _) =>
         {
@@ -147,11 +143,7 @@ public partial class RichEditorView
         findRow.Children.Add(Btn("✕", L("Cancel"), HideFindBar));
 
         _replaceBox = new TextBox { MinWidth = 200, PlaceholderText = L("Replace"), FontSize = 12 };
-        _replaceBox.KeyDown += (_, e) =>
-        {
-            if (e.Key == VirtualKey.Enter) { DoReplace(); e.Handled = true; }
-            else if (e.Key == VirtualKey.Escape) { HideFindBar(); e.Handled = true; }
-        };
+        _replaceBox.KeyDown += (_, e) => { if (ReplaceBoxKey(e.Key, IsShiftDown())) e.Handled = true; };
 
         _replaceRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         _replaceRow.Children.Add(_replaceBox);
@@ -162,6 +154,30 @@ public partial class RichEditorView
         _findBar.Children.Add(findRow);
         _findBar.Children.Add(_replaceRow);
         _findBarHost.Child = _findBar;
+    }
+
+    // The boxes' keys, split from their handlers so a test can press them (KeyRoutedEventArgs has no public
+    // constructor). F3 is handled here too: after Enter the focus stays in the query box, so F3 never reached the
+    // editor's own F3 and did nothing (live check, 2026-09-19 — found in the upstream port of this bar first).
+    internal bool FindBoxKey(VirtualKey key, bool shift)
+    {
+        switch (key)
+        {
+            case VirtualKey.Enter: case VirtualKey.F3: DoFind(backwards: shift); return true;
+            case VirtualKey.Escape: HideFindBar(); return true;
+            default: return false;
+        }
+    }
+
+    internal bool ReplaceBoxKey(VirtualKey key, bool shift)
+    {
+        switch (key)
+        {
+            case VirtualKey.Enter: DoReplace(); return true;
+            case VirtualKey.F3: DoFind(backwards: shift); return true;
+            case VirtualKey.Escape: HideFindBar(); return true;
+            default: return false;
+        }
     }
 
     private static bool IsShiftDown()

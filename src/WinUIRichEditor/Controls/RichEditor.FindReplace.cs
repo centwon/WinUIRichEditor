@@ -24,8 +24,22 @@ public partial class RichEditor
     /// <summary>Raised when the user presses Ctrl+F (arg <see langword="false"/>) or Ctrl+H
     /// (<see langword="true"/> = with the replace row). <see cref="RichEditorView"/> opens its built-in
     /// find bar on this; a host with its own find UI subscribes instead.</summary>
-    public event EventHandler<bool>? FindRequested;
-    internal void RaiseFindRequested(bool withReplace) => FindRequested?.Invoke(this, withReplace);
+    public event EventHandler<bool>? FindRequested
+    {
+        add { _findRequested += value; FindUiChanged?.Invoke(this, EventArgs.Empty); }
+        remove { _findRequested -= value; FindUiChanged?.Invoke(this, EventArgs.Empty); }
+    }
+    private EventHandler<bool>? _findRequested;
+    internal void RaiseFindRequested(bool withReplace) => _findRequested?.Invoke(this, withReplace);
+
+    // Whether anything answers FindRequested — a RichEditorView's bar, or a host's own find UI. Without one, the
+    // toolbar's Find button opened nothing: it showed on a bare editor + toolbar and did nothing when pressed
+    // (live check, 2026-09-19). Like Print, it now shows only when something handles it.
+    internal bool HasFindUi => _findRequested != null;
+
+    // Raised when a FindRequested handler is added or removed, so a toolbar shows or hides its Find button at once.
+    // Internal and separate from StatusChanged, which hosts count.
+    internal event EventHandler? FindUiChanged;
 
     /// <summary>The most recent find query (set by <see cref="FindNext"/>/<see cref="FindPrev"/>);
     /// F3 / Shift+F3 repeat it via <see cref="FindAgain"/>.</summary>
