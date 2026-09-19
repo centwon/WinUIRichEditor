@@ -22,7 +22,15 @@ public partial class RichEditorView
 
     /// <summary>When false, Ctrl+F/Ctrl+H do not open the built-in bar (for hosts with their own find
     /// UI subscribed to <see cref="RichEditor.FindRequested"/>). Default true.</summary>
-    public bool ShowBuiltInFindBar { get; set; } = true;
+    public bool ShowBuiltInFindBar
+    {
+        get => (bool)GetValue(ShowBuiltInFindBarProperty);
+        set => SetValue(ShowBuiltInFindBarProperty, value);
+    }
+
+    /// <summary>Identifies the <see cref="ShowBuiltInFindBar"/> dependency property.</summary>
+    public static readonly DependencyProperty ShowBuiltInFindBarProperty = DependencyProperty.Register(
+        nameof(ShowBuiltInFindBar), typeof(bool), typeof(RichEditorView), new PropertyMetadata(true));
 
     private static string L(string key) => RichEditorLocalization.GetString(key);
 

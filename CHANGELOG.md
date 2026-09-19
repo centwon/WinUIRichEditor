@@ -6,6 +6,19 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — XAML에서 바인딩할 수 있는 툴바·뷰 속성 (2026-09-19)
+
+- `RichEditorToolbar.TargetProperty`·`ToolbarLevelProperty`·`ShowPageControlsProperty`·`ShowFileActionsProperty`,
+  `RichEditorView.ShowStatusBarProperty`·`ShowFileActionsProperty`·`ShowBuiltInFindBarProperty`. 기존 속성은 그대로이고 이제 바인딩할 수
+  있다(예: 툴바의 `Target`을 편집기에). 편집기 상태를 전달하는 뷰 속성(`Document`, `IsReadOnly`, `ZoomFactor` 등)은 편집기 쪽 속성에
+  바인딩한다(`Editor.IsReadOnly` 등 — 이미 의존성 속성).
+- 공개 API **추가**(breaking 아님) — 다음 릴리스는 minor 범프.
+
+### Fixed — 소프트 줄바꿈으로 끝나는 줄의 오른쪽을 누르면 캐럿이 다음 줄로 갔다 (2026-09-19)
+
+- Shift+Enter로 나뉜 줄의 오른쪽 빈 곳을 클릭하면 캐럿이 그 줄 끝이 아니라 **아래 줄 시작**에 놓였고, 긴 줄에서 내려온 뒤 줄바꿈 다음
+  빈 줄에서 ↑를 누르면 캐럿이 움직이지 않았다. 이제 그 줄의 끝(줄바꿈 앞)에 놓인다.
+
 ### Fixed — 가져오기·읽기 전용 툴바·표 그리기 (2026-09-19)
 
 - **BOM이 붙은 파일을 가져오지 못했다.** 메모장·Visual Studio·PowerShell 등이 파일 앞에 붙이는 바이트 순서 표시(BOM) 때문에 형식을

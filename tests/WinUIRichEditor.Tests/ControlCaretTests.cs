@@ -171,15 +171,22 @@ public class ControlCaretTests
     // A paragraph ending in a soft break ends on an empty visual line. The fallback lost it (no character
     // region covers it), so Down from the text line left the paragraph and Up from the empty line skipped
     // the text line — on AOT only.
+    // The remembered column is set explicitly: SetCaret bypasses the input that resets it, so this test used to
+    // inherit whatever column the test before it left — and passed or failed with the ORDER of the suite (it
+    // failed every full run on main once two test classes were added, 2026-09-19). That is how the defect below
+    // was found.
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void VerticalMove_VisitsTheEmptyLineAfterATrailingSoftBreak(bool aotFallback)
+    [InlineData(false, 0.0)]
+    [InlineData(true, 0.0)]
+    [InlineData(false, 500.0)]
+    [InlineData(true, 500.0)]
+    public void VerticalMove_VisitsTheEmptyLineAfterATrailingSoftBreak(bool aotFallback, double column)
     {
         Hosted(Lines(double.NaN, "above", "one\n", "below"), ed => OnPath(aotFallback, () =>
         {
             var paras = Paragraphs(ed);
             SetCaret(ed, paras[1], 0);
+            DesiredColumn.SetValue(ed, column);
             Move(ed, down: true);
             Assert.Same(paras[1], GetCaret(ed).Paragraph);
             Assert.Equal(4, GetCaret(ed).Offset);
@@ -188,6 +195,34 @@ public class ControlCaretTests
             Assert.Same(paras[1], GetCaret(ed).Paragraph);
             Assert.InRange(GetCaret(ed).Offset, 0, 3);
         }));
+    }
+
+    private static readonly FieldInfo DesiredColumn = T.GetField("_desiredCaretX", NP)!;
+
+    // A point right of a line that ends in a soft break hits the break character itself. Taking "the trailing
+    // half, so after it" put the caret AFTER the break — on the next line: Up from the empty line after "one\n"
+    // with a wide remembered column stayed at offset 4 (could not leave it), and a click right of "one" put the
+    // caret on the line below. The line's end is BEFORE the break.
+    [Fact]
+    public void RightOfALineEndingInASoftBreak_IsThatLinesEnd_NotTheNextLine()
+    {
+        Hosted(Lines(double.NaN, "above", "one\ntwo", "below"), ed =>
+        {
+            var paras = Paragraphs(ed);
+            SetCaret(ed, paras[1], 4); // start of "two"
+            DesiredColumn.SetValue(ed, 500.0);
+            Move(ed, down: false);
+            Assert.Same(paras[1], GetCaret(ed).Paragraph);
+            Assert.Equal(3, GetCaret(ed).Offset); // end of "one", before the break
+
+            // A click far right of "one": the same answer.
+            SetCaret(ed, paras[1], 0);
+            var g = CaretGeometry(ed);
+            var hit = (TextPointer?)T.GetMethod("GetPositionFromPoint", NP)!.Invoke(ed, new object[] { new Windows.Foundation.Point(500, g.Y + g.Height / 2) });
+            Assert.NotNull(hit);
+            Assert.Same(paras[1], hit!.Paragraph);
+            Assert.Equal(3, hit.Offset);
+        });
     }
 
     // Under CUSTOM (uniform) spacing the control tells DirectWrite to put the baseline at
