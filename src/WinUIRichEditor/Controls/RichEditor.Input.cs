@@ -810,6 +810,10 @@ public partial class RichEditor
         if (_composing) return; // let the IME consume keys while a composition is active
         if (e.Key == VirtualKey.Escape && _pendingTableDraw != null) { CancelTableDraw(); e.Handled = true; return; }
         bool shift = Shift, ctrl = Ctrl, alt = Alt;
+        // AltGr arrives as Ctrl+Alt. When this layout makes a character of it (German AltGr+2 = ², Polish
+        // AltGr+C = ć), it is typing: leave the key unhandled so CharacterReceived inserts it, instead of running a
+        // Ctrl+Alt shortcut (the heading keys took ² and ³) or the object Copy below (which took ć). See AltGrKeys.
+        if (AltGrKeys.IsTyping(ctrl, alt, () => AltGrKeys.TextForCtrlAlt(e.Key, shift))) return;
 
         // A selected image (block or inline): Delete/Backspace removes it; any other (non-modifier) key clears it.
         if (HasBlockSelection)

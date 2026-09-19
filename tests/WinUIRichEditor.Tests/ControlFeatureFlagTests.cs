@@ -694,6 +694,9 @@ public class ControlFeatureFlagTests : IClassFixture<ClipboardGuard>
     public void TurningAFlagOff_HidesItsToolbarButton_Immediately(string flag, string button) => UiThread.Run(() =>
     {
         var ed = Editor(P("abc"));
+        // The Find button also needs something to answer Find (2026-09-19, FindUiTests) — a find UI is subscribed
+        // so the flag is the only thing this test varies.
+        ed.FindRequested += (_, _) => { };
         var toolbar = new RichEditorToolbar { Target = ed, ToolbarLevel = ToolbarLevel.Maximum };
         var btn = Btn(toolbar, button);
         Assert.NotNull(btn);
