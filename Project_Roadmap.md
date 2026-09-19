@@ -41,6 +41,7 @@
   넓은 열 2 + 클릭 1 빨강(목표 열 0은 초록 — 결함이 넓은 열에서만 드러난다는 분석과 일치). **상류는 정상**(실입력 프로브) → 포트 전용.
   > **리플렉션으로 캐럿을 놓는 테스트는 캐럿과 함께 움직이는 상태(목표 열, `AtLineEnd`)도 명시할 것.** 물려받은 상태는 순서가 바뀌기
   > 전까지 초록이다 — 이 테스트는 PR #36부터 이 결함을 우연히 비켜 가고 있었다.
+  실기 확인 ✅(2026-09-19): "one⏎two"의 첫 줄 오른쪽 클릭이 "one" 끝에 놓인다.
 - **바인딩 가능한 속성(1.1 후보)**: 공개 표면을 상류와 기계 diff → 상류는 툴바 `Target`, 뷰 `FitToWidth`·`ShowFileActions`·`ShowStatusBar`·
   `ZoomFactor`가 DP. 포트는 **컨트롤이 소유한 설정만** DP로: 툴바 `Target`·`ToolbarLevel`·`ShowPageControls`·`ShowFileActions`, 뷰
   `ShowStatusBar`·`ShowFileActions`·`ShowBuiltInFindBar`. 편집기 상태를 전달만 하는 뷰 속성(`Document`·`IsReadOnly`·`ZoomFactor` 등)은
