@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using Microsoft.UI.Xaml;
 
 namespace WinUIRichEditor.Controls;
 
@@ -19,9 +20,16 @@ public partial class RichEditorView
     /// buttons are shown in the toolbar. Default true. Forwards to <see cref="RichEditorToolbar.ShowFileActions"/>.</summary>
     public bool ShowFileActions
     {
-        get => Toolbar.ShowFileActions;
-        set => Toolbar.ShowFileActions = value;
+        get => (bool)GetValue(ShowFileActionsProperty);
+        set => SetValue(ShowFileActionsProperty, value);
     }
+
+    /// <summary>Identifies the <see cref="ShowFileActions"/> dependency property.</summary>
+    // Bindable on the view as upstream's is; the value is pushed to the toolbar. (Setting Toolbar.ShowFileActions
+    // directly still works and is not reflected back here.)
+    public static readonly DependencyProperty ShowFileActionsProperty = DependencyProperty.Register(
+        nameof(ShowFileActions), typeof(bool), typeof(RichEditorView),
+        new PropertyMetadata(true, (d, e) => ((RichEditorView)d).Toolbar.ShowFileActions = (bool)e.NewValue));
 
     /// <summary>Raised when the user clicks the built-in Print button. Printing is host-specific, so a host
     /// handles this to drive its own print/preview. The Print button stays hidden until a handler is

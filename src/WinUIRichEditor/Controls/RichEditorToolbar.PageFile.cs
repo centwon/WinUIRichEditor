@@ -41,9 +41,18 @@ public partial class RichEditorToolbar
     /// toolbar (page/zoom + Export/Print) regardless of this. Capability (Allow*) still vetoes buttons.</summary>
     public ToolbarLevel ToolbarLevel
     {
-        get => _level;
-        set { if (_level == value) return; _level = value; Content = Build(); Sync(); }
+        get => (ToolbarLevel)GetValue(ToolbarLevelProperty);
+        set => SetValue(ToolbarLevelProperty, value);
     }
+
+    /// <summary>Identifies the <see cref="ToolbarLevel"/> dependency property.</summary>
+    public static readonly DependencyProperty ToolbarLevelProperty = DependencyProperty.Register(
+        nameof(ToolbarLevel), typeof(ToolbarLevel), typeof(RichEditorToolbar),
+        new PropertyMetadata(ToolbarLevel.Auto, (d, e) => ((RichEditorToolbar)d).OnLayoutFlagChanged(() => ((RichEditorToolbar)d)._level = (ToolbarLevel)e.NewValue)));
+
+    // The toolbar's own layout settings are dependency properties so XAML can bind them; each one rebuilds the
+    // strip, as its setter did. The fields stay what Build() reads.
+    private void OnLayoutFlagChanged(Action store) { store(); Content = Build(); Sync(); }
 
     // The concrete level to build (Auto → Normal). Read-only is handled separately in Build().
     private ToolbarLevel EffectiveLevel() => _level == ToolbarLevel.Auto ? ToolbarLevel.Normal : _level;
@@ -67,9 +76,14 @@ public partial class RichEditorToolbar
     /// strip. Default true.</summary>
     public bool ShowPageControls
     {
-        get => _showPageControls;
-        set { if (_showPageControls == value) return; _showPageControls = value; Content = Build(); Sync(); }
+        get => (bool)GetValue(ShowPageControlsProperty);
+        set => SetValue(ShowPageControlsProperty, value);
     }
+
+    /// <summary>Identifies the <see cref="ShowPageControls"/> dependency property.</summary>
+    public static readonly DependencyProperty ShowPageControlsProperty = DependencyProperty.Register(
+        nameof(ShowPageControls), typeof(bool), typeof(RichEditorToolbar),
+        new PropertyMetadata(true, (d, e) => ((RichEditorToolbar)d).OnLayoutFlagChanged(() => ((RichEditorToolbar)d)._showPageControls = (bool)e.NewValue)));
 
     private void BuildPageControls(ToolbarWrapPanel strip)
     {
@@ -177,9 +191,14 @@ public partial class RichEditorToolbar
     /// handled) buttons are shown at the end of the strip. Default true.</summary>
     public bool ShowFileActions
     {
-        get => _showFileActions;
-        set { if (_showFileActions == value) return; _showFileActions = value; Content = Build(); Sync(); }
+        get => (bool)GetValue(ShowFileActionsProperty);
+        set => SetValue(ShowFileActionsProperty, value);
     }
+
+    /// <summary>Identifies the <see cref="ShowFileActions"/> dependency property.</summary>
+    public static readonly DependencyProperty ShowFileActionsProperty = DependencyProperty.Register(
+        nameof(ShowFileActions), typeof(bool), typeof(RichEditorToolbar),
+        new PropertyMetadata(true, (d, e) => ((RichEditorToolbar)d).OnLayoutFlagChanged(() => ((RichEditorToolbar)d)._showFileActions = (bool)e.NewValue)));
 
     private EventHandler? _printRequested;
     /// <summary>Raised when the user clicks the built-in Print button. Printing is host-specific, so a host

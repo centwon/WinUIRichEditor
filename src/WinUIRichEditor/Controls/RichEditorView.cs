@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using Windows.UI;
 using Microsoft.UI;
@@ -29,9 +29,18 @@ public partial class RichEditorView : UserControl
     /// the bottom. Default true. Mirrors the original AvaloniaRichEditor's <c>RichEditorView.ShowStatusBar</c>.</summary>
     public bool ShowStatusBar
     {
-        get => _statusBar.Visibility == Visibility.Visible;
-        set => _statusBar.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+        get => (bool)GetValue(ShowStatusBarProperty);
+        set => SetValue(ShowStatusBarProperty, value);
     }
+
+    /// <summary>Identifies the <see cref="ShowStatusBar"/> dependency property.</summary>
+    // The view's own settings are dependency properties so XAML can bind them (upstream's are StyledProperties).
+    // Properties that only forward the EDITOR's state (Document, IsReadOnly, ZoomFactor, ...) stay plain: the
+    // editor's own are dependency properties already, so a binding goes to Editor.Xxx and nothing has to keep
+    // two copies in step.
+    public static readonly DependencyProperty ShowStatusBarProperty = DependencyProperty.Register(
+        nameof(ShowStatusBar), typeof(bool), typeof(RichEditorView),
+        new PropertyMetadata(true, (d, e) => ((RichEditorView)d)._statusBar.Visibility = (bool)e.NewValue ? Visibility.Visible : Visibility.Collapsed));
 
     /// <summary>The editor's zoom factor (1.0 = 100%). A thin proxy over <see cref="RichEditor.Zoom"/> /
     /// <see cref="RichEditor.SetZoom"/> — the port keeps zoom on the editor (engine-level crisp scaling),

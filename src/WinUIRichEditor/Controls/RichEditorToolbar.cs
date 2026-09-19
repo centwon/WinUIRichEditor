@@ -21,19 +21,33 @@ public partial class RichEditorToolbar : UserControl
 {
     private RichEditor? _target;
 
+    /// <summary>Identifies the <see cref="Target"/> dependency property.</summary>
+    // A dependency property so XAML can bind it (Target="{x:Bind Editor}"). It was a plain CLR property, which
+    // left a toolbar declared in XAML unbindable to its editor (the 1.1 candidate from the 2026-08-07 surface
+    // diff; upstream's is a StyledProperty). _target stays the field every internal path reads.
+    // Registered as object, not RichEditor: a {Binding} checks the value against the DP's type through XAML type
+    // metadata, which an app only generates for types its own markup names — typed RichEditor, a binding in an
+    // app without that metadata delivered null (measured 2026-09-19). The CLR property is still RichEditor-typed;
+    // any other value is taken as no target.
+    public static readonly DependencyProperty TargetProperty = DependencyProperty.Register(
+        nameof(Target), typeof(object), typeof(RichEditorToolbar),
+        new PropertyMetadata(null, (d, e) => ((RichEditorToolbar)d).OnTargetChanged(e.NewValue as RichEditor)));
+
     /// <summary>The editor this toolbar drives.</summary>
     public RichEditor? Target
     {
-        get => _target;
-        set
-        {
-            if (ReferenceEquals(_target, value)) return;
-            UnhookTarget();
-            _target = value;
-            HookTarget();
-            Content = Build(); // rebuild so the strip reflects the new target's read-only state
-            Sync();
-        }
+        get => GetValue(TargetProperty) as RichEditor;
+        set => SetValue(TargetProperty, value);
+    }
+
+    private void OnTargetChanged(RichEditor? value)
+    {
+        if (ReferenceEquals(_target, value)) return;
+        UnhookTarget();
+        _target = value;
+        HookTarget();
+        Content = Build(); // rebuild so the strip reflects the new target's read-only state
+        Sync();
     }
 
     // Fills the font combo from the editor's FontFamilyChoices (installed system fonts, localized names).
