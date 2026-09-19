@@ -718,13 +718,34 @@ public partial class RichEditor
         int idx = region.CharacterIndex;
         // Trailing half of the glyph -> caret after it. That position may coincide with the next visual
         // line's start (soft-wrap boundary); the affinity flag keeps the caret drawn on THIS line's end.
-        if (region.CharacterCount > 0 && localX > region.LayoutBounds.X + region.LayoutBounds.Width / 2)
+        // Not past a line break: a point right of a line that ends in a soft break ('\n') hits the break itself,
+        // and "after it" is the START OF THE NEXT LINE. Up from the empty line after "one\n" with the column
+        // remembered from a longer line landed back where it started (offset 4, not 3) — the caret could not
+        // leave — and a click right of such a line put the caret on the line below (found 2026-09-19 through an
+        // order-dependent test: it failed only when an earlier test had left a wide remembered column).
+        if (region.CharacterCount > 0 && localX > region.LayoutBounds.X + region.LayoutBounds.Width / 2
+            && !IsLineBreakAt(p, idx))
         {
             idx += region.CharacterCount;
             atLineEnd = true;
         }
         return Math.Clamp(idx, 0, len);
     }
+
+    // Whether the character at `offset` in p is a soft line break (the '\n' Shift+Enter inserts).
+    private static bool IsLineBreakAt(Paragraph p, int offset)
+    {
+        int pos = 0;
+        foreach (var inl in p.Inlines)
+        {
+            int len = InlineLen(inl);
+            if (offset < pos + len) return inl is Run { Text: { } t } && IsBreakChar(t[offset - pos]);
+            pos += len;
+        }
+        return false;
+    }
+
+    private static bool IsBreakChar(char c) => c == (char)10 || c == (char)13 || c == (char)0x2028; // LF, CR, LINE SEPARATOR
 
     // ---- keyboard ---------------------------------------------------------
     private void OnEditorCharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs e)
