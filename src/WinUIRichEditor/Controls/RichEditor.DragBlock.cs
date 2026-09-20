@@ -23,9 +23,9 @@ public partial class RichEditor
     private bool DropPreviewActive => _dragTextActive || _dragObjectActive;
 
     // A press that has just selected an object: arm its drag and take the pointer.
-    private void ArmObjectDrag(object? obj, Point docPt, PointerRoutedEventArgs e)
+    private void ArmObjectDrag(object? obj, Point docPt, PointerStep s)
     {
-        if (ArmObjectDragAt(obj, docPt)) _canvas.CapturePointer(e.Pointer);
+        if (ArmObjectDragAt(obj, docPt)) s.Capture.Capture();
     }
 
     // The press minus its pointer capture. Editing only: a viewer's press selects the object for Copy.
@@ -41,7 +41,7 @@ public partial class RichEditor
 
     // Pointer move while armed: past the slop the drag goes live and the drop caret follows the pointer. A
     // point the object may not go to (a move into its own cells) shows no caret and the no-drop cursor.
-    internal void DragObjectMoved(Point docPt)
+    internal void DragObjectMoved(Point docPt, bool ctrl)
     {
         if (_dragObject == null) return;
         _dragObjectLast = docPt;
@@ -51,15 +51,15 @@ public partial class RichEditor
             _dragObjectActive = true;
         }
         var tp = GetPositionFromPoint(docPt);
-        _dropPreview = tp != null && CanDropObject(_dragObject, tp, copy: Ctrl) ? tp : null;
+        _dropPreview = tp != null && CanDropObject(_dragObject, tp, copy: ctrl) ? tp : null;
         SetCursorShape(_dropPreview != null ? InputSystemCursorShape.Arrow : InputSystemCursorShape.UniversalNo);
         InvalidateCanvas();
     }
 
-    private void EndObjectDrag(PointerRoutedEventArgs e)
+    private void EndObjectDrag(PointerStep s)
     {
-        FinishObjectDrag(copy: Ctrl);
-        _canvas.ReleasePointerCapture(e.Pointer); // after the drag is cleared, so CaptureLost finds nothing live
+        FinishObjectDrag(copy: s.Ctrl);
+        s.Capture.Release(); // after the drag is cleared, so CaptureLost finds nothing live
     }
 
     // The release minus its pointer capture. Ctrl is read at the DROP, as for text. Returns whether the
@@ -90,7 +90,9 @@ public partial class RichEditor
     // the point is a valid drop at all (a copy may go into its own cells, a move may not).
     private void OnDragModifierChanged()
     {
-        if (_dragObjectActive) DragObjectMoved(_dragObjectLast);
+        // Driven by the KEY handlers (Ctrl pressed/released mid-drag), so the live keyboard state is the
+        // right source here — unlike the pointer path, which carries the modifiers on its PointerStep.
+        if (_dragObjectActive) DragObjectMoved(_dragObjectLast, Ctrl);
         else if (_dragTextActive) InvalidateCanvas();
     }
 

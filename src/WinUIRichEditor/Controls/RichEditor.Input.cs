@@ -301,19 +301,23 @@ public partial class RichEditor
     internal bool BeginResizeDragAt(Point pt)
         => BeginImageResizeAt(pt) || BeginColumnResizeAt(pt) || BeginRowResizeAt(pt);
 
-    private void OnCanvasPointerPressed(object sender, PointerRoutedEventArgs e)
+    private void OnCanvasPointerPressed(object sender, PointerRoutedEventArgs e) => PointerPressedCore(StepFrom(e));
+
+    /// <summary>The press, driven by a <see cref="PointerStep"/> so a test can run a whole gesture in
+    /// order (see RichEditor.PointerPipeline.cs). The handler above only adapts the event.</summary>
+    internal void PointerPressedCore(PointerStep s)
     {
         _pressLink = null; // every press re-arms; a stale value must never fire on a later release
         _canvas.Focus(FocusState.Pointer);
         // Right button is handled by RightTapped (context menu); don't collapse the selection here.
-        if (e.GetCurrentPoint(_canvas).Properties.IsRightButtonPressed) return;
-        var ptp = ViewToDoc(e.GetCurrentPoint(_canvas).Position); // doc space (identity unless paged)
-        if (TableDrawPointerPressed(ptp, e)) return;  // "draw table" mode: drag from the caret to size it
-        if (BeginResizeDragAt(ptp)) { _canvas.CapturePointer(e.Pointer); return; } // picture handle / table boundary
+        if (s.RightButton) return;
+        var ptp = ViewToDoc(s.ViewPos); // doc space (identity unless paged)
+        if (TableDrawPointerPressed(ptp, s)) return;  // "draw table" mode: drag from the caret to size it
+        if (BeginResizeDragAt(ptp)) { s.Capture.Capture(); return; } // picture handle / table boundary
         // Table left/top border -> select the whole table, and arm dragging it (RichEditor.DragBlock.cs).
-        if (TrySelectTableBlock(ptp)) { ArmObjectDrag(_selectedBlock, ptp, e); return; }
-        if (TrySelectInlineTable(ptp)) { ArmObjectDrag(_selectedInlineTable?.it, ptp, e); return; }
-        if (TryBeginImageInteraction(ptp, e)) return; // image resize handle or selection
+        if (TrySelectTableBlock(ptp)) { ArmObjectDrag(_selectedBlock, ptp, s); return; }
+        if (TrySelectInlineTable(ptp)) { ArmObjectDrag(_selectedInlineTable?.it, ptp, s); return; }
+        if (TryBeginImageInteraction(ptp, s)) return; // image resize handle or selection
         ClearObjectSelection(); // any other press clears an image selection
         var tp = GetPositionFromPoint(ptp);
         if (tp == null) return;
@@ -321,7 +325,7 @@ public partial class RichEditor
         var now = DateTime.UtcNow;
         bool repeat = (now - _lastPressTime).TotalMilliseconds < _multiClickMs
             && Math.Abs(ptp.X - _lastPressPos.X) + Math.Abs(ptp.Y - _lastPressPos.Y) < MultiClickSlop;
-        var press = ChooseTextPress(Ctrl, Shift, repeat, CanArmTextDragAt(tp));
+        var press = ChooseTextPress(s.Ctrl, s.Shift, repeat, CanArmTextDragAt(tp));
 
         // Ctrl+click on a hyperlink opens it (Word/browser convention); the caret still moves there.
         if (press == TextPress.CtrlClick && tp.Paragraph != null)
@@ -342,7 +346,7 @@ public partial class RichEditor
 
         // Read-only viewer: a PLAIN click on a link opens it (no Ctrl needed — browser convention).
         // Armed here, launched on release only when no drag-selection happened in between.
-        if (IsReadOnly && !Shift && LinkRunAtPoint(ptp)?.NavigateUri is { Length: > 0 } roUri)
+        if (IsReadOnly && !s.Shift && LinkRunAtPoint(ptp)?.NavigateUri is { Length: > 0 } roUri)
             _pressLink = (roUri, new Point(ptp.X, ptp.Y));
 
         _clickCount = repeat ? _clickCount + 1 : 1;
@@ -351,17 +355,17 @@ public partial class RichEditor
 
         // A single (non-repeat) press strictly inside the existing selection arms text drag & drop —
         // caret/selection stay put; release decides click vs move/copy (RichEditor.DragText.cs).
-        if (press == TextPress.ArmDrag) { ArmTextDrag(new Point(ptp.X, ptp.Y), e); return; }
+        if (press == TextPress.ArmDrag) { ArmTextDrag(new Point(ptp.X, ptp.Y), s); return; }
 
         _caret = tp;
         _desiredCaretX = ptp.X;
         _coalesceKey = null; // click starts a fresh undo group for subsequent typing
         _pendingCaretStyles = null;
-        _canvas.CapturePointer(e.Pointer);
+        s.Capture.Capture();
 
         // Double-click selects the word under the caret; triple-click (or more) selects the paragraph.
         // No drag-select in these modes — keep the word/paragraph selection intact.
-        if (_clickCount >= 2 && !Shift && tp.Paragraph != null)
+        if (_clickCount >= 2 && !s.Shift && tp.Paragraph != null)
         {
             if (_clickCount == 2)
             {
@@ -385,7 +389,7 @@ public partial class RichEditor
             return;
         }
 
-        if (Shift) { _selEnd = Clone(tp); }
+        if (s.Shift) { _selEnd = Clone(tp); }
         else { _selStart = Clone(tp); _selEnd = Clone(tp); }
         _isSelecting = true;
         RestartBlink();
@@ -394,17 +398,20 @@ public partial class RichEditor
         RaiseStatusChanged();
     }
 
-    private void OnCanvasPointerMoved(object sender, PointerRoutedEventArgs e)
+    private void OnCanvasPointerMoved(object sender, PointerRoutedEventArgs e) => PointerMovedCore(StepFrom(e));
+
+    /// <summary>The move, driven by a <see cref="PointerStep"/> (see RichEditor.PointerPipeline.cs).</summary>
+    internal void PointerMovedCore(PointerStep s)
     {
-        var vpos = e.GetCurrentPoint(_canvas).Position;   // canvas (physical) coords
+        var vpos = s.ViewPos;                             // canvas (physical) coords
         var pt = ViewToDoc(vpos);                         // doc space (identity unless paged)
         if (TableDrawPointerMoved(pt)) return;        // "draw table" mode: extend the rubber-band
         if (_resizingColumn) { ResizeColumn(pt); return; }
         if (_resizingRow) { ResizeRow(pt); return; }
         if (_resizingImage != null || _resizingInline != null) { TryResizeImage(pt); return; }
-        if (_dragObject != null) { DragObjectMoved(pt); return; }
+        if (_dragObject != null) { DragObjectMoved(pt, s.Ctrl); return; }
         if (_dragTextArmed) { DragTextMoved(pt); return; }
-        UpdateHoverCursor(pt);
+        UpdateHoverCursor(pt, s.Ctrl);
         if (!_isSelecting) return;
         var tp = GetPositionFromPoint(pt);
         if (tp == null) return;
@@ -463,11 +470,11 @@ public partial class RichEditor
     // ProtectedCursor is set on the editor (this control); it resolves up the tree for the inner canvas.
     private InputSystemCursorShape _cursorShape = InputSystemCursorShape.IBeam;
 
-    private void UpdateHoverCursor(Point pt)
+    private void UpdateHoverCursor(Point pt, bool ctrl)
     {
         // Hand cursor over a hyperlink: always in a read-only viewer (plain click opens — browser
         // convention); with Ctrl held when editable (Ctrl+click opens — Word convention).
-        if ((Ctrl || IsReadOnly) && LinkAtPoint(pt)) { SetCursorShape(InputSystemCursorShape.Hand); return; }
+        if ((ctrl || IsReadOnly) && LinkAtPoint(pt)) { SetCursorShape(InputSystemCursorShape.Hand); return; }
         // Same order as the press: a selected picture's handle before a table boundary under it.
         var grip = IsReadOnly ? ResizeGrip.None : SelectedGripAt(pt).grip;
         if (grip != ResizeGrip.None) { SetCursorShape(GripCursor(grip)); return; }
@@ -507,7 +514,11 @@ public partial class RichEditor
     // A normal release clears its own drag first (see EndColumnResize), so arriving after one is a no-op.
     // Text drag & drop is left alone: ending it drops the text, and a lost capture is not a drop. An object
     // drag is cancelled for the same reason — cancelled, not finished.
-    private void OnCanvasPointerCaptureLost(object sender, PointerRoutedEventArgs e) => EndPointerDrags();
+    private void OnCanvasPointerCaptureLost(object sender, PointerRoutedEventArgs e) => PointerCaptureLostCore();
+
+    /// <summary>What a lost capture runs. A test's <c>IPointerCapture.Release</c> calls this the way WinUI
+    /// does — synchronously (see RichEditor.PointerPipeline.cs).</summary>
+    internal void PointerCaptureLostCore() => EndPointerDrags();
 
     private void EndPointerDrags()
     {
@@ -519,24 +530,29 @@ public partial class RichEditor
         if (_isSelecting) { _isSelecting = false; StopAutoScroll(); }
     }
 
-    private void OnCanvasPointerReleased(object sender, PointerRoutedEventArgs e)
+    private void OnCanvasPointerReleased(object sender, PointerRoutedEventArgs e) => PointerReleasedCore(StepFrom(e));
+
+    /// <summary>The release, driven by a <see cref="PointerStep"/>. Each branch below finishes its work
+    /// BEFORE <c>s.Capture.Release()</c>, because that raises capture-lost synchronously and capture-lost
+    /// abandons whatever is live (see RichEditor.PointerPipeline.cs).</summary>
+    internal void PointerReleasedCore(PointerStep s)
     {
-        if (TableDrawPointerReleased(e)) return;      // "draw table" mode: insert at the caret, dragged size
-        if (EndColumnResize(e)) return;
-        if (EndRowResize(e)) return;
-        if (EndImageResize(e)) return;
-        if (_dragObject != null) { EndObjectDrag(e); return; }
-        if (_dragTextArmed) { EndTextDrag(e); return; }
+        if (TableDrawPointerReleased(s)) return;      // "draw table" mode: insert at the caret, dragged size
+        if (EndColumnResize(s)) return;
+        if (EndRowResize(s)) return;
+        if (EndImageResize(s)) return;
+        if (_dragObject != null) { EndObjectDrag(s); return; }
+        if (_dragTextArmed) { EndTextDrag(s); return; }
         _isSelecting = false;
         StopAutoScroll();
-        _canvas.ReleasePointerCapture(e.Pointer);
+        s.Capture.Release();
         if (IsFormatPainterActive) ApplyFormatPainterToSelection();
         // Read-only link click: launch only if the press stayed a CLICK (no selection was dragged out
         // and the pointer didn't travel) — a drag over link text selects, exactly like a browser.
         if (_pressLink is { } pl)
         {
             _pressLink = null;
-            var rp = ViewToDoc(e.GetCurrentPoint(_canvas).Position);
+            var rp = ViewToDoc(s.ViewPos);
             if (!HasSelection && Math.Abs(rp.X - pl.pos.X) + Math.Abs(rp.Y - pl.pos.Y) < MultiClickSlop)
                 _ = OpenUriAsync(pl.uri); // the URI captured at press, not a re-read of the caret
         }

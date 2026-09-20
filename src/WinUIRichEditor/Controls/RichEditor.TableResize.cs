@@ -224,11 +224,11 @@ public partial class RichEditor
     }
 
     // Finish BEFORE releasing: the release raises PointerCaptureLost, whose handler must find nothing live.
-    private bool EndColumnResize(PointerRoutedEventArgs e)
+    private bool EndColumnResize(PointerStep s)
     {
         if (!_resizingColumn) return false;
         FinishColumnResize();
-        _canvas.ReleasePointerCapture(e.Pointer);
+        s.Capture.Release();
         return true;
     }
 
@@ -282,11 +282,11 @@ public partial class RichEditor
         RelayoutToViewport();
     }
 
-    private bool EndRowResize(PointerRoutedEventArgs e)
+    private bool EndRowResize(PointerStep s)
     {
         if (!_resizingRow) return false;
         FinishRowResize(); // before the release (see EndColumnResize)
-        _canvas.ReleasePointerCapture(e.Pointer);
+        s.Capture.Release();
         return true;
     }
 
