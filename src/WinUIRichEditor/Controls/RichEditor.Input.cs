@@ -175,6 +175,11 @@ public partial class RichEditor
         _dragUndoPending = false;
         CancelObjectDrag(); // the dragged object is the old document's; a release would drop it into the new one
         CancelTableDraw();  // an armed "draw table" pick too: its first click would insert into the new document
+        // An armed TEXT drag likewise belongs to the document being replaced. The drop itself cannot reach the
+        // new document (the swap collapses the selection and PerformTextDrop needs one), but the arming left a
+        // drop caret following the pointer over a file just opened, and the next release took the deferred
+        // click path instead of an ordinary one.
+        CancelTextDrag();
         // State that belongs to the document being replaced: an armed format painter would paint the NEW
         // document's next selection with the OLD one's format, and a pending caret style would land on the
         // new document's first typed text (upstream's ResetInteractionState drops the latter the same way).
@@ -512,8 +517,10 @@ public partial class RichEditor
     // took the pointer). Nothing else clears a drag, so it outlived the button: the next plain hover went on
     // resizing the column, row or image under the pointer, or extending the selection. End whatever is live.
     // A normal release clears its own drag first (see EndColumnResize), so arriving after one is a no-op.
-    // Text drag & drop is left alone: ending it drops the text, and a lost capture is not a drop. An object
-    // drag is cancelled for the same reason — cancelled, not finished.
+    // An object drag and a text drag are CANCELLED, not finished — a lost capture is not a drop. (Leaving
+    // the text drag alone was once written here as deliberate, on the grounds that ending it would drop the
+    // text; ending is not dropping, and left armed it made the user's next click perform the drop —
+    // measured 2026-09-20.)
     private void OnCanvasPointerCaptureLost(object sender, PointerRoutedEventArgs e) => PointerCaptureLostCore();
 
     /// <summary>What a lost capture runs. A test's <c>IPointerCapture.Release</c> calls this the way WinUI
@@ -526,6 +533,7 @@ public partial class RichEditor
         if (_resizingRow) FinishRowResize();
         if (_resizingImage != null || _resizingInline != null) FinishImageResize();
         CancelObjectDrag();
+        CancelTextDrag();
         if (_tableDrawStart != null) CancelTableDraw(); // abandoned, not inserted: a lost capture is not a release
         if (_isSelecting) { _isSelecting = false; StopAutoScroll(); }
     }

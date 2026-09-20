@@ -56,6 +56,20 @@ public partial class RichEditor
         s.Capture.Capture();
     }
 
+    // Ends an armed text drag WITHOUT dropping — a lost capture is not a release (the same rule as
+    // CancelObjectDrag). Left armed, the drag outlived the button: the next plain hover kept moving the drop
+    // caret, and the next CLICK ran EndTextDrag with the stale preview and MOVED the selection somewhere the
+    // user never dropped it (measured 2026-09-20 through the pointer pipeline). Ending is not dropping.
+    private void CancelTextDrag()
+    {
+        if (!_dragTextArmed) return;
+        bool wasActive = _dragTextActive;
+        _dragTextArmed = false;
+        _dragTextActive = false;
+        _dropPreview = null;
+        if (wasActive) { SetCursorShape(InputSystemCursorShape.IBeam); InvalidateCanvas(); }
+    }
+
     // Pointer move while armed: past the slop the drag activates and the drop preview follows the pointer.
     private void DragTextMoved(Point docPt)
     {
