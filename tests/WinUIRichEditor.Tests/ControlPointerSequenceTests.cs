@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -319,6 +319,14 @@ public class ControlPointerSequenceTests
         _ => "?",
     }));
 
+    // Two gestures at the same point inside ONE test are a double-click unless the timing is cleared —
+    // the press then selects a word instead of doing what the test is about (see Hosted).
+    private static void NoRepeat(RichEditor ed)
+    {
+        T.GetField("_lastPressTime", NP)!.SetValue(ed, DateTime.MinValue);
+        T.GetField("_clickCount", NP)!.SetValue(ed, 0);
+    }
+
     private static void Select(RichEditor ed, Paragraph p, int from, int to)
     {
         T.GetField("_selStart", NP)!.SetValue(ed, new TextPointer(p, from));
@@ -484,6 +492,171 @@ public class ControlPointerSequenceTests
 
             Assert.False((bool)Field(ed, "_dragTextArmed")!, "the text drag survived the document swap");
             Assert.Null(Field(ed, "_dropPreview"));
+        });
+    }
+
+    // ---- what the modifiers do (phase 3) ------------------------------------------------------------
+    // These gestures had NO automated test before the pipeline: Ctrl and Shift were static reads of the
+    // real keyboard (InputKeyboardSource), which a test cannot set. They ride on the step now.
+
+    [Fact]
+    public void CtrlAtTheDrop_CopiesTheTableInsteadOfMovingIt()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("top"), Table(), Para("end"));
+            var tb = ed.Document!.Blocks.OfType<TableBlock>().Single();
+            var border = TableMoveBorder(ed, tb);
+            var cap = new FakeCapture(ed);
+            var drop = new Point(border.X, border.Y + 2000);
+
+            ed.PointerPressedCore(Step(border, cap));
+            ed.PointerMovedCore(Step(drop, cap, ctrl: true));
+            ed.PointerReleasedCore(Step(drop, cap, ctrl: true));
+
+            // Copied, not moved: there are two tables and the ORIGINAL instance is still in the document.
+            Assert.Equal(2, ed.Document!.Blocks.OfType<TableBlock>().Count());
+            Assert.Contains(tb, ed.Document!.Blocks);
+            Assert.Equal("top,T,∅,T,end", Shape(ed)); // the drop's landing paragraph is left behind empty
+        });
+    }
+
+    [Fact]
+    public void CtrlAtTheDrop_CopiesTheDraggedTextInsteadOfMovingIt()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("drag this text"), Para("target line"));
+            var paras = ed.Document!.Blocks.OfType<Paragraph>().ToArray();
+            Select(ed, paras[0], 0, 4); // "drag"
+            var inside = DocPointOf(ed, new TextPointer(paras[0], 2));
+            var target = DocPointOf(ed, new TextPointer(paras[1], 6));
+            var cap = new FakeCapture(ed);
+
+            ed.PointerPressedCore(Step(inside, cap));
+            Assert.True((bool)Field(ed, "_dragTextArmed")!, "the press inside the selection did not arm the drag");
+            ed.PointerMovedCore(Step(target, cap, ctrl: true));
+            ed.PointerReleasedCore(Step(target, cap, ctrl: true));
+
+            // A copy leaves the source intact and puts a second "drag" at the drop point.
+            string text = ed.GetPlainText();
+            Assert.Contains("drag this text", text);
+            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(text, "drag").Count);
+        });
+    }
+
+    [Fact]
+    public void CtrlClickOpensALink_APlainClickDoesNot_AndADragNeverDoes()
+    {
+        Hosted(ed =>
+        {
+            var launched = new List<string>();
+            ed.LaunchOverride = u => { launched.Add(u.ToString()); return Task.CompletedTask; };
+            try
+            {
+                var link = new Run { Text = "example", NavigateUri = "https://example.com/" };
+                var p = new Paragraph { Inlines = { link } };
+                Load(ed, p, Para("after"));
+                var para = ed.Document!.Blocks.OfType<Paragraph>().First();
+                var onLink = DocPointOf(ed, new TextPointer(para, 3));
+                var cap = new FakeCapture(ed);
+
+                // Plain click: the caret moves, nothing opens.
+                ed.PointerPressedCore(Step(onLink, cap));
+                ed.PointerReleasedCore(Step(onLink, cap));
+                Assert.Empty(launched);
+
+                // Ctrl+click: opens the link under the POINTER.
+                NoRepeat(ed);
+                ed.PointerPressedCore(Step(onLink, cap, ctrl: true));
+                ed.PointerReleasedCore(Step(onLink, cap, ctrl: true));
+                Assert.Equal(new[] { "https://example.com/" }, launched);
+            }
+            finally { ed.LaunchOverride = null; }
+        });
+    }
+
+    [Fact]
+    public void InAViewer_APlainClickOpensTheLink_ButADragOverItOnlySelects()
+    {
+        Hosted(ed =>
+        {
+            var launched = new List<string>();
+            ed.LaunchOverride = u => { launched.Add(u.ToString()); return Task.CompletedTask; };
+            try
+            {
+                var p = new Paragraph { Inlines = { new Run { Text = "example link", NavigateUri = "https://example.com/" } } };
+                Load(ed, p, Para("after"));
+                ed.IsReadOnly = true;
+                var para = ed.Document!.Blocks.OfType<Paragraph>().First();
+                var start = DocPointOf(ed, new TextPointer(para, 1));
+                var far = DocPointOf(ed, new TextPointer(para, 10));
+                var cap = new FakeCapture(ed);
+
+                // A drag across the link selects it (browser convention) — and opens nothing.
+                ed.PointerPressedCore(Step(start, cap));
+                ed.PointerMovedCore(Step(far, cap));
+                ed.PointerReleasedCore(Step(far, cap));
+                Assert.Empty(launched);
+                Assert.NotEqual(((TextPointer)Field(ed, "_selStart")!).Offset,
+                                ((TextPointer)Field(ed, "_selEnd")!).Offset); // it selected instead
+
+                // A click that stays put opens it. (Without this the second press at the same point is a
+                // DOUBLE-click, which selects the word — and a selection suppresses the launch.)
+                NoRepeat(ed);
+                ed.PointerPressedCore(Step(start, cap));
+                ed.PointerReleasedCore(Step(start, cap));
+                Assert.Equal(new[] { "https://example.com/" }, launched);
+            }
+            finally { ed.LaunchOverride = null; ed.IsReadOnly = false; }
+        });
+    }
+
+    [Fact]
+    public void ShiftPress_ExtendsTheSelectionFromWhereItWas()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("first line here"), Para("second line here"));
+            var paras = ed.Document!.Blocks.OfType<Paragraph>().ToArray();
+            var a = DocPointOf(ed, new TextPointer(paras[0], 2));
+            var b = DocPointOf(ed, new TextPointer(paras[1], 6));
+            var cap = new FakeCapture(ed);
+
+            ed.PointerPressedCore(Step(a, cap));
+            ed.PointerReleasedCore(Step(a, cap));
+            var start = (TextPointer)Field(ed, "_selStart")!;
+            Assert.Same(paras[0], start.Paragraph);
+            Assert.Equal(start.Offset, ((TextPointer)Field(ed, "_selEnd")!).Offset); // a plain click selects nothing
+
+            ed.PointerPressedCore(Step(b, cap, shift: true));
+            ed.PointerReleasedCore(Step(b, cap, shift: true));
+
+            // Shift moved only the far end: the anchor is still where the first click put it.
+            var end = (TextPointer)Field(ed, "_selEnd")!;
+            Assert.Same(paras[0], ((TextPointer)Field(ed, "_selStart")!).Paragraph);
+            Assert.Same(paras[1], end.Paragraph);
+            Assert.Equal(6, end.Offset);
+        });
+    }
+
+    [Fact]
+    public void TheWheel_ZoomsOnlyWithCtrl()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("text"));
+            double at100 = ed.Zoom;
+
+            Assert.False(ed.PointerWheelCore(120, ctrl: false), "a plain wheel was handled (the view could not scroll)");
+            Assert.Equal(at100, ed.Zoom, 3);
+
+            Assert.True(ed.PointerWheelCore(120, ctrl: true));
+            Assert.True(ed.Zoom > at100, "Ctrl+wheel did not zoom in");
+            Assert.True(ed.PointerWheelCore(-120, ctrl: true));
+            Assert.Equal(at100, ed.Zoom, 2);
+
+            Assert.False(ed.PointerWheelCore(0, ctrl: true)); // no notch, nothing to do
         });
     }
 

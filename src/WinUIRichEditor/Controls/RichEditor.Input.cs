@@ -505,12 +505,15 @@ public partial class RichEditor
     // Ctrl+wheel zoom (Word/browser convention): ~10% per notch, clamped by SetZoom, which also leaves
     // fit-to-width mode. Handled so the ScrollViewer doesn't scroll instead; a plain wheel falls through.
     private void OnCanvasPointerWheel(object sender, PointerRoutedEventArgs e)
+        => e.Handled = PointerWheelCore(e.GetCurrentPoint(_canvas).Properties.MouseWheelDelta, Ctrl);
+
+    /// <summary>The wheel, driven by its two inputs. Returns whether it was handled — the ScrollViewer
+    /// scrolls when it was not (see RichEditor.PointerPipeline.cs for why the modifier is a parameter).</summary>
+    internal bool PointerWheelCore(int delta, bool ctrl)
     {
-        if (!Ctrl) return;
-        int delta = e.GetCurrentPoint(_canvas).Properties.MouseWheelDelta;
-        if (delta == 0) return;
+        if (!ctrl || delta == 0) return false;
         SetZoom(EffectiveZoom * Math.Pow(1.1, delta / 120.0));
-        e.Handled = true;
+        return true;
     }
 
     // Capture can end without a release reaching the canvas (the window deactivated mid-drag, another element
