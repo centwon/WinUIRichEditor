@@ -10,7 +10,7 @@ AvaloniaRichEditor와 **바이트 호환**(동일 DTO·직렬화 로직 이식)�
 
 HTML 입출력(`HtmlDocumentFormatter.ToHtml`/`ParseHtml`)은 **교환용**이며 손실이 있을 수 있다(예: 행 높이, 일부 여백). 무손실 보존이 필요하면 JSON/`.flow`를 사용한다.
 
-> 컨트롤 수준 편의 래퍼(`RichEditor.ToJson()`/`LoadJson()` 등)는 아직 미구현 — 현재는 정적 포매터를 직접 호출하고, 데모는 파일 피커에서 이를 사용한다(`samples/WinUIRichEditor.Demo/MainPage.xaml.cs`).
+> 컨트롤 수준 편의 래퍼는 `RichEditor.ToJson()`/`LoadJson()`/`SavePackageAsync()`/`LoadPackageAsync()`다. 에디터의 로드 경로는 **엄격**하다 — `Blocks` 없는 JSON은 `JsonException`, `document.json` 없는 zip은 `InvalidDataException`으로 거부하고 **열린 문서를 지킨다**. 정적 `DocumentSerializer.Deserialize`는 관대한 채다(파싱 실패 시 빈 문서).
 >
 > 구현 소스: [`DocumentSerializer.cs`](../src/WinUIRichEditor/Formatters/DocumentSerializer.cs), [`DocumentPackage.cs`](../src/WinUIRichEditor/Formatters/DocumentPackage.cs). 이 명세와 코드가 다르면 코드가 우선이고, 이 문서를 고친다.
 
@@ -59,9 +59,20 @@ FlowDocument
   "Blocks": [ /* BlockDto[] */ ],
   "Images": {                    // 이미지 풀 (이미지가 없으면 생략)
     "<SHA256 hex(대문자)>": { "Data": "<base64>", "MimeType": "image/jpeg" }
-  }
+  },
+  "PageSetup": {                 // 선택 — 연속(Continuous) 문서에는 없다
+    "PageSize": "A4", "Orientation": "Portrait", "ShowPageBoundaries": true,
+    "Header": null, "Footer": null, "ShowPageNumbers": false
+  },
+  "HeadingFormat": 1             // 선택 — 1이면 제목의 굵게·크기가 이미 런에 적혀 있다
 }
 ```
+
+- **`PageSetup`**: 열거형은 이름으로 쓴다(모르는 값은 기본값으로 degrade). 상류 AvaloniaRichEditor는 이 객체를 무시한다(내용 전용 형식).
+- **`HeadingFormat`**(1.2.0 도입): `1`은 제목의 굵게·제목 크기가 **런의 글자 속성으로 저장돼 있다**는 표시다.
+  이 표식이 없는 파일(옛 버전·상류가 쓴 것)은 렌더러가 제목을 강제하던 시절의 것이라, **에디터가 받을 때 한 번**
+  런에 적어 넣는다(`HeadingStyle.Materialize`). **판독기는 변환하지 않는다** — 저장된 모델 그대로 읽는다.
+  상류는 모르는 속성을 무시한다.
 
 #### 버전 이력
 
@@ -72,6 +83,9 @@ FlowDocument
 | (없음)/`1` | 초기 형식. 이미지는 블록마다 인라인 base64(`ImageBase64`) | 항상 지원(레거시 폴백) |
 | `2` | 문서 수준 `Images` 풀 도입. 블록은 `ImageRef`(SHA-256 hex 키)로 참조. 동일 이미지 1회 저장 | v1 필드(`ImageBase64`, `IsListItem`)는 읽기 폴백 유지 |
 | `"1.0"` (현재) | 안정 기준선. 정수→SemVer 표기 전환 + 이미지 풀 + **글자 크기 pt** + **비례 줄 간격(`LineSpacing`)** | 레거시 정수 버전 문서를 그대로 읽음 |
+
+> 버전 문자열은 `"1.0"`에서 움직이지 않는다. 그 뒤에 더해진 것(`PageSetup`, 1.2.0의 `HeadingFormat`)은 전부
+> **선택 필드**라 모르는 판독기가 무시하면 그만이고, 상류 AvaloniaRichEditor와의 바이트 호환도 유지된다.
 
 - 풀 키 = **원본 인코딩 바이트의 SHA-256, 대문자 16진 문자열** (`Convert.ToHexString`).
 - 로드 시 풀 항목은 한 번만 디코드되고, 같은 키를 참조하는 모든 블록이 **동일한 `byte[]` 인스턴스를 공유**한다.
@@ -88,7 +102,7 @@ FlowDocument
 |---|---|---|---|
 | `Indent` | number | 항상 | 0 (왼쪽 여백 px) |
 | `MarginTop` | number? | 항상 | 없으면 **0** |
-| `MarginBottom` | number? | 항상 | 없으면 **10** (Divider는 0) — 여백 도입 이전 문서의 기존 룩 유지 |
+| `MarginBottom` | number? | 항상 | **문단·Divider는 0**, 이미지·표는 **10**. (1.2.0에서 문단 기본값이 10 → 0으로 바뀌었다 — HWP처럼 줄 간격만으로 문단을 나눈다. 저장된 파일은 값을 적어 두므로 그대로다.) |
 
 #### `Type: "Paragraph"`
 
@@ -97,7 +111,7 @@ FlowDocument
 | `Inlines` | InlineDto[] | 인라인 목록 (아래 §2.4) |
 | `TextAlignment` | string | `Microsoft.UI.Xaml.TextAlignment` 이름(`"Left"`/`"Center"`/`"Right"`/`"Justify"` 등). 파싱 실패 시 Left (레거시 Avalonia 이름과 동일해 그대로 호환) |
 | `LineHeight` | number? | 절대 줄 높이 px("고정값"). 없으면 NaN(=미설정). `LineSpacing` 설정 시 무시됨 |
-| `LineSpacing` | number? | 비례 줄 간격 배수(1.0=단일, 1.5=1.5줄, 2.0=2배 — HWP %÷100). 글자 크기에 비례. 없으면 NaN. `LineHeight`보다 우선 |
+| `LineSpacing` | number? | 비례 줄 간격 배수(HWP %÷100 — 줄 높이 = 문단에서 가장 큰 글자 크기 × 값). 없으면 NaN이고 **그리기 기본값은 1.6(160%)** — 1.2.0에서 폰트 고유 높이(≈1.2)에서 바뀌었다. `LineHeight`보다 우선 |
 | `MarginRight` | number? | 오른쪽 여백 px(줄바꿈 폭 축소). **문단 전용**. 없으면 0 |
 | `ListType` | string | `"None"`/`"Bullet"`/`"Ordered"`. 파싱 실패 시 레거시 `IsListItem` 참조 |
 | `ListMarker` | string? | 글머리표/번호 모양: `Disc`/`Circle`/`Square`/`Dash`(글머리표), `Decimal`/`DecimalParen`/`LowerAlpha`/`UpperAlpha`/`LowerRoman`(번호). 없으면 `Default`(•/"1.") |
