@@ -194,12 +194,22 @@ public partial class RichEditor
     /// <summary>Launches the hyperlink at the caret in the system browser, if any.</summary>
     public Task OpenLinkAtCaretAsync() => OpenUriAsync(CurrentLinkUri());
 
+    // Test seam: set, the URI goes here instead of the system browser. WHICH gesture launches a link
+    // (Ctrl+click when editable, a plain click in a viewer, and neither on a drag) had no automated test
+    // at all, because asserting it means launching a browser on the test machine. The decision itself
+    // (IsLaunchableLink) is tested directly; this covers the path that reaches it.
+    internal Func<Uri, Task>? LaunchOverride { get; set; }
+
     // Launches a specific absolute URI. Callers that captured the link at press time (the read-only
     // plain-click path) pass it in rather than re-reading the caret, which may have moved since.
     internal async Task OpenUriAsync(string? url)
     {
         if (!IsLaunchableLink(url, out var uri)) return;
-        try { await Windows.System.Launcher.LaunchUriAsync(uri); }
+        try
+        {
+            if (LaunchOverride is { } launch) await launch(uri);
+            else await Windows.System.Launcher.LaunchUriAsync(uri);
+        }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
     }
 
