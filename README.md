@@ -15,11 +15,12 @@ dotnet add package WinUIRichEditor
 
 **Requirements:** .NET 10 · Windows 10 build 26100+ · **Windows App SDK 2.2.1 or later**.
 
-> **Status: 1.1 — the public API follows SemVer and is tracked in `PublicAPI.Shipped.txt`,** so it cannot
-> change unnoticed. 1.1 adds no features: it fixes nine defects that lost or corrupted document content on
-> save, and adds the first control-level and render-pixel tests. **No breaking changes** — see
-> [`CHANGELOG.md`](https://github.com/centwon/WinUIRichEditor/blob/main/CHANGELOG.md) for the upgrade notes (outgoing RTF changed shape in several places for
-> Word/HWP fidelity). [`Project_Roadmap.md`](https://github.com/centwon/WinUIRichEditor/blob/main/Project_Roadmap.md) is the engineering log.
+> **Status: 1.2 — the public API follows SemVer and is tracked in `PublicAPI.Shipped.txt`,** so it cannot
+> change unnoticed. 1.2 is the first feature release since the freeze and **adds only 7 dependency
+> properties**, so upgrading needs no code edits — but a few behaviours changed, two of them visible in
+> existing documents (line spacing is now HWP-style, and a heading's bold/size are character properties).
+> Read the upgrade notes at the top of [`CHANGELOG.md`](https://github.com/centwon/WinUIRichEditor/blob/main/CHANGELOG.md).
+> [`Project_Roadmap.md`](https://github.com/centwon/WinUIRichEditor/blob/main/Project_Roadmap.md) is the engineering log.
 
 It is a port of [AvaloniaRichEditor](https://github.com/centwon/AvaloniaRichEditor) — the same document
 model, formatters, and "single `TextLayout` is the source of truth" engine design, rebuilt on the
@@ -53,8 +54,10 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
 
 **Text & formatting**
 - Bold / italic / underline / strikethrough, font family & size, foreground & highlight color, clear formatting
-- Paragraph alignment, headings (H1–H6), blockquote, indent, bullet / numbered lists, **custom line spacing**
-- **Hyperlinks** (insert / edit / open / remove), **format painter**
+- Paragraph alignment, headings (H1–H6), blockquote, indent, bullet / numbered lists, **HWP-style line
+  spacing** (a multiple of the font size, 160 % by default)
+- **Hyperlinks** (insert / edit / open / remove — http/https only), **format painter**, **find & replace**
+  (Ctrl+F/H, F3, built-in find bar)
 - Caret + drag/Shift selection, double-click word / triple-click paragraph select, **undo/redo**
 - Keyboard: arrows, Home/End (visual line), **Ctrl+←/→ word**, **Ctrl+Home/End document**, **Ctrl+Backspace/Delete
   word delete**, **PageUp/PageDown**, and shortcuts (Ctrl+B/I/U, Ctrl+Z/Y, Ctrl+C/X/V, **Ctrl+Shift+V** plain paste)
@@ -62,13 +65,16 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
 
 **Tables**
 - colspan/rowspan, nested tables, recursive cell content (paragraphs, images, dividers, nested tables)
-- Tab cell navigation, right-click row/column insert·delete, **cell merge/split**, drag-select cells
+- Tab cell navigation, right-click row/column insert·delete, **cell merge/split**, drag-select cells,
+  **single-cell selection (F5)** and Shift+arrow cell blocks
 - **Draw-to-size insert** (toolbar grid picker), **column-width & row-height resize** (drag borders),
-  table block selection, **block↔inline ("treat as character") toggle**
+  table block selection, **drag a table to move it** (Ctrl to copy), **block↔inline ("treat as character") toggle**
 
 **Images**
-- Block & inline rendering (async GPU decode), insert from file, **clipboard image paste**, **drag-and-drop image files**
-- Click-to-select with **resize handles** (aspect-locked), right-click **copy** / size presets / replace / save / delete
+- Block & inline rendering (async GPU decode at the drawn size), insert from file, **clipboard image paste**,
+  **drag-and-drop image files**, **drag a picture to move it** (Ctrl to copy)
+- Click-to-select with **resize handles** — corner (aspect-locked), right edge (width), bottom edge (height);
+  right-click **copy** / size presets / replace / save / delete
 
 **Clipboard & I/O**
 - Internal rich copy/paste, **RTF**, external **HTML** (`CF_HTML`), **image**, and **Excel/TSV→table** paste;
@@ -79,11 +85,16 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
 **Page view, print & PDF**
 - `PageSize` / `PageOrientation` / `ShowPageBoundaries`, stacked page view with **line-aware page breaks**,
   headers / footers / page numbers
-- `RenderPrintPage(i, dpi)` (offscreen bitmap) and `SavePdf(stream)` (rasterized pages → PDF)
+- **Vector printing** (`CanvasPrintDocument`, printer resolution, real text — the dialog opens under Native
+  AOT too) and **`SavePdf(stream)` → a text PDF** via "Microsoft Print to PDF", no dialog; plus
+  `RenderPrintPage(i, dpi)` for an offscreen bitmap
 
 **Host controls & chrome**
-- Drop-in **`RichEditorView`** (toolbar + page/zoom chrome + editor + status bar + **Export/Import/Print**)
-  and a standalone **`RichEditorToolbar`** (`LeadingItems`/`TrailingItems` host slots, wrap-on-narrow)
+- Drop-in **`RichEditorView`** (toolbar + page/zoom chrome + editor + status bar + **Export/Import/Print** +
+  find bar) and a standalone **`RichEditorToolbar`** (`LeadingItems`/`TrailingItems` host slots,
+  wrap-on-narrow); the toolbar's own settings (`Target`, `ToolbarLevel`, `ShowPageControls`,
+  `ShowFileActions`) and the view's (`ShowStatusBar`, `ShowFileActions`, `ShowBuiltInFindBar`) are
+  **bindable dependency properties**
 - **Icon theming**: built-in Segoe Fluent Icons glyphs, host-overridable per slot via `RichEditorIcons.Provider`
 - **Capability**: `IsReadOnly` (a viewer is `IsReadOnly=true` + no/minimal toolbar) + feature flags
   (`AllowImages` / `AllowTables` / `AllowRichPaste`). Toolbar density via **`ToolbarLevel`** (Minimal / Normal / Maximum)
@@ -132,7 +143,7 @@ page (see `samples/.../ViewDemoPage.xaml`). File pickers need HWND interop (`Ini
 
 ```
 dotnet build WinUIRichEditor.slnx
-dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 304 tests (see below)
+dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 815 tests (see below)
 dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj
 # run the unpackaged exe directly:
 #   samples/WinUIRichEditor.Demo/bin/Debug/net10.0-windows10.0.26100.0/win-x64/WinUIRichEditor.Demo.exe
@@ -143,9 +154,12 @@ A running instance locks the exe — stop it before rebuilding:
 
 The suite is mostly headless (document model, `TextRange`, all four formatters, plus a randomized
 edit-sequence fuzz that round-trips every format twice), and since 1.1 it also covers the **control**
-layer — caret geometry at 100/200/300 % zoom, the real system clipboard, pagination, the context menu and
-IME state — and **render pixels**, off-screen through `RenderPrintPage`. Widen the fuzz with
-`RICHEDITOR_FUZZ_SEEDS=20000` when touching a formatter; the committed default is 400 seeds (~3 s).
+layer — caret geometry at 100/200/300 % zoom, edit commands, feature-flag gates, the document-API contract
+that protects an open document, hyperlinks, host events, table and picture resizing, the real system
+clipboard, pagination, the context menu and IME state — and **render pixels**, off-screen through
+`RenderPrintPage`. Widen the fuzz with `RICHEDITOR_FUZZ_SEEDS=20000` when touching a formatter; the
+committed default is 400 seeds (~3 s). A clipboard test can go red on contention with other apps — rerun it
+alone before blaming a change.
 
 The demo is a **four-page nav shell**, one per library layer: **컨트롤** (bare `RichEditor`),
 **읽기 전용** (`IsReadOnly=true`), **컨트롤+툴바** (`RichEditor` + `RichEditorToolbar`), and **View**
@@ -159,9 +173,15 @@ activation in the model/formatter layer), and the **self-contained** profile
 (`samples/.../PublishProfiles/win-x64.pubxml`: `PublishAot` + `SelfContained` + `PublishSingleFile` +
 `PublishTrimmed`, `WindowsAppSDKSelfContained=true`) builds cleanly with 0 trim/AOT warnings, runs, and
 renders — Win2D `CanvasTextLayout`, `CanvasDevice` and `CanvasFontSet` all activate under AOT. Measured at
-1.1: a **14.5 MB** native exe, 85.7 MB published, with no `coreclr.dll`, `clrjit.dll` or managed
-`WinUIRichEditor.dll` in the output. (An earlier "crashes at startup in `combase 0x80004005`" was a
+1.2: a **15.2 MB** native exe, 74.6 MB published (excluding the PDB), with no `coreclr.dll`, `clrjit.dll` or
+managed `WinUIRichEditor.dll` in the output. (An earlier "crashes at startup in `combase 0x80004005`" was a
 *framework-dependent*-only limitation; the self-contained bundle supplies WinRT activation.)
+
+**Publishing and rendering is not proof of equivalence.** 1.1.0 shipped broken under AOT because
+`CanvasTextLayout.LineMetrics` cannot be marshalled ahead-of-time and every caller silently fell back —
+the build ran and drew text, but the caret could not move across a wrapped line. Since then every release
+runs `tools/fault-sweep.ps1`, which drives the same edit sequence through a JIT build and an AOT publish
+and compares both the faults the library reported and the resulting document text.
 
 The library sets `GenerateLibraryLayout`. It also used to need an MSBuild target that stripped stale
 `windowsappsdk.winui\1.8` PRIs to clear a `PRI277` merge conflict; **that target is gone** — both projects

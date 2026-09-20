@@ -565,3 +565,10 @@ static readonly WinUIRichEditor.Controls.RichEditor.ShowPageBoundariesProperty -
 static readonly WinUIRichEditor.Controls.RichEditor.ShowPageNumbersProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.TextForegroundProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.ZoomProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditorToolbar.ShowFileActionsProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditorToolbar.ShowPageControlsProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditorToolbar.TargetProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditorToolbar.ToolbarLevelProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditorView.ShowBuiltInFindBarProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditorView.ShowFileActionsProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static readonly WinUIRichEditor.Controls.RichEditorView.ShowStatusBarProperty -> Microsoft.UI.Xaml.DependencyProperty!
