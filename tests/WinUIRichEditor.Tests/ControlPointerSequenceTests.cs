@@ -73,6 +73,12 @@ public class ControlPointerSequenceTests
         var ed = Shared.Value;
         UiThread.Run(() =>
         {
+            // These tests press real points on ONE shared editor, milliseconds apart. Without this, a press
+            // at (nearly) the same point as the previous test's is a DOUBLE-CLICK — the press selects a word
+            // instead of arming a drag, and the failure reads as a product defect in whichever test happens
+            // to run second (it did: "the press inside the selection did not arm the drag").
+            T.GetField("_lastPressTime", NP)!.SetValue(ed, DateTime.MinValue);
+            T.GetField("_clickCount", NP)!.SetValue(ed, 0);
             try { body(ed); }
             finally { Call(ed, "CancelTableDraw"); Call(ed, "EndPointerDrags"); ed.IsReadOnly = false; }
         });
@@ -286,6 +292,198 @@ public class ControlPointerSequenceTests
 
             Assert.Equal(1, Tables(ed));
             Assert.Equal(after, ed.ToJson());
+        });
+    }
+
+    // ---- picture handle, object drag, text drag (phase 2) -------------------------------------------
+
+    private static Rect TableRect(RichEditor ed, TableBlock tb)
+    {
+        var rects = (IDictionary)Field(ed, "_tableRects")!;
+        Assert.True(rects.Contains(tb), "the table recorded no rect — did it draw?");
+        return (Rect)rects[tb]!;
+    }
+
+    // The left border band, where the SizeAll cursor promises a move.
+    private static Point TableMoveBorder(RichEditor ed, TableBlock tb)
+    {
+        var r = TableRect(ed, tb);
+        return new Point(r.X + 1, r.Y + r.Height / 2);
+    }
+
+    private static string Shape(RichEditor ed) => string.Join(",", ed.Document!.Blocks.Select(b => b switch
+    {
+        TableBlock => "T",
+        ImageBlock => "I",
+        Paragraph p => string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text)) is { Length: > 0 } s ? s : "∅",
+        _ => "?",
+    }));
+
+    private static void Select(RichEditor ed, Paragraph p, int from, int to)
+    {
+        T.GetField("_selStart", NP)!.SetValue(ed, new TextPointer(p, from));
+        T.GetField("_selEnd", NP)!.SetValue(ed, new TextPointer(p, to));
+        T.GetField("_caret", NP)!.SetValue(ed, new TextPointer(p, to));
+    }
+
+    [Fact]
+    public void AnObjectDragGesture_MovesTheTable_AndALostCaptureDropsNothing()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("top"), Table(), Para("mid"), Para("end"));
+            var tb = ed.Document!.Blocks.OfType<TableBlock>().Single();
+            var border = TableMoveBorder(ed, tb);
+            var cap = new FakeCapture(ed);
+
+            // A lost capture mid-drag is not a drop: the table stays where it was.
+            ed.PointerPressedCore(Step(border, cap));
+            Assert.True(cap.Held, "the press on the table border did not take the pointer");
+            ed.PointerMovedCore(Step(new Point(border.X, border.Y + 2000), cap));
+            cap.Lose();
+            Assert.Equal("top,T,mid,end", Shape(ed));
+            Assert.Null(Field(ed, "_dragObject"));
+
+            // The same gesture, released: it moves.
+            Draw(ed);
+            border = TableMoveBorder(ed, tb);
+            ed.PointerPressedCore(Step(border, cap));
+            ed.PointerMovedCore(Step(new Point(border.X, border.Y + 2000), cap));
+            ed.PointerReleasedCore(Step(new Point(border.X, border.Y + 2000), cap));
+            Assert.Equal("top,mid,T,end", Shape(ed)); // the drop snaps to the last line it reached
+
+            Assert.False(cap.Held);
+        });
+    }
+
+    // A lost capture must not leave a text drag armed. Left armed, the NEXT click performs the drop the
+    // user never made: the press does not clear the arming, and the release runs EndTextDrag with the stale
+    // drop preview — the selection moves on a plain click. (Port-only: upstream has no in-document text
+    // drag, only external file drop, so there was no precedent to compare against.)
+    [Fact]
+    public void LosingTheCaptureMidTextDrag_DoesNotMoveTheTextOnTheNextClick()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("drag this text"), Para("target line"));
+            var paras = ed.Document!.Blocks.OfType<Paragraph>().ToArray();
+            Select(ed, paras[0], 0, 14);
+            var inside = DocPointOf(ed, new TextPointer(paras[0], 6));   // strictly inside the selection
+            var target = DocPointOf(ed, new TextPointer(paras[1], 6));
+            var cap = new FakeCapture(ed);
+
+            ed.PointerPressedCore(Step(inside, cap));
+            Assert.True((bool)Field(ed, "_dragTextArmed")!, "the press inside the selection did not arm the drag");
+            ed.PointerMovedCore(Step(target, cap));                      // past the slop: drop preview live
+            cap.Lose();
+
+            Assert.False((bool)Field(ed, "_dragTextArmed")!, "the text drag survived the lost capture");
+
+            // What that costs when it survives: the user's next click drops the text.
+            string before = ed.GetPlainText();
+            ed.PointerPressedCore(Step(target, cap));
+            ed.PointerReleasedCore(Step(target, cap));
+            Assert.Equal(before, ed.GetPlainText());
+        });
+    }
+
+    private static ImageBlock Picture(int w, int h)
+    {
+        var img = new ImageBlock { Width = w, Height = h };
+        img.SetImageData(ControlImageDecodeTests.SolidBmp(w, h, 200, 40, 40), "image/bmp");
+        return img;
+    }
+
+    // The corner handle of a selected block picture, at the rect it was DRAWN at.
+    private static Point CornerHandle(RichEditor ed, ImageBlock img)
+    {
+        var r = ((IEnumerable<Rect>)Call(ed, "BlockImageHandleRects", img)!).First();
+        return new Point(r.Right, r.Bottom);
+    }
+
+    [Fact]
+    public void APictureResizeGesture_ResizesIt_AndALostCaptureEndsTheDragKeepingTheSize()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("top"), Picture(120, 80), Para("end"));
+            // Load round-trips through the serializer, so the picture in the document is a NEW instance —
+            // the one built above is not in it (that mistake cost a run here).
+            var img = ed.Document!.Blocks.OfType<ImageBlock>().Single();
+            T.GetField("_selectedBlock", NP)!.SetValue(ed, img);
+            Draw(ed);
+            var cap = new FakeCapture(ed);
+
+            // Released normally: the picture keeps the dragged size and nothing stays live.
+            var grip = CornerHandle(ed, img);
+            ed.PointerPressedCore(Step(grip, cap));
+            Assert.True(cap.Held, "the press on the handle did not take the pointer");
+            ed.PointerMovedCore(Step(new Point(grip.X + 60, grip.Y + 40), cap));
+            ed.PointerReleasedCore(Step(new Point(grip.X + 60, grip.Y + 40), cap));
+            double resized = img.Width;
+            Assert.True(resized > 120, $"the drag did not resize the picture (width {resized})");
+            Assert.Null(Field(ed, "_resizingImage"));
+            Assert.False(cap.Held);
+
+            // Lost mid-drag: the size the user dragged to is kept (capture-lost FINISHES a resize), and the
+            // drag ends — the hover that follows must not go on resizing.
+            Draw(ed);
+            grip = CornerHandle(ed, img);
+            ed.PointerPressedCore(Step(grip, cap));
+            ed.PointerMovedCore(Step(new Point(grip.X + 30, grip.Y + 20), cap));
+            cap.Lose();
+            double afterLost = img.Width;
+            Assert.True(afterLost > resized, "the lost capture threw away the drag");
+            Assert.Null(Field(ed, "_resizingImage"));
+            ed.PointerMovedCore(Step(new Point(grip.X + 400, grip.Y + 300), cap));
+            Assert.Equal(afterLost, img.Width, 1);
+        });
+    }
+
+    // A document swapped in mid-drag (a file opened, an undo) belongs to nobody's drag: the armed object is
+    // in the document that is gone, so the move and the release must leave the new one alone.
+    [Fact]
+    public void ReplacingTheDocumentMidDrag_LeavesTheNewOneAlone()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("top"), Table(), Para("end"));
+            var tb = ed.Document!.Blocks.OfType<TableBlock>().Single();
+            var border = TableMoveBorder(ed, tb);
+            var cap = new FakeCapture(ed);
+
+            ed.PointerPressedCore(Step(border, cap));
+            Load(ed, Para("new file"), Para("second")); // the document the drag was about is gone
+            Assert.Null(Field(ed, "_dragObject"));
+
+            ed.PointerMovedCore(Step(new Point(border.X, border.Y + 500), cap));
+            ed.PointerReleasedCore(Step(new Point(border.X, border.Y + 500), cap));
+
+            Assert.Equal("new file,second", Shape(ed));
+            Assert.False(ed.IsModified, "the new document was modified by a drag from the old one");
+        });
+    }
+
+    // The same rule for an armed TEXT drag. Weaker consequence than the lost-capture case above — the swap
+    // collapses the selection, so the drop cannot reach the new document — but the arming left a drop caret
+    // trailing the pointer over a file just opened, so this asserts the state rather than a changed document.
+    [Fact]
+    public void ReplacingTheDocumentMidTextDrag_DisarmsIt()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("drag this text"), Para("target line"));
+            var paras = ed.Document!.Blocks.OfType<Paragraph>().ToArray();
+            Select(ed, paras[0], 0, 14);
+            var cap = new FakeCapture(ed);
+
+            ed.PointerPressedCore(Step(DocPointOf(ed, new TextPointer(paras[0], 6)), cap));
+            Assert.True((bool)Field(ed, "_dragTextArmed")!);
+
+            Load(ed, Para("new file"));
+
+            Assert.False((bool)Field(ed, "_dragTextArmed")!, "the text drag survived the document swap");
+            Assert.Null(Field(ed, "_dropPreview"));
         });
     }
 
