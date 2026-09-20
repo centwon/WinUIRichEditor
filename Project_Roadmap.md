@@ -12,11 +12,11 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 
 ---
 
-## ✅ 현재 상태 (2026-09-20 · `1.2.0` 준비)
+## ✅ 현재 상태 (2026-09-20 · `1.2.0` 게시)
 
 | | |
 |---|---|
-| 릴리스 | 1.0.0(07-31, **API 동결**) → 1.1.0(08-07) → 1.1.1(09-06, AOT 결함 수정) → **1.2.0 준비 중** |
+| 릴리스 | 1.0.0(07-31, **API 동결**) → 1.1.0(08-07) → 1.1.1(09-06, AOT 결함 수정) → **1.2.0(09-20 게시)** |
 | 빌드 | 라이브러리 0 warn / 0 err (테스트 프로젝트에 xUnit1031 1건 — 블로킹 대기, 기존) |
 | 테스트 | **815** (1.0 시점 106). OS 클립보드 테스트는 경합으로 간헐적 빨강 — 단독 재실행으로 확인 |
 | AOT | self-contained 게시 성공(2026-09-20): 네이티브 exe **15.2MB**, 게시 **74.6MB**(pdb 제외), CoreCLR·관리 dll 없음 |
@@ -52,7 +52,9 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
       `FindNext`/`FindAgain`/`LastFindQuery` · `SavePdf`.
       ⚠ "PDF가 써졌다"만으로는 벡터인지 비트맵 폴백인지 모른다 — 산출물을 열어 `Producer: Microsoft: Print To PDF`,
       **글꼴 서브셋 2 + ToUnicode 2, 이미지 XObject 0**으로 벡터 경로임을 확인했다.
-- [ ] `v1.2.0` 태그 푸시 → 워크플로 · nuget.org 인덱싱 · GitHub Release
+- [x] `v1.2.0` 태그 푸시(2026-09-20) → PR #47 머지(CI 초록) · publish 워크플로 success(`.nupkg`·`.snupkg`
+      push 완료, Trusted Publishing) · [GitHub Release](https://github.com/centwon/WinUIRichEditor/releases/tag/v1.2.0) 작성.
+      nuget.org 검색·복원 인덱싱은 push 뒤 수 분에서 길게는 한 시간까지 걸린다 — 안 보인다고 재게시하지 말 것
 
 ## 다음 우선순위 (1.3)
 
