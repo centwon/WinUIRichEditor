@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -312,7 +312,7 @@ public class ControlContextMenuTests
 
                 object Cursor(Windows.Foundation.Point pt)
                 {
-                    typeof(RichEditor).GetMethod("UpdateHoverCursor", NP)!.Invoke(ed, new object[] { pt });
+                    typeof(RichEditor).GetMethod("UpdateHoverCursor", NP)!.Invoke(ed, new object[] { pt, false });
                     return typeof(RichEditor).GetField("_cursorShape", NP)!.GetValue(ed)!;
                 }
                 bool Select(Windows.Foundation.Point pt) => (bool)typeof(RichEditor).GetMethod("TrySelectTableBlock", NP)!.Invoke(ed, new object[] { pt })!;

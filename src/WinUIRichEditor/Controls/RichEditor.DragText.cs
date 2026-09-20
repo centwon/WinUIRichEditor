@@ -46,14 +46,14 @@ public partial class RichEditor
     }
 
     // Arms the drag; the caller has checked CanArmTextDragAt (via ChooseTextPress).
-    private void ArmTextDrag(Point docPt, PointerRoutedEventArgs e)
+    private void ArmTextDrag(Point docPt, PointerStep s)
     {
         _dragTextArmed = true;
         _dragTextActive = false;
         _dragTextStart = docPt;
-        _dragTextPressCtrl = Ctrl;
+        _dragTextPressCtrl = s.Ctrl;
         _dropPreview = null;
-        _canvas.CapturePointer(e.Pointer);
+        s.Capture.Capture();
     }
 
     // Pointer move while armed: past the slop the drag activates and the drop preview follows the pointer.
@@ -70,21 +70,21 @@ public partial class RichEditor
     }
 
     // Pointer release: a real drag performs the move/copy; an unmoved press is the deferred plain click.
-    private void EndTextDrag(PointerRoutedEventArgs e)
+    private void EndTextDrag(PointerStep s)
     {
         bool wasDrag = _dragTextActive;
         var drop = _dropPreview;
         _dragTextArmed = false;
         _dragTextActive = false;
         _dropPreview = null;
-        _canvas.ReleasePointerCapture(e.Pointer);
+        s.Capture.Release();
         SetCursorShape(InputSystemCursorShape.IBeam);
 
         if (!wasDrag)
         {
             // The press deferred the usual click handling (so the selection survived a potential drag);
             // do it now: caret to the click point, selection collapsed.
-            var pt = ViewToDoc(e.GetCurrentPoint(_canvas).Position);
+            var pt = ViewToDoc(s.ViewPos);
             if (GetPositionFromPoint(pt) is { Paragraph: not null } tp)
             {
                 _caret = tp;
@@ -106,7 +106,7 @@ public partial class RichEditor
         }
 
         if (drop?.Paragraph == null) { InvalidateCanvas(); return; }
-        PerformTextDrop(drop, copy: Ctrl);
+        PerformTextDrop(drop, copy: s.Ctrl);
     }
 
     // Moves (or, with copy, duplicates) the selected content to `drop`. The move deletes the selection

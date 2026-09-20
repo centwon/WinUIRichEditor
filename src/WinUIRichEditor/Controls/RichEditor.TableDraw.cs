@@ -48,10 +48,10 @@ public partial class RichEditor
         => new(Math.Clamp(p.X, 0, Math.Max(0, _layoutWidth)), Math.Clamp(p.Y, 0, Math.Max(0, _measuredHeight)));
 
     // Pointer hooks, called from the main handlers. Return true when draw mode consumed the event.
-    private bool TableDrawPointerPressed(Point docPt, PointerRoutedEventArgs e)
+    private bool TableDrawPointerPressed(Point docPt, PointerStep s)
     {
         if (!TableDrawPressAt(docPt)) return false;
-        _canvas.CapturePointer(e.Pointer);
+        s.Capture.Capture();
         return true;
     }
 
@@ -98,7 +98,7 @@ public partial class RichEditor
         return true; // consume all moves while armed (keep the cross cursor, skip hover/selection)
     }
 
-    private bool TableDrawPointerReleased(PointerRoutedEventArgs e)
+    private bool TableDrawPointerReleased(PointerStep s)
     {
         if (_pendingTableDraw == null || _tableDrawStart == null) return false;
         // Insert BEFORE releasing the capture: ReleasePointerCapture raises PointerCaptureLost synchronously, and
@@ -106,7 +106,7 @@ public partial class RichEditor
         // before it could insert (live check 2026-09-19: no drag inserted anything). The column drag has the same
         // order for the same reason (EndColumnResize).
         bool inserted = TableDrawReleaseAt();
-        _canvas.ReleasePointerCapture(e.Pointer);
+        s.Capture.Release();
         return inserted;
     }
 

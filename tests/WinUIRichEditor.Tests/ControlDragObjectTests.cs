@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -360,13 +360,13 @@ public class ControlDragObjectTests
             var press = new Point(r.Left, r.Top + r.Height / 2);
 
             Assert.True((bool)Call(ed, "ArmObjectDragAt", tb, press)!);
-            Call(ed, "DragObjectMoved", new Point(press.X + 1, press.Y + 1)); // inside the slop
+            Call(ed, "DragObjectMoved", new Point(press.X + 1, press.Y + 1), false); // inside the slop
             Assert.False((bool)Call(ed, "FinishObjectDrag", false)!);
             Assert.Equal("top,T,mid,end", Shape(ed));
             Assert.False(ed.CanUndo);
 
             Assert.True((bool)Call(ed, "ArmObjectDragAt", tb, press)!);
-            Call(ed, "DragObjectMoved", new Point(press.X, r.Bottom + 2000));
+            Call(ed, "DragObjectMoved", new Point(press.X, r.Bottom + 2000), false);
             Assert.True((bool)Call(ed, "FinishObjectDrag", false)!);
             Assert.Equal("top,mid,T,end", Shape(ed));
             Assert.Null(Field(ed, "_dragObject"));
@@ -398,7 +398,7 @@ public class ControlDragObjectTests
             var r = DrawnTableRect(ed, tb);
             var press = new Point(r.Left, r.Top + r.Height / 2);
             Assert.True((bool)Call(ed, "ArmObjectDragAt", tb, press)!);
-            Call(ed, "DragObjectMoved", new Point(press.X, r.Bottom + 2000));
+            Call(ed, "DragObjectMoved", new Point(press.X, r.Bottom + 2000), false);
 
             Load(ed, P("other"), Table(), P("doc"));
             Assert.False((bool)Call(ed, "FinishObjectDrag", false)!);

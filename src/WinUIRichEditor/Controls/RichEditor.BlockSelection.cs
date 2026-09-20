@@ -157,7 +157,7 @@ public partial class RichEditor
         return PointerTarget.None;
     }
 
-    private bool TryBeginImageInteraction(Point pt, PointerRoutedEventArgs e)
+    private bool TryBeginImageInteraction(Point pt, PointerStep s)
     {
         // Hit-test everything first, then let ChoosePointerTarget decide. The drag is seeded from the
         // rect the handle was DRAWN at, for both registries — see _cellImageRects for why.
@@ -193,12 +193,12 @@ public partial class RichEditor
             case PointerTarget.SelectedBlockImageHandle:
             case PointerTarget.SelectedInlineImageHandle:
                 BeginImageResize(handle.grip, handle.rect, handle.inline, pt);
-                _canvas.CapturePointer(e.Pointer);
+                s.Capture.Capture();
                 return true;
             // A press on the picture itself selects it and arms dragging it (RichEditor.DragBlock.cs).
-            case PointerTarget.CellImage:  SelectObject(cellImage, null); ArmObjectDrag(cellImage, pt, e); return true;
-            case PointerTarget.InlineImage: SelectObject(null, inlineImage); ArmObjectDrag(inlineImage!.Value.img, pt, e); return true;
-            case PointerTarget.BlockImage: SelectObject(blockImage, null); ArmObjectDrag(blockImage, pt, e); return true;
+            case PointerTarget.CellImage:  SelectObject(cellImage, null); ArmObjectDrag(cellImage, pt, s); return true;
+            case PointerTarget.InlineImage: SelectObject(null, inlineImage); ArmObjectDrag(inlineImage!.Value.img, pt, s); return true;
+            case PointerTarget.BlockImage: SelectObject(blockImage, null); ArmObjectDrag(blockImage, pt, s); return true;
             default: return false;
         }
     }
@@ -275,11 +275,11 @@ public partial class RichEditor
         return true;
     }
 
-    private bool EndImageResize(PointerRoutedEventArgs e)
+    private bool EndImageResize(PointerStep s)
     {
         if (_resizingImage == null && _resizingInline == null) return false;
         FinishImageResize(); // before the release (see EndColumnResize)
-        _canvas.ReleasePointerCapture(e.Pointer);
+        s.Capture.Release();
         return true;
     }
 
