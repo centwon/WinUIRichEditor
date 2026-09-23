@@ -58,6 +58,68 @@ public class Round34BackportTests
         var run = doc.Blocks.OfType<Paragraph>().SelectMany(p => p.Inlines.OfType<Run>()).First(r => r.Text == "click");
         Assert.Equal(href, run.NavigateUri);
     }
+
+    // ---- the same rule on the other ways in (2026-09-24) ---------------------------------------------------
+    // Round 34 dropped script links in the HTML reader only. An RTF HYPERLINK field (RTF is a clipboard flavour,
+    // so a paste) and a JSON/.flow file carried them in untouched, and the HTML writer sent them back out in
+    // exported and clipboard HTML. A host's SetHyperlink reaches the writer too, so it is the backstop.
+
+    private static Run Clicked(FlowDocument doc)
+        => doc.Blocks.OfType<Paragraph>().SelectMany(p => p.Inlines.OfType<Run>()).First(r => r.Text.Contains("click"));
+
+    private static FlowDocument Linked(string href)
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "click", NavigateUri = href } } });
+        return doc;
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("JavaScript:alert(1)")]
+    [InlineData("vbscript:msgbox(1)")]
+    [InlineData("data:text/html,x")]
+    public void AScriptLinkInAnRtfField_IsNotCarriedIntoTheDocument(string href)
+    {
+        var doc = RtfDocumentFormatter.Parse(
+            $@"{{\rtf1\ansi {{\field{{\*\fldinst HYPERLINK ""{href}""}}{{\fldrslt click}}}}\par}}");
+
+        Assert.Null(Clicked(doc).NavigateUri); // the text stays, the link goes
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("vbscript:msgbox(1)")]
+    public void AScriptLinkInAJsonFile_IsNotCarriedIntoTheDocument(string href)
+    {
+        var doc = DocumentSerializer.Deserialize(DocumentSerializer.Serialize(Linked(href)));
+
+        Assert.Null(Clicked(doc).NavigateUri);
+    }
+
+    [Fact]
+    public void AScriptLinkSetByTheHost_IsNotWrittenToHtml()
+    {
+        string html = HtmlDocumentFormatter.ToHtml(Linked("javascript:alert(1)"));
+
+        Assert.DoesNotContain("javascript", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("click", html);
+    }
+
+    // The other half, so the guards cannot pass by dropping every link.
+    [Fact]
+    public void AWebLink_SurvivesRtfJsonAndTheHtmlWriter()
+    {
+        const string url = "https://example.com/a?b=1";
+
+        var rtf = RtfDocumentFormatter.Parse(
+            $@"{{\rtf1\ansi {{\field{{\*\fldinst HYPERLINK ""{url}""}}{{\fldrslt click}}}}\par}}");
+        var json = DocumentSerializer.Deserialize(DocumentSerializer.Serialize(Linked(url)));
+
+        Assert.Equal(url, Clicked(rtf).NavigateUri);
+        Assert.Equal(url, Clicked(json).NavigateUri);
+        Assert.Contains("href=\"https://example.com/a?b=1\"", HtmlDocumentFormatter.ToHtml(Linked(url)).Replace("&amp;", "&"));
+    }
 }
 
 /// <summary>Round 34's control-level cases, measured in this port (see <see cref="Round34BackportTests"/>).</summary>

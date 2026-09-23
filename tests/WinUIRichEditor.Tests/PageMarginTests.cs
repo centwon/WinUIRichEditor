@@ -99,6 +99,35 @@ public class PageMarginTests
         Assert.Equal(Wide.Bottom, back.Margin.Bottom, twipMm);
     }
 
+    // ...but a margin set in tenths of a millimetre comes back as exactly that. Within a twip was not enough: 15 mm
+    // went out as 850 twips and came back 14.993, so after an RTF round trip no step of the toolbar's picker
+    // matched ("15mm" instead of "Normal") and the JSON stored a custom margin (2026-09-24). Twice, as always here.
+    [Theory]
+    [InlineData(5.0)] [InlineData(10.0)] [InlineData(15.0)] [InlineData(20.0)] [InlineData(30.0)] // the picker's steps
+    [InlineData(12.7, 17.3, 25.4, 0.1)] [InlineData(0.0, 33.3, 8.8, 19.9)]
+    public void AMarginInTenthsOfAMillimetre_RoundTripsThroughRtfExactly(double l, double t = double.NaN,
+                                                                          double r = double.NaN, double b = double.NaN)
+    {
+        var sides = double.IsNaN(t) ? new PageMargins(l) : new PageMargins(l, t, r, b);
+
+        var once = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(A4Doc(sides)));
+        var twice = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(once));
+
+        Assert.Equal(sides, once.PageSetup!.Margin);
+        Assert.Equal(sides, twice.PageSetup!.Margin);
+    }
+
+    // The snapping must not move a margin that is NOT a tenth of a millimetre. Word's 1.25 inch (1800 twips) is
+    // 31.75 mm; rounded to 31.8 it would go back out as 1803 twips.
+    [Fact]
+    public void AnRtfMarginBetweenTenths_KeepsItsExactLength()
+    {
+        var doc = RtfDocumentFormatter.Parse(@"{\rtf1\ansi\paperw11910\paperh16845\margl1800 hello\par}");
+
+        Assert.Equal(31.75, doc.PageSetup!.Margin.Left, 9);
+        Assert.Contains(@"\margl1800\", RtfDocumentFormatter.Write(doc));
+    }
+
     // A file from another word processor keeps its own margins. 1440 twips = 1 inch (Word's default), 720 = half.
     [Fact]
     public void AnExternalRtfKeepsItsOwnMargins()

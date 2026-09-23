@@ -285,4 +285,104 @@ public class TableStructureApiTests
 
         Assert.Equal(3, it.Table.Rows);
     });
+
+    // ---- an object selected inside what the command removes (2026-09-24) ---------------------------
+    // Pointer, key and menu paths let go of a selected object before they edit; a host call does not. A
+    // nested table or picture selected in a row the host deletes stayed selected after it left the document,
+    // and Delete on the inline picture then edited the detached row and parked the caret there.
+
+    private static void SetField(RichEditor ed, string name, object? value)
+        => typeof(RichEditor).GetField(name, NP)!.SetValue(ed, value);
+
+    private static object? Field(RichEditor ed, string name)
+        => typeof(RichEditor).GetField(name, NP)!.GetValue(ed);
+
+    // By walking the document (AllParagraphs), not the parent chain: a detached row's paragraphs still
+    // name their old cell, whose Parent is still the table (the round-34 lesson).
+    private static bool CaretInDocument(RichEditor ed)
+    {
+        var caret = (TextPointer)Field(ed, "_caret")!;
+        var all = (System.Collections.IEnumerable)typeof(RichEditor)
+            .GetMethod("AllParagraphs", NP, System.Type.EmptyTypes)!.Invoke(ed, null)!;
+        return all.Cast<Paragraph>().Any(p => ReferenceEquals(p, caret.Paragraph));
+    }
+
+    private static void DeleteSelectedObject(RichEditor ed)
+        => typeof(RichEditor).GetMethod("DeleteSelectedObject", NP)!.Invoke(ed, null);
+
+    [Fact]
+    public void DeletingTheRowAroundASelectedNestedTable_LetsGoOfIt() => UiThread.Run(() =>
+    {
+        var built = new TableBlock(2, 1);
+        built.Cells[1][0].Blocks.Add(new TableBlock(1, 1));
+        var ed = Editor(built);
+        var tb = Table(ed);
+        var nested = tb.Cells[1][0].Blocks.OfType<TableBlock>().Single();
+        PlaceCaret(ed, tb.Cells[0][0].Para);
+        SetField(ed, "_selectedBlock", nested);
+
+        Assert.True(ed.DeleteTableRow(tb, 1));
+
+        Assert.False(ed.HasBlockSelection);
+    });
+
+    [Fact]
+    public void DeletingTheColumnAroundASelectedInlinePicture_ThenDelete_KeepsTheCaretInTheDocument() => UiThread.Run(() =>
+    {
+        var built = new TableBlock(1, 2);
+        var host = built.Cells[0][1].Para;
+        var img = new InlineImage { Width = 10, Height = 10 };
+        host.Inlines.Add(img);
+        var ed = Editor(built);
+        var tb = Table(ed);
+        PlaceCaret(ed, tb.Cells[0][0].Para);
+        SetField(ed, "_selectedInline", ((Paragraph, InlineImage)?)(host, img));
+
+        Assert.True(ed.DeleteTableColumn(tb, 1));
+        Assert.False(ed.HasBlockSelection);
+
+        DeleteSelectedObject(ed); // what the Delete key does with an object selection
+        Assert.True(CaretInDocument(ed));
+    });
+
+    [Fact]
+    public void DeletingTheRowAroundASelectedInlineTable_LetsGoOfIt() => UiThread.Run(() =>
+    {
+        var built = new TableBlock(2, 1);
+        var host = built.Cells[1][0].Para;
+        var it = new InlineTable { Table = new TableBlock(1, 1) };
+        host.Inlines.Add(it);
+        var ed = Editor(built);
+        var tb = Table(ed);
+        PlaceCaret(ed, tb.Cells[0][0].Para);
+        SetField(ed, "_selectedInlineTable", ((Paragraph, InlineTable)?)(host, it));
+
+        Assert.True(ed.DeleteTableRow(tb, 1));
+
+        Assert.False(ed.HasBlockSelection);
+    });
+
+    // The other half: an object the edit did NOT remove stays selected — the table held by its border while
+    // a row is added to it, or a picture in a row that survives. Without this the fix could simply clear
+    // every selection on every edit.
+    [Fact]
+    public void AnObjectTheEditLeavesInPlace_StaysSelected() => UiThread.Run(() =>
+    {
+        var built = new TableBlock(2, 1);
+        var host = built.Cells[0][0].Para;
+        var img = new InlineImage { Width = 10, Height = 10 };
+        host.Inlines.Add(img);
+        var ed = Editor(built);
+        var tb = Table(ed);
+        PlaceCaret(ed, tb.Cells[0][0].Para);
+        SetField(ed, "_selectedInline", ((Paragraph, InlineImage)?)(host, img));
+
+        Assert.True(ed.DeleteTableRow(tb, 1));
+        Assert.True(ed.HasBlockSelection);
+
+        SetField(ed, "_selectedInline", null);
+        SetField(ed, "_selectedBlock", tb);
+        Assert.True(ed.InsertTableRow(tb, 0));
+        Assert.Same(tb, Field(ed, "_selectedBlock"));
+    });
 }

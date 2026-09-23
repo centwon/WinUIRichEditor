@@ -60,6 +60,24 @@ public partial class RichEditor
 
     private void ClearObjectSelection() { _selectedBlock = null; _selectedInline = null; _selectedInlineTable = null; }
 
+    // Lets go of a selected object that an edit took out of the document. Pointer, key and menu paths clear the
+    // selection before they edit, but a host call does not: DeleteTableRow around a selected nested table or
+    // picture left it selected, and Delete then removed the inline picture from the detached row and parked the
+    // caret there — outside the document (2026-09-24). Checked by walking DOWN from the document: a detached
+    // node still names its old parent, and a deleted row's cells still name the table, so a parent chain would
+    // call it inside (see TableIsInDocument).
+    private void DropDetachedObjectSelection()
+    {
+        if (!HasBlockSelection) return;
+        if (Document == null) { ClearObjectSelection(); return; }
+        HashSet<Block>? inDoc = null;
+        bool InDoc(Block b) => (inDoc ??= new HashSet<Block>(BlockWalk.DocumentOrder(Document.Blocks),
+                                                              ReferenceEqualityComparer.Instance)).Contains(b);
+        if (_selectedBlock is { } blk && !InDoc(blk)) _selectedBlock = null;
+        if (_selectedInline is { } si && !(InDoc(si.p) && si.p.Inlines.Contains(si.img))) _selectedInline = null;
+        if (_selectedInlineTable is { } st && !(InDoc(st.host) && st.host.Inlines.Contains(st.it))) _selectedInlineTable = null;
+    }
+
     // Records an inline table's rect for hit-testing and draws its selection chrome if selected.
     private void TrackInlineTable(CanvasDrawingSession ds, Paragraph host, InlineTable it, Rect rect)
     {
