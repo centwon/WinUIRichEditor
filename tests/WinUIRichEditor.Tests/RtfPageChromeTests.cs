@@ -79,8 +79,9 @@ public class RtfPageChromeTests
         Assert.Contains("Confidential", rtf);
         // The page number sits at an explicit RIGHT tab stop on the content edge, which is where the
         // editor draws it. Without the stop it would land on whatever default tab the reader has.
-        // A4 = 794 DIPs wide, minus two 48-DIP margins, times 15 twips = 10470.
-        Assert.Contains(@"\tqr\tx10470", rtf);
+        // A4 = 794 DIPs = 11910 twips wide, minus two default 15 mm margins (850 twips each) = 10210 — the
+        // same number upstream writes. It was 10470 while the margins were two 48-DIP constants.
+        Assert.Contains(@"\tqr\tx10210", rtf);
         Assert.Contains(@"\chpgn", rtf);
         // Both destinations belong to the document area, BEFORE the body.
         int header = rtf.IndexOf(@"{\header", System.StringComparison.Ordinal);

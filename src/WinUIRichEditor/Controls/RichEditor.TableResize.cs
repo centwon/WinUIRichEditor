@@ -350,6 +350,9 @@ public partial class RichEditor
     {
         if (_printMode || !ReferenceEquals(_selectedBlock, tb)) return;
         var r = new Rect(startX - 1.5, top - 1.5, tl.TableWidth + 3, tl.TotalHeight + 3);
-        ds.DrawRectangle(r, BlockSelBorder, 2.5f);
+        // A top-level table's border lies outside the page's content clip where the table meets it (left margin 0):
+        // drawn after the walk, under the paper's clip (see FlushOutsideChrome). A table in a cell stays inside it.
+        if (tb.Parent is FlowDocument) _outsideChrome.Add(d => d.DrawRectangle(r, BlockSelBorder, 2.5f));
+        else ds.DrawRectangle(r, BlockSelBorder, 2.5f);
     }
 }

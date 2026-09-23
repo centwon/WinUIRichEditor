@@ -464,20 +464,26 @@ public partial class RichEditor
     // right exists for paragraphs only (nothing flows around images/tables).
     private MenuFlyoutSubItem MarginMenu(Block target)
     {
-        MenuFlyoutSubItem Side(string label, Func<double> get, Action<double> set)
+        // `auto`: lead with Block.AutoTopMargin (NaN, one line gap) — the default top of a table, picture or divider,
+        // which no px preset shows checked and nothing else could restore once a preset was picked (upstream).
+        MenuFlyoutSubItem Side(string label, Func<double> get, Action<double> set, bool auto = false)
         {
             var s = new MenuFlyoutSubItem { Text = label, FontSize = MenuFontSize };
-            foreach (double v in new[] { 0d, 5, 10, 20, 30 })
+            foreach (double v in auto ? new[] { Block.AutoTopMargin, 0d, 5, 10, 20, 30 } : new[] { 0d, 5, 10, 20, 30 })
             {
                 double vv = v;
-                var ri = new RadioMenuFlyoutItem { Text = $"{vv:0} px", GroupName = label, IsChecked = Math.Abs(get() - vv) < 0.5, FontSize = MenuFontSize };
+                var ri = new RadioMenuFlyoutItem
+                {
+                    Text = double.IsNaN(vv) ? Loc("MarginAuto") : $"{vv:0} px", GroupName = label,
+                    IsChecked = double.IsNaN(vv) ? double.IsNaN(get()) : Math.Abs(get() - vv) < 0.5, FontSize = MenuFontSize,
+                };
                 ri.Click += (_, _) => PickMargin(get, set, vv);
                 s.Items.Add(ri);
             }
             return s;
         }
         var sub = new MenuFlyoutSubItem { Text = Loc("Margin"), FontSize = MenuFontSize };
-        sub.Items.Add(Side(Loc("MarginTop"), () => target.MarginTop, v => target.MarginTop = v));
+        sub.Items.Add(Side(Loc("MarginTop"), () => target.MarginTop, v => target.MarginTop = v, auto: target is not Paragraph));
         sub.Items.Add(Side(Loc("MarginBottom"), () => target.MarginBottom, v => target.MarginBottom = v));
         sub.Items.Add(Side(Loc("MarginLeft"), () => target.Indent, v => target.Indent = v));
         if (target is Paragraph mp) sub.Items.Add(Side(Loc("MarginRight"), () => mp.MarginRight, v => mp.MarginRight = v));

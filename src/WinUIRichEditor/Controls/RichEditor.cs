@@ -38,6 +38,17 @@ public partial class RichEditor : ContentControl
     // device-independent pixels at a 96-DPI baseline (1pt = 4/3 px); convert only at this boundary.
     internal static double PtToPx(double pt) => pt * (4.0 / 3.0);
 
+    // The gap above a block, which every walker advances by before the block's own box starts: its MarginTop,
+    // or — when that is Block.AutoTopMargin (NaN) — ONE LINE GAP of body text: the white space a line break
+    // leaves between two lines. Without it a table or picture butts straight against the paragraph above,
+    // because paragraphs carry no bottom margin (HWP-style) and those blocks carried no top one. Sized from the
+    // DOCUMENT's default typography rather than from the block above (upstream PR #52, ported 2026-09-24).
+    internal double TopGapOf(Block block)
+        => double.IsNaN(block.MarginTop) ? AutoBlockTopGap : block.MarginTop;
+
+    // One line gap of body text: the line box (font size x spacing) minus the text it holds.
+    internal double AutoBlockTopGap => Math.Max(0, PtToPx(DefaultFontSize) * (DefaultLineSpacing - 1));
+
     internal static double HeadingFontSize(int level) => HeadingStyle.Size(level);
 
     // The size (pt) a run is DRAWN at — the one rule, used by CreateLayout to draw it and by GetCaretFormat
@@ -345,7 +356,7 @@ public partial class RichEditor : ContentControl
         {
             foreach (var block in Document.Blocks)
             {
-                y += block.MarginTop;
+                y += TopGapOf(block);
                 double h = BlockHeight(block, width);
                 int orderedStart = OrderedStartFor(block, ref ordCounters);
                 index[block] = map.Count;

@@ -1,1 +1,25 @@
 ﻿WinUIRichEditor.Controls.RichEditorIcon.Quote = 49 -> WinUIRichEditor.Controls.RichEditorIcon
+WinUIRichEditor.Controls.RichEditor.PageMargin.get -> WinUIRichEditor.Documents.PageMargins
+WinUIRichEditor.Controls.RichEditor.PageMargin.set -> void
+WinUIRichEditor.Documents.PageMargins
+WinUIRichEditor.Documents.PageMargins.Bottom.get -> double
+WinUIRichEditor.Documents.PageMargins.Bottom.init -> void
+WinUIRichEditor.Documents.PageMargins.Left.get -> double
+WinUIRichEditor.Documents.PageMargins.Left.init -> void
+WinUIRichEditor.Documents.PageMargins.PageMargins() -> void
+WinUIRichEditor.Documents.PageMargins.PageMargins(double allSides) -> void
+WinUIRichEditor.Documents.PageMargins.PageMargins(double Left, double Top, double Right, double Bottom) -> void
+WinUIRichEditor.Documents.PageMargins.Right.get -> double
+WinUIRichEditor.Documents.PageMargins.Right.init -> void
+WinUIRichEditor.Documents.PageMargins.Top.get -> double
+WinUIRichEditor.Documents.PageMargins.Top.init -> void
+WinUIRichEditor.Documents.PageSetup.Margin.get -> WinUIRichEditor.Documents.PageMargins
+WinUIRichEditor.Documents.PageSetup.Margin.set -> void
+const WinUIRichEditor.Documents.PageSetup.DipsPerMm = 3.7795275590551185 -> double
+override WinUIRichEditor.Documents.PageMargins.ToString() -> string!
+static WinUIRichEditor.Documents.PageMargins.Symmetric(double sides, double topAndBottom) -> WinUIRichEditor.Documents.PageMargins
+static WinUIRichEditor.Documents.PageSetup.DefaultMargin.get -> WinUIRichEditor.Documents.PageMargins
+static WinUIRichEditor.Documents.PageSetup.PaperMillimetres(WinUIRichEditor.Controls.RichEditorPageSize size, WinUIRichEditor.Controls.RichEditorPageOrientation orientation) -> (double W, double H)
+static readonly WinUIRichEditor.Controls.RichEditor.PageMarginProperty -> Microsoft.UI.Xaml.DependencyProperty!
+static WinUIRichEditor.Documents.Block.AutoTopMargin.get -> double
+WinUIRichEditor.Controls.RichEditorIcon.PageMargin = 50 -> WinUIRichEditor.Controls.RichEditorIcon

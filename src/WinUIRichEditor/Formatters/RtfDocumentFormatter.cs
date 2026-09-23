@@ -6,6 +6,7 @@ using Windows.UI;
 using Windows.UI.Text;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
+using WinUIRichEditor.Controls;
 using WinUIRichEditor.Documents;
 
 namespace WinUIRichEditor.Formatters;
@@ -549,6 +550,28 @@ internal sealed class RtfParser
                 if (_st.Dest == Dest.PageChrome) { FlushRun(); _chromeNumbers = true; _chromeTextClosed = true; }
                 break;
 
+            // Paper size. Only the dimensions are in the file, so the page size is recovered by matching them
+            // against the table the control lays out with — an unrecognised paper leaves PageSize alone rather
+            // than guessing. Document level (Word) and section level (HWP) carry the same paper; both are read.
+            // (Ported from upstream with the page margins, 2026-09-24: this reader dropped the paper entirely.)
+            case "paperw": case "pgwsxn":
+                if (_st.Dest == Dest.Normal && p is int pw) { _paperW = pw; MatchPaper(); } break;
+            case "paperh": case "pghsxn":
+                if (_st.Dest == Dest.Normal && p is int ph) { _paperH = ph; MatchPaper(); } break;
+            case "landscape": case "lndscpsxn":
+                if (_st.Dest == Dest.Normal) { _landscape = true; MatchPaper(); } break;
+
+            // Page margins, in twips — document level (Word) and section level (HWP) again. A file from another
+            // word processor carries its own margins; dropping them paginated it differently from its author.
+            case "margl": case "marglsxn":
+                if (_st.Dest == Dest.Normal && p is int ml) { _marginTwips[0] = ml; ApplyMargins(); } break;
+            case "margt": case "margtsxn":
+                if (_st.Dest == Dest.Normal && p is int mt) { _marginTwips[1] = mt; ApplyMargins(); } break;
+            case "margr": case "margrsxn":
+                if (_st.Dest == Dest.Normal && p is int mr) { _marginTwips[2] = mr; ApplyMargins(); } break;
+            case "margb": case "margbsxn":
+                if (_st.Dest == Dest.Normal && p is int mb) { _marginTwips[3] = mb; ApplyMargins(); } break;
+
             case "colortbl": _st.Dest = Dest.ColorTable; _colors.Clear(); _ctR = _ctG = _ctB = 0; _ctHasColor = false; break;
             case "fonttbl": _st.Dest = Dest.FontTable; _ftblIndex = -1; _ftblName.Clear(); _ftblBytes.Clear(); break;
             case "stylesheet": case "info": case "pntext": case "themedata":
@@ -653,6 +676,60 @@ internal sealed class RtfParser
     private void SetItalic(bool v) { if (v != _st.Italic) FlushRun(); _st.Italic = v; }
     private void SetUnderline(bool v) { if (v != _st.Underline) FlushRun(); _st.Underline = v; }
     private void SetStrike(bool v) { if (v != _st.Strike) FlushRun(); _st.Strike = v; }
+
+    // ---- page setup: paper and margins ----
+
+    // \paperw/\paperh in twips, and whether \landscape was seen. Held until both dimensions are known, since
+    // they arrive as separate control words and either order is legal.
+    private int _paperW, _paperH;
+    private bool _landscape;
+
+    // Margins in twips, left/top/right/bottom, -1 until the file states one. They arrive as four separate
+    // control words in any order, and a file may state only some — the rest keep the default.
+    private readonly int[] _marginTwips = { -1, -1, -1, -1 };
+
+    // Each stated margin, once the paper is known well enough to check it against. The paper may still be
+    // Continuous here (margins but no size, or a size with no name here): its print fallback is A4.
+    private void ApplyMargins()
+    {
+        double Side(int i, double fallback) => _marginTwips[i] >= 0 ? _marginTwips[i] / PageSetup.TwipsPerMm : fallback;
+        var d = PageSetup.DefaultMargin;
+        var m = new PageMargins(Side(0, d.Left), Side(1, d.Top), Side(2, d.Right), Side(3, d.Bottom));
+        var ps = _doc.PageSetup;
+        var (w, h) = PageSetup.PaperMillimetres(ps?.PageSize ?? RichEditorPageSize.Continuous,
+                                                ps?.Orientation ?? RichEditorPageOrientation.Portrait);
+        if (!PageSetup.IsUsableMargin(m, w, h))
+        {
+            // Not "keep what we had": an earlier call may have accepted these margins against the A4
+            // fallback, and the paper the file went on to declare is smaller.
+            if (_doc.PageSetup is { } stale) stale.Margin = PageSetup.DefaultMargin;
+            return;
+        }
+        _doc.PageSetup ??= new PageSetup();
+        _doc.PageSetup.Margin = m;
+    }
+
+    // Turns the paper dimensions back into a named page size by asking PaperDips for each candidate — the same
+    // table the control lays out with, so a document written here comes back exactly. Tolerance: 2 twips.
+    private void MatchPaper()
+    {
+        if (_paperW <= 0 || _paperH <= 0) return;
+        foreach (RichEditorPageSize size in Enum.GetValues<RichEditorPageSize>())
+        {
+            if (size == RichEditorPageSize.Continuous) continue;
+            var orientation = _landscape ? RichEditorPageOrientation.Landscape : RichEditorPageOrientation.Portrait;
+            var (w, h) = PageSetup.PaperDips(size, orientation);
+            if (Math.Abs((int)Math.Round(w * 15) - _paperW) <= 2 && Math.Abs((int)Math.Round(h * 15) - _paperH) <= 2)
+            {
+                _doc.PageSetup ??= new PageSetup();
+                _doc.PageSetup.PageSize = size;
+                _doc.PageSetup.Orientation = orientation;
+                // Margins that arrived first were checked against the A4 fallback; check them against the real paper.
+                if (Array.Exists(_marginTwips, t => t >= 0)) ApplyMargins();
+                return;
+            }
+        }
+    }
 
     // ---- page chrome ({\header …} / {\footer …}) ----
 
@@ -1406,6 +1483,25 @@ internal sealed class RtfWriter
         if (ps == null) return;
         bool hasHeader = !string.IsNullOrEmpty(ps.Header);
         bool hasFooter = !string.IsNullOrEmpty(ps.Footer) || ps.ShowPageNumbers;
+
+        // Paper size and margins (ported from upstream, 2026-09-24): without them a document set to A4 arrived on
+        // whatever paper the reader defaults to (Letter in a US install). Continuous has no paper to state.
+        if (ps.PageSize != RichEditorPageSize.Continuous)
+        {
+            var (pw, ph) = PageSetup.PaperDips(ps.PageSize, ps.Orientation);
+            sb.Append($@"\paperw{(int)Math.Round(pw * 15)}\paperh{(int)Math.Round(ph * 15)}");
+            // Margins are millimetres; RTF wants twips (1440 per inch).
+            sb.Append($@"\margl{PageSetup.MmToTwips(ps.Margin.Left)}\margr{PageSetup.MmToTwips(ps.Margin.Right)}");
+            sb.Append($@"\margt{PageSetup.MmToTwips(ps.Margin.Top)}\margb{PageSetup.MmToTwips(ps.Margin.Bottom)}");
+            if (ps.Orientation == RichEditorPageOrientation.Landscape) sb.Append(@"\landscape");
+            // The same numbers again at SECTION level: Word reads the document-level ones, HWP only these.
+            sb.Append($@"\sectd\pgwsxn{(int)Math.Round(pw * 15)}\pghsxn{(int)Math.Round(ph * 15)}");
+            sb.Append($@"\marglsxn{PageSetup.MmToTwips(ps.Margin.Left)}\margrsxn{PageSetup.MmToTwips(ps.Margin.Right)}");
+            sb.Append($@"\margtsxn{PageSetup.MmToTwips(ps.Margin.Top)}\margbsxn{PageSetup.MmToTwips(ps.Margin.Bottom)}");
+            if (ps.Orientation == RichEditorPageOrientation.Landscape) sb.Append(@"\lndscpsxn");
+            sb.Append('\n');
+        }
+
         if (!hasHeader && !hasFooter) return;
 
         // The writer emits into _body; borrow it so WriteEscaped can be reused, then move the result.
@@ -1420,7 +1516,7 @@ internal sealed class RtfWriter
         if (hasFooter)
         {
             var (w, _) = PageSetup.PaperDips(ps.PageSize, ps.Orientation);
-            int contentTwips = (int)Math.Round((w - 2 * PageSetup.MarginX) * 15);
+            int contentTwips = (int)Math.Round(w * 15) - PageSetup.MmToTwips(ps.Margin.Left) - PageSetup.MmToTwips(ps.Margin.Right);
             _body.Append(@"{\footer\pard\plain\ql");
             if (ps.ShowPageNumbers) _body.Append(@"\tqr\tx").Append(contentTwips);
             _body.Append(' ');

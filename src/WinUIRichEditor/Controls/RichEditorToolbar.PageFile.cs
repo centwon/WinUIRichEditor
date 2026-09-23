@@ -1,4 +1,5 @@
 ﻿using System;
+using WinUIRichEditor.Documents;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -8,6 +9,8 @@ using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
 using WinUIRichEditor.Formatters;
 
 namespace WinUIRichEditor.Controls;
@@ -59,6 +62,8 @@ public partial class RichEditorToolbar
 
     // ---- page / zoom ------------------------------------------------------
     private ComboBox? _zoom, _paper, _orient;
+    private Border? _marginBox;
+    private TextBlock? _marginLabel;
     private ComboBoxItem? _zoomFit;    // the "Fit width" entry (disabled in Continuous mode)
 
     private static readonly int[] ZoomLevels = { 50, 75, 100, 125, 150, 200 };
@@ -118,6 +123,67 @@ public partial class RichEditorToolbar
                 t.EditDocumentPageSetup(() => t.PageOrientation = (RichEditorPageOrientation)ci.Tag);
         };
         strip.Children.Add(_orient);
+
+        // Page margins. Presets only, as Word and HWP lead with (upstream PR #52, ported 2026-09-24): a margin set
+        // by a host or carried by a document need not be one of them — then the box states the millimetres.
+        strip.Children.Add(BuildMarginControl());
+    }
+
+    // Five steps, narrowest first, in millimetres. The middle one is the editor's own default, so an untouched
+    // document shows "Normal".
+    private static readonly (string Label, PageMargins Margin)[] MarginPresets =
+    {
+        ("MarginNarrowest", new PageMargins(5)),
+        ("MarginNarrow", new PageMargins(10)),
+        ("MarginNormal", PageSetup.DefaultMargin),   // 15 mm
+        ("MarginWide", new PageMargins(20)),
+        ("MarginWidest", new PageMargins(30)),
+    };
+
+    // Margins that match no step, written as short as they are regular.
+    private static string MarginText(PageMargins m)
+    {
+        if (m.Left == m.Right && m.Top == m.Bottom)
+            return m.Left == m.Top ? $"{m.Left:0.#}mm" : $"{m.Left:0.#} / {m.Top:0.#}mm";
+        return $"{m.Left:0.#} {m.Top:0.#} {m.Right:0.#} {m.Bottom:0.#}mm";
+    }
+
+    // Built like the line-spacing box: the icon once, the current step, and a chevron dropping plain entries.
+    private Border BuildMarginControl()
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        row.Children.Add(AsElement(IconOrText(RichEditorIcon.PageMargin, "▭")));
+        _marginLabel = new TextBlock { FontSize = 12, MinWidth = 88, VerticalAlignment = VerticalAlignment.Center };
+        row.Children.Add(_marginLabel);
+
+        var menu = new MenuFlyout();
+        ReturnsFocus(menu);
+        foreach (var (label, margin) in MarginPresets)
+        {
+            var m = margin;
+            var item = new MenuFlyoutItem { Text = Loc(label) };
+            // The picker edits the OPEN DOCUMENT's setup, not the host's defaults (see EditDocumentPageSetup).
+            item.Click += (_, _) => { if (Target is { } t) t.EditDocumentPageSetup(() => t.PageMargin = m); Sync(); };
+            menu.Items.Add(item);
+        }
+        var presets = new Button
+        {
+            Content = SmallChevron(),
+            Background = ClearBrush, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(2, 0, 2, 0), MinWidth = 16, VerticalAlignment = VerticalAlignment.Center,
+            Flyout = menu,
+        };
+        row.Children.Add(presets);
+        _marginBox = new Border
+        {
+            Child = row,
+            BorderBrush = new SolidColorBrush(Color.FromArgb(255, 0xDC, 0xDC, 0xDC)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(6, 0, 4, 0),
+            Height = CtlHeight, VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(_marginBox, Loc("MarginTip"));
+        return _marginBox;
     }
 
     private void OnPaperChanged()
@@ -170,6 +236,17 @@ public partial class RichEditorToolbar
         {
             SelectByTag(_orient, Target.PageOrientation);
             _orient.IsEnabled = paged; // orientation is meaningless in Continuous
+        }
+        if (_marginLabel != null && _marginBox != null)
+        {
+            string? step = null;
+            foreach (var (label, m) in MarginPresets)
+                if (m.Equals(Target.PageMargin)) { step = Loc(label); break; }
+            _marginLabel.Text = step ?? MarginText(Target.PageMargin);
+            // Margins are meaningless in Continuous, as orientation is. A Border has no IsEnabled: dim it and
+            // disable the chevron, which is the only thing in it that acts.
+            _marginBox.Opacity = paged ? 1 : 0.5;
+            if (((StackPanel)_marginBox.Child).Children[^1] is Button chevron) chevron.IsEnabled = paged;
         }
     }
 

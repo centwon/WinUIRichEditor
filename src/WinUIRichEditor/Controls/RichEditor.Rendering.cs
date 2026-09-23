@@ -71,6 +71,7 @@ public partial class RichEditor
         {
             // The region is physical (zoom-scaled); the walk works in logical doc space. ±1 avoids seams.
             DrawContentWalk(ds, region.Top / z - 1, region.Bottom / z + 1);
+            FlushOutsideChrome(ds);
         }
         DrawTableDrawRubberBand(ds); // "draw table" overlay, on top of content
     }
@@ -210,8 +211,8 @@ public partial class RichEditor
             ds.FillRectangle(pageRect, Colors.White);
             ds.DrawRectangle(pageRect, PageBorderColor, 1f);
 
-            double viewContentLeft = PageDeskX + PagePadX;
-            double viewContentTop = pageTop + PagePadY;
+            double viewContentLeft = PageDeskX + PagePadLeft;
+            double viewContentTop = pageTop + PagePadTop;
             var clip = new Rect(viewContentLeft, viewContentTop, PaperContentWidth, pageContentH);
             using (ds.CreateLayer(1f, clip))
             {
@@ -222,6 +223,17 @@ public partial class RichEditor
                 DrawContentWalk(ds, breaks[i] - 1, breaks[i] + pageContentH + 1);
                 ds.Transform = saved;
             }
+            // A selected picture's or table's border lies OUTSIDE it, and one on the content box's edge lost that side
+            // to the content clip. Drawn here under the PAPER's clip instead (see FlushOutsideChrome).
+            if (_outsideChrome.Count > 0)
+                using (ds.CreateLayer(1f, pageRect))
+                {
+                    var saved = ds.Transform;
+                    ds.Transform = System.Numerics.Matrix3x2.CreateTranslation(
+                        (float)(viewContentLeft - DocContentLeft), (float)(viewContentTop - breaks[i])) * saved;
+                    FlushOutsideChrome(ds);
+                    ds.Transform = saved;
+                }
             DrawPageMarginChrome(ds, pageRect, i, pages);
         }
     }
@@ -230,17 +242,23 @@ public partial class RichEditor
 
     // Header/footer/page-number drawn in the page's margin bands (outside the content box, so pagination
     // is unaffected). `pageRect` is in view space.
+    //
+    // A band too thin to hold the line is left empty (upstream user decision, 2026-09-20): centred in a 12 DIP
+    // band an 11pt line runs off the paper at one end and over the body text at the other. Skipping keeps the
+    // margins EXACTLY what was asked for, which pushing the body down would not.
     private void DrawPageMarginChrome(CanvasDrawingSession ds, Rect pageRect, int pageIndex, int pageCount)
     {
         if (string.IsNullOrEmpty(PageHeader) && string.IsNullOrEmpty(PageFooter) && !ShowPageNumbers) return;
         using var fmt = new CanvasTextFormat { FontFamily = DefaultFontFamily, FontSize = 11f, WordWrapping = CanvasWordWrapping.NoWrap };
-        double left = pageRect.X + PagePadX;
+        double left = pageRect.X + PagePadLeft;
 
         void DrawSmall(string text, bool top, bool right)
         {
-            using var tl = new CanvasTextLayout(ds, text, fmt, (float)PaperContentWidth, (float)PagePadY);
+            double band = top ? PagePadTop : PagePadBottom;
+            using var tl = new CanvasTextLayout(ds, text, fmt, (float)PaperContentWidth, (float)Math.Max(1, band));
+            if (tl.LayoutBounds.Height > band) return;
             double x = right ? left + PaperContentWidth - tl.LayoutBounds.Width : left;
-            double bandCenter = top ? pageRect.Y + PagePadY / 2 : pageRect.Bottom - PagePadY / 2;
+            double bandCenter = top ? pageRect.Y + band / 2 : pageRect.Bottom - band / 2;
             ds.DrawTextLayout(tl, (float)x, (float)(bandCenter - tl.LayoutBounds.Height / 2), MarginChromeColor);
         }
 

@@ -6,6 +6,13 @@ namespace WinUIRichEditor.Documents;
 /// <see cref="InlineImage"/>. Used for larger pictures; supports resize.</summary>
 public class ImageBlock : Block
 {
+    /// <summary>Creates a block picture. Its top margin is <see cref="Block.AutoTopMargin"/>: one line
+    /// gap below whatever precedes it, since a paragraph carries no bottom margin of its own.</summary>
+    public ImageBlock()
+    {
+        MarginTop = AutoTopMargin;
+    }
+
     /// <summary>Original encoded image bytes (JPEG/PNG/...). When present this is the data source
     /// of truth: serialization stores these bytes verbatim (no re-encoding) and <see cref="Image"/>
     /// is decoded from them by the render layer (which owns a Win2D device).</summary>
