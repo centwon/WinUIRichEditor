@@ -6,6 +6,23 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 표 행·열 명령과 단축키 표 공개 — 상류 PR #48·#49 백포트 (2026-09-24)
+
+**공개 API 추가**: `RichEditor.InsertTableRow`·`DeleteTableRow`·`InsertTableColumn`·`DeleteTableColumn`(표·인덱스 지정),
+`InsertRowAbove`·`InsertRowBelow`·`DeleteRow`·`InsertColumnLeft`·`InsertColumnRight`·`DeleteColumn`(캐럿 기준),
+`RichEditorShortcuts`(`All`·`Display`), `RichEditorShortcutId`, `RichEditorShortcut`.
+
+- **표 행·열 편집을 호스트가 부를 수 있다.** 전에는 우클릭 메뉴로만 닿아, 자체 툴바를 만드는 호스트는
+  `TableBlock`을 직접 고쳐야 했고 그러면 되돌리기 체크포인트·부모 배선·레이아웃 무효화를 건너뛰었다.
+  호출 하나가 되돌리기 한 단계이고, 바뀐 게 있는지를 돌려준다. 읽기 전용, 범위 밖 인덱스, **다른 문서의 표**,
+  표의 마지막 행·열은 `false`이고 아무것도 바꾸지 않는다. "아래"·"오른쪽"은 메뉴와 같이 병합 영역 뒤다.
+  중첩 표·인라인 표도 된다. `AllowTables`는 보지 않는다(표를 **만드는** 것을 막는 플래그).
+- **단축키 표를 공개한다.** 호스트가 "Ctrl+B"를 편집기가 못 보는 곳에 다시 적지 않고 `RichEditorShortcuts.All`·
+  `Display(id)`로 읽는다. `All`은 읽기 전용 뷰라 호스트가 편집기 자신의 키 핸들러가 맞추는 표를 고칠 수 없다.
+  타입 이름은 `ShortcutId`/`ShortcutSpec`에서 `RichEditorShortcutId`/`RichEditorShortcut`로(내부였으니 호환 영향 없음).
+  enum 값의 순서는 이 패키지 것이고 상류와 다르다. 상류의 `Gesture(id)`(Avalonia `KeyGesture`)는 WinUI 메뉴가
+  힌트를 문자열로 받으므로 옮기지 않았다. `TryMatch`는 상류처럼 내부로 남긴다.
+
 ### 페이지 여백 + 상류 PR #50·#52 백포트 (2026-09-24)
 
 **공개 API 추가**: `PageMargins`(mm 단위 네 변), `PageSetup.Margin`·`DefaultMargin`·`DipsPerMm`·`PaperMillimetres`,
