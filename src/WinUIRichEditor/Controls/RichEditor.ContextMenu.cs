@@ -537,11 +537,12 @@ public partial class RichEditor
             menu.Items.Add(Mi(Loc("EditLink"), () => _ = EditHyperlinkAsync(), true, RichEditorIcon.EditLink));
             menu.Items.Add(Mi(Loc("RemoveLink"), () => SetHyperlink(null), true, RichEditorIcon.RemoveLink));
         }
-        menu.Items.Add(Mi(Loc("CopyLink"), () =>
+        menu.Items.Add(Mi(Loc("CopyLink"), async () =>
         {
             var dp = new DataPackage();
             dp.SetText(uri);
-            Clipboard.SetContent(dp);
+            try { await RetryWhileClipboardBusyAsync(() => Clipboard.SetContent(dp)); }
+            catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
         }, true, RichEditorIcon.CopyLink));
         menu.Items.Add(Sep());
         menu.Items.Add(Mi(Loc("Copy"), () => _ = CopyAsync(), HasSelection, RichEditorIcon.Copy, "Ctrl+C"));

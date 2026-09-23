@@ -6,6 +6,18 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 클립보드가 잠깐 바쁠 때 복사·붙여넣기가 조용히 실패하던 것 (2026-09-24)
+
+- 클립보드 기록(Win+V)·클립보드 관리자처럼 클립보드를 지켜보는 프로그램이 있으면, 변경 직후 잠깐 클립보드가
+  잠긴다(`CLIPBRD_E_CANT_OPEN`). 모든 호출부가 이 오류를 삼키고 다음 형식으로 넘어가서, 웹 페이지가 평문으로
+  붙거나 아무것도 안 붙고, 복사가 사라졌다. 개발 PC 실측: 붙여넣기 150회 중 9회, 복사 300회 중 18회.
+- 그 오류만 짧게(20 ms × 최대 10회) 다시 시도한다. 기다림은 **await**이다 — 잠근 쪽이 우리 UI 스레드에 데이터를
+  요청하는 중일 수 있어, `Thread.Sleep`으로 기다리면 끝까지 풀리지 않았다(실측: sleep 재시도로도 300회 중 5회 유실).
+  수정 후 붙여넣기 450회·복사 900회 유실 0.
+- 잘라내기는 복사를 시작한 뒤 **바로** 지우고 나서 쓰기를 기다린다 — 기다리는 동안 들어온 입력이 선택을 옮겨
+  다른 곳을 지우지 않게. 링크 복사(우클릭)도 같은 재시도를 탄다(전에는 예외 처리가 없었다).
+- 전체 테스트에서 가끔 실패하던 `ControlFeatureFlagTests.AllowRemoteImagesOnPaste_…PastingHtml…`의 원인이 이것이었다.
+
 ### 페이지 여백 + 상류 PR #50·#52 백포트 (2026-09-24)
 
 **공개 API 추가**: `PageMargins`(mm 단위 네 변), `PageSetup.Margin`·`DefaultMargin`·`DipsPerMm`·`PaperMillimetres`,
