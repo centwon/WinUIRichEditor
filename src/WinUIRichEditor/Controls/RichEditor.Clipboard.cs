@@ -473,6 +473,23 @@ public partial class RichEditor
         int idx = container.IndexOf(p);
         if (idx < 0) return;
 
+        // At the paragraph's start the block goes BEFORE it, at its end AFTER it; only in between does the paragraph
+        // split. Always splitting left an empty paragraph ahead of (or behind) the block (upstream round 34 — the
+        // rule DropBlock already had). An empty paragraph takes the block after it, as before.
+        int len = GetParagraphLength(p);
+        int off = Math.Clamp(_caret.Offset, 0, len);
+        if (len > 0 && (off == 0 || off == len))
+        {
+            block.Parent = p.Parent;
+            container.Insert(off == 0 ? idx : idx + 1, block);
+            UpdateParents(Document); // NormalizeBlocks puts a paragraph after a block that ends the list
+            int bi = container.IndexOf(block);
+            var landing = bi + 1 < container.Count && container[bi + 1] is Paragraph next ? next : p;
+            _caret = new TextPointer(landing, 0);
+            CollapseSelectionToCaret();
+            return;
+        }
+
         int splitIdx = SplitInlinesAt(p, _caret.Offset);
         // The tail is the same paragraph's continuation, so it keeps the FULL paragraph format
         // (the old two-field copy dropped list/heading/spacing/quote across a block insert).

@@ -150,7 +150,9 @@ public partial class RichEditor
     {
         if (!AllowFindReplace || IsReadOnly || Document == null || string.IsNullOrEmpty(query)) return 0;
         var paras = AllParagraphs();
-        if (paras.Count == 0) return 0;
+        var cmp = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        // Nothing to replace: no undo step and no "modified" flag (both came from the checkpoint below).
+        if (!paras.Exists(p => BuildPlain(p).Contains(query, cmp))) return 0;
         PushUndo(null);
         _caret = new TextPointer(paras[0], 0);
         CollapseSelectionToCaret();

@@ -214,7 +214,7 @@ public static class HtmlDocumentFormatter
             if (name == "a")
             {
                 var href = child.GetAttributeValue("href", "");
-                if (!string.IsNullOrEmpty(href)) childLink = href;
+                if (!string.IsNullOrEmpty(href)) childLink = SafeHref(href);
             }
             bool hasLink = !string.IsNullOrEmpty(childLink);
 
@@ -669,7 +669,13 @@ public static class HtmlDocumentFormatter
                 // file:, or every HWP/Word picture reference silently misses this branch.
                 if (src.StartsWith("ms-clipboard-file:", StringComparison.OrdinalIgnoreCase))
                     src = "file:" + src.Substring("ms-clipboard-file:".Length);
-                var path = new Uri(src).LocalPath;
+                var uri = new Uri(src);
+                // A file on ANOTHER machine (file://host/share/…) is a UNC path, and touching it opens an SMB
+                // connection that offers the user's NTLM credentials to that host — from a paste, with an <img src>
+                // the copied page chose. Local file images are about this machine; a network share is never read,
+                // whatever the flags say (upstream round 34; measured here: a 21 s connect attempt).
+                if (uri.IsUnc) return (null, 0, 0, null);
+                var path = uri.LocalPath;
                 // Even when local files are blocked (the paste default), allow paths under %TEMP% — when the
                 // caller takes the paste exemption: Word/HWP CF_HTML reference the pictures the COPY itself
                 // just wrote there, and refusing them silently drops every image pasted from those apps.
@@ -699,6 +705,24 @@ public static class HtmlDocumentFormatter
             return System.IO.Path.GetFullPath(path).StartsWith(temp, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
+    }
+
+    // A link's address, or null for a script link (javascript:, vbscript:, data:). The text stays; only the link
+    // goes. Kept, a pasted page's script link was written back out as an <a href> into exported and clipboard HTML
+    // (upstream round 34, user decision: drop on read). Checked the way a browser reads a scheme: entities decoded,
+    // case ignored, whitespace and control characters (a tab inside "java\tscript:") not counted.
+    internal static string? SafeHref(string href)
+    {
+        var sb = new StringBuilder();
+        foreach (char ch in HtmlEntity.DeEntitize(href))
+        {
+            if (ch <= ' ') continue;
+            if (ch == ':') break;
+            sb.Append(char.ToLowerInvariant(ch));
+            if (sb.Length > 16) break; // longer than any scheme below
+        }
+        string scheme = sb.ToString();
+        return scheme is "javascript" or "vbscript" or "data" ? null : href;
     }
 
     private static double ReadPx(HtmlNode node, string attr, string cssProp)
@@ -764,7 +788,7 @@ public static class HtmlDocumentFormatter
             if (name == "a")
             {
                 var href = child.GetAttributeValue("href", "");
-                if (!string.IsNullOrEmpty(href)) cu = href;
+                if (!string.IsNullOrEmpty(href)) cu = SafeHref(href);
             }
 
             bool childOwnColor = ownColor || child.GetAttributeValue("data-are-fg", "") == "1";

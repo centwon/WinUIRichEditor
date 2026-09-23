@@ -100,6 +100,10 @@ internal static class ToolbarIcons
         RichEditorIcon.IndentDecrease => Build(box,
             ("M4 6 H20 M4 18 H20 M11 12 H20", false),
             ("M8 9 L4 12 L8 15 Z", true)),
+        // The quote bar the editor draws, beside the lines it marks (same path as upstream's).
+        RichEditorIcon.Quote => Build(box,
+            ("M5 5 V19", false),
+            ("M9 7 H20 M9 12 H20 M9 17 H16", false)),
         RichEditorIcon.InsertTable => Build(box,
             ("M3 5 H21 V19 H3 Z M3 11 H21 M3 15 H21 M9 5 V19 M15 5 V19", false)),
         RichEditorIcon.InsertImage => Build(box,

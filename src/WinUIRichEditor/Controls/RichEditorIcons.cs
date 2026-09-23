@@ -114,6 +114,8 @@ public enum RichEditorIcon
     FontSizeDecrease,
     /// <summary>Find / replace.</summary>
     Find,
+    /// <summary>Quote / blockquote toggle (the toolbar's quote button).</summary>
+    Quote,
 }
 
 /// <summary>Host-pluggable icon factory for the built-in chrome (toolbar buttons and context menus).
