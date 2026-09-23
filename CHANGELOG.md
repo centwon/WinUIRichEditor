@@ -6,6 +6,18 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 클립보드가 잠깐 바쁠 때 복사·붙여넣기가 조용히 실패하던 것 (2026-09-24)
+
+- 클립보드 기록(Win+V)·클립보드 관리자처럼 클립보드를 지켜보는 프로그램이 있으면, 변경 직후 잠깐 클립보드가
+  잠긴다(`CLIPBRD_E_CANT_OPEN`). 모든 호출부가 이 오류를 삼키고 다음 형식으로 넘어가서, 웹 페이지가 평문으로
+  붙거나 아무것도 안 붙고, 복사가 사라졌다. 개발 PC 실측: 붙여넣기 150회 중 9회, 복사 300회 중 18회.
+- 그 오류만 짧게(20 ms × 최대 10회) 다시 시도한다. 기다림은 **await**이다 — 잠근 쪽이 우리 UI 스레드에 데이터를
+  요청하는 중일 수 있어, `Thread.Sleep`으로 기다리면 끝까지 풀리지 않았다(실측: sleep 재시도로도 300회 중 5회 유실).
+  수정 후 붙여넣기 450회·복사 900회 유실 0.
+- 잘라내기는 복사를 시작한 뒤 **바로** 지우고 나서 쓰기를 기다린다 — 기다리는 동안 들어온 입력이 선택을 옮겨
+  다른 곳을 지우지 않게. 링크 복사(우클릭)도 같은 재시도를 탄다(전에는 예외 처리가 없었다).
+- 전체 테스트에서 가끔 실패하던 `ControlFeatureFlagTests.AllowRemoteImagesOnPaste_…PastingHtml…`의 원인이 이것이었다.
+
 ### 표 행·열 명령과 단축키 표 공개 — 상류 PR #48·#49 백포트 (2026-09-24)
 
 **공개 API 추가**: `RichEditor.InsertTableRow`·`DeleteTableRow`·`InsertTableColumn`·`DeleteTableColumn`(표·인덱스 지정),
@@ -45,7 +57,6 @@ and follows [Semantic Versioning](https://semver.org/).
   왼쪽 선이 통째로 안 보였다(실기 보고, 2026-09-24 — 포트 전용, 상류는 문제없음).
 - 쪽 여백은 DIP로 바꿀 때 **정수로 반올림**한다(최대 0.13 mm, 파일에는 정확한 mm). 15 mm = 56.69 DIP라
   내용 상자와 Win2D의 안티앨리어싱 클립이 소수점 픽셀에 걸려 가장자리 선이 흐려졌다(실측).
-
 
 ### 상류 라운드34 백포트 (2026-09-23, AvaloniaRichEditor PR #53)
 
@@ -659,7 +670,6 @@ C:\Users\<빌드한 사람>\source\repos\WinUIRichEditor\src\WinUIRichEditor\For
 - **Native AOT 재실측**: 네이티브 exe 14.5 MB, 게시 85.7 MB, 관리형 DLL 부재.
 - **NuGet 소비자 스모크**: 별도 앱이 `PackageReference`로 빌드·실행.
 
-
 ### Fixed — RTF가 머리말·꼬리말을 양방향으로 잃던 것 (2026-08-07) ⚠ 나가는 RTF 변경
 
 모델은 `PageSetup.Header`/`Footer`/`ShowPageNumbers`를 페이지 설정이 생긴 때부터 들고 있었고
@@ -689,7 +699,6 @@ JSON/`.flow`도 보존한다. **RTF에만 양쪽이 다 없었고, 그게 결함
 둘 수 없다.
 
 `RtfPageChromeTests` 10개. **반증**: 쓰는 쪽만 끄면 5개, 읽는 쪽만 끄면 8개 실패.
-
 
 ### Fixed — 전수조사: 서식이 저장에서 사라지던 5건 (2026-08-07)
 
