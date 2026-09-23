@@ -278,10 +278,10 @@ public partial class RichEditor
             // The four toggles are CHECK items reflecting the caret, like the slim menu's: as plain items
             // this, the fuller menu, was the one that could not show whether bold was already on.
             Item(Sub(Loc("CharacterFormat"), RichEditorIcon.CharacterFormat,
-                BulletToggle(Loc("Bold"), fmt.Bold, ToggleBold, RichEditorShortcuts.Display(ShortcutId.Bold), RichEditorIcon.Bold),
-                BulletToggle(Loc("Italic"), fmt.Italic, ToggleItalic, RichEditorShortcuts.Display(ShortcutId.Italic), RichEditorIcon.Italic),
-                BulletToggle(Loc("Underline"), fmt.Underline, ToggleUnderline, RichEditorShortcuts.Display(ShortcutId.Underline), RichEditorIcon.Underline),
-                BulletToggle(Loc("Strikethrough"), fmt.Strike, ToggleStrikethrough, RichEditorShortcuts.Display(ShortcutId.Strikethrough), RichEditorIcon.Strikethrough),
+                BulletToggle(Loc("Bold"), fmt.Bold, ToggleBold, RichEditorShortcuts.Display(RichEditorShortcutId.Bold), RichEditorIcon.Bold),
+                BulletToggle(Loc("Italic"), fmt.Italic, ToggleItalic, RichEditorShortcuts.Display(RichEditorShortcutId.Italic), RichEditorIcon.Italic),
+                BulletToggle(Loc("Underline"), fmt.Underline, ToggleUnderline, RichEditorShortcuts.Display(RichEditorShortcutId.Underline), RichEditorIcon.Underline),
+                BulletToggle(Loc("Strikethrough"), fmt.Strike, ToggleStrikethrough, RichEditorShortcuts.Display(RichEditorShortcutId.Strikethrough), RichEditorIcon.Strikethrough),
                 Sep(),
                 Mi(Loc("FontSizeIncrease"), IncreaseFontSize, true, RichEditorIcon.FontSizeIncrease, "Ctrl+Shift+."),
                 Mi(Loc("FontSizeDecrease"), DecreaseFontSize, true, RichEditorIcon.FontSizeDecrease, "Ctrl+Shift+,"),
@@ -293,13 +293,13 @@ public partial class RichEditor
 
             // ── 목록 (list) — promoted to top level ──
             Item(Sub(Loc("List"), RichEditorIcon.BulletList,
-                BulletToggle(Loc("BulletList"), fmt.List == ListKind.Bullet, ToggleBullet, RichEditorShortcuts.Display(ShortcutId.BulletList)),
+                BulletToggle(Loc("BulletList"), fmt.List == ListKind.Bullet, ToggleBullet, RichEditorShortcuts.Display(RichEditorShortcutId.BulletList)),
                 // Style submenus list STYLES only; a list is turned off by its own toggle (which clears the whole
                 // list state). The labelled "목록 제거" was a duplicate door and went (user decision, 2026-09-14).
                 Sub(Loc("BulletStyle"), null,
                     Mi("•", () => SetListStyle(ListMarkerStyle.Disc)), Mi("◦", () => SetListStyle(ListMarkerStyle.Circle)),
                     Mi("▪", () => SetListStyle(ListMarkerStyle.Square)), Mi("–", () => SetListStyle(ListMarkerStyle.Dash))),
-                BulletToggle(Loc("NumberedList"), fmt.List == ListKind.Ordered, ToggleNumbering, RichEditorShortcuts.Display(ShortcutId.NumberedList)),
+                BulletToggle(Loc("NumberedList"), fmt.List == ListKind.Ordered, ToggleNumbering, RichEditorShortcuts.Display(RichEditorShortcutId.NumberedList)),
                 Sub(Loc("NumberStyle"), null,
                     Mi("1.", () => SetListStyle(ListMarkerStyle.Decimal)), Mi("1)", () => SetListStyle(ListMarkerStyle.DecimalParen)),
                     Mi("a)", () => SetListStyle(ListMarkerStyle.LowerAlpha)), Mi("A)", () => SetListStyle(ListMarkerStyle.UpperAlpha)),
@@ -331,12 +331,12 @@ public partial class RichEditor
         {
             // Disabled for a link it would refuse to launch (see IsLaunchableLink) rather than silently doing nothing.
             Item(Mi(Loc("OpenLink"), () => _ = OpenLinkAtCaretAsync(), IsLaunchableLink(linkUri, out _), RichEditorIcon.OpenLink));
-            Item(Mi(Loc("EditLink"), () => _ = EditHyperlinkAsync(), true, RichEditorIcon.EditLink, RichEditorShortcuts.Display(ShortcutId.InsertLink)));
+            Item(Mi(Loc("EditLink"), () => _ = EditHyperlinkAsync(), true, RichEditorIcon.EditLink, RichEditorShortcuts.Display(RichEditorShortcutId.InsertLink)));
             Item(Mi(Loc("RemoveLink"), () => SetHyperlink(null), true, RichEditorIcon.RemoveLink));
         }
         else
             // Enabled without a selection too: the link applies to the caret word (ApplyStyleToSelection).
-            Item(Mi(Loc("InsertLink"), () => _ = EditHyperlinkAsync(), true, RichEditorIcon.InsertLink, RichEditorShortcuts.Display(ShortcutId.InsertLink)));
+            Item(Mi(Loc("InsertLink"), () => _ = EditHyperlinkAsync(), true, RichEditorIcon.InsertLink, RichEditorShortcuts.Display(RichEditorShortcutId.InsertLink)));
 
         Item(Sep());
         Item(Mi(Loc("SelectAll"), SelectAll, true, RichEditorIcon.SelectAll, "Ctrl+A"));
@@ -362,7 +362,7 @@ public partial class RichEditor
     // Flattens the old 문단 ▸ 정렬 ▸ / 여백 nesting into one level, HWP-style.
     private MenuFlyoutSubItem BuildParagraphFormatSub(CaretFormat fmt)
     {
-        RadioMenuFlyoutItem Align(string key, TextAlignment a, ShortcutId sc)
+        RadioMenuFlyoutItem Align(string key, TextAlignment a, RichEditorShortcutId sc)
         {
             var ri = new RadioMenuFlyoutItem { Text = Loc(key), GroupName = "ctxAlign", IsChecked = fmt.Align == a, FontSize = MenuFontSize };
             ri.KeyboardAcceleratorTextOverride = RichEditorShortcuts.Display(sc);
@@ -370,13 +370,13 @@ public partial class RichEditor
             return ri;
         }
         var sub = new MenuFlyoutSubItem { Text = Loc("ParagraphFormat"), FontSize = MenuFontSize };
-        sub.Items.Add(Align("AlignLeft", TextAlignment.Left, ShortcutId.AlignLeft));
-        sub.Items.Add(Align("AlignCenter", TextAlignment.Center, ShortcutId.AlignCenter));
-        sub.Items.Add(Align("AlignRight", TextAlignment.Right, ShortcutId.AlignRight));
-        sub.Items.Add(Align("AlignJustify", TextAlignment.Justify, ShortcutId.AlignJustify));
+        sub.Items.Add(Align("AlignLeft", TextAlignment.Left, RichEditorShortcutId.AlignLeft));
+        sub.Items.Add(Align("AlignCenter", TextAlignment.Center, RichEditorShortcutId.AlignCenter));
+        sub.Items.Add(Align("AlignRight", TextAlignment.Right, RichEditorShortcutId.AlignRight));
+        sub.Items.Add(Align("AlignJustify", TextAlignment.Justify, RichEditorShortcutId.AlignJustify));
         sub.Items.Add(Sep());
-        sub.Items.Add(Mi(Loc("IndentIncrease"), () => Indent(20), true, RichEditorIcon.IndentIncrease, RichEditorShortcuts.Display(ShortcutId.IndentIncrease)));
-        sub.Items.Add(Mi(Loc("IndentDecrease"), () => Indent(-20), true, RichEditorIcon.IndentDecrease, RichEditorShortcuts.Display(ShortcutId.IndentDecrease)));
+        sub.Items.Add(Mi(Loc("IndentIncrease"), () => Indent(20), true, RichEditorIcon.IndentIncrease, RichEditorShortcuts.Display(RichEditorShortcutId.IndentIncrease)));
+        sub.Items.Add(Mi(Loc("IndentDecrease"), () => Indent(-20), true, RichEditorIcon.IndentDecrease, RichEditorShortcuts.Display(RichEditorShortcutId.IndentDecrease)));
         // Margin (top-level paragraphs only — cell paragraphs lay out inside the cell).
         if (_caret.Paragraph is { } mp && Document != null && Document.Blocks.IndexOf(mp) >= 0)
         {
@@ -403,7 +403,7 @@ public partial class RichEditor
     {
         var ri = new RadioMenuFlyoutItem { Text = text, GroupName = "ctxHeading", IsChecked = current == level, FontSize = MenuFontSize };
         // Heading1..6 are consecutive enum values; level 0 = body text.
-        var sc = level == 0 ? ShortcutId.BodyText : (ShortcutId)((int)ShortcutId.Heading1 + level - 1);
+        var sc = level == 0 ? RichEditorShortcutId.BodyText : (RichEditorShortcutId)((int)RichEditorShortcutId.Heading1 + level - 1);
         ri.KeyboardAcceleratorTextOverride = RichEditorShortcuts.Display(sc);
         ri.Click += (_, _) => SetHeading(level);
         return ri;
@@ -708,7 +708,7 @@ public partial class RichEditor
     {
         bool onCell = r >= 0 && c >= 0;
         return Mi(Loc("SelectCell"), () => { if (onCell) { var (ar, ac) = tb.AnchorOf(r, c); SelectCellAsBlock(tb.Cells[ar][ac]); } },
-                  onCell, null, RichEditorShortcuts.Display(ShortcutId.SelectCell));
+                  onCell, null, RichEditorShortcuts.Display(RichEditorShortcutId.SelectCell));
     }
 
     // Deleting `tb` from a menu: an inline table leaves its host line (DeleteTable removes blocks only).

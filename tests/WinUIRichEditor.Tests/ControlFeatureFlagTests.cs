@@ -492,7 +492,7 @@ public class ControlFeatureFlagTests : IClassFixture<ClipboardGuard>
         ed.AllowFindReplace = allowed;
         int asked = 0;
         ed.FindRequested += (_, _) => asked++;
-        var shortcutType = T.Assembly.GetType("WinUIRichEditor.Controls.ShortcutId")!;
+        var shortcutType = T.Assembly.GetType("WinUIRichEditor.Controls.RichEditorShortcutId")!;
 
         Call(ed, "RunShortcut", Enum.Parse(shortcutType, "Find"));
         Call(ed, "RunShortcut", Enum.Parse(shortcutType, "FindReplace"));

@@ -940,48 +940,48 @@ public partial class RichEditor
 
     // Runs a matched command shortcut. Copy / Select All work read-only; everything else is editing and is
     // gated by IsReadOnly. Object-selection Copy/Cut is handled earlier in OnEditorKeyDown.
-    private void RunShortcut(ShortcutId id)
+    private void RunShortcut(RichEditorShortcutId id)
     {
         switch (id)
         {
-            case ShortcutId.Copy: _ = CopyAsync(); return;
-            case ShortcutId.SelectAll: SelectAll(); return;
-            case ShortcutId.Find: if (AllowFindReplace) RaiseFindRequested(false); return; // works read-only
+            case RichEditorShortcutId.Copy: _ = CopyAsync(); return;
+            case RichEditorShortcutId.SelectAll: SelectAll(); return;
+            case RichEditorShortcutId.Find: if (AllowFindReplace) RaiseFindRequested(false); return; // works read-only
         }
         if (IsReadOnly) return;
         switch (id)
         {
-            case ShortcutId.FindReplace: if (AllowFindReplace) RaiseFindRequested(true); break;
-            case ShortcutId.InsertLink: _ = EditHyperlinkAsync(); break;
-            case ShortcutId.Cut: _ = CutAsync(); break;
-            case ShortcutId.Paste: _ = PasteAsync(false); break;
-            case ShortcutId.PastePlain: _ = PasteAsync(true); break;
-            case ShortcutId.Undo: Undo(); break;
-            case ShortcutId.Redo: Redo(); break;
-            case ShortcutId.Bold: ToggleBold(); break;
-            case ShortcutId.Italic: ToggleItalic(); break;
-            case ShortcutId.Underline: ToggleUnderline(); break;
-            case ShortcutId.Strikethrough: ToggleStrikethrough(); break;
-            case ShortcutId.FontLarger: IncreaseFontSize(); break;
-            case ShortcutId.FontSmaller: DecreaseFontSize(); break;
-            case ShortcutId.IndentIncrease: Indent(20); break;
-            case ShortcutId.IndentDecrease: Indent(-20); break;
-            case ShortcutId.AlignLeft: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Left); break;
-            case ShortcutId.AlignCenter: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Center); break;
-            case ShortcutId.AlignRight: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Right); break;
-            case ShortcutId.AlignJustify: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Justify); break;
-            case ShortcutId.Heading1: SetHeading(1); break;
-            case ShortcutId.Heading2: SetHeading(2); break;
-            case ShortcutId.Heading3: SetHeading(3); break;
-            case ShortcutId.Heading4: SetHeading(4); break;
-            case ShortcutId.Heading5: SetHeading(5); break;
-            case ShortcutId.Heading6: SetHeading(6); break;
-            case ShortcutId.BodyText: SetHeading(0); break;
-            case ShortcutId.BulletList: ToggleBullet(); break;
-            case ShortcutId.NumberedList: ToggleNumbering(); break;
-            case ShortcutId.LineSpacingSingle: SetLineSpacing(1.0); break;
-            case ShortcutId.LineSpacingOneHalf: SetLineSpacing(1.5); break;
-            case ShortcutId.LineSpacingDouble: SetLineSpacing(2.0); break;
+            case RichEditorShortcutId.FindReplace: if (AllowFindReplace) RaiseFindRequested(true); break;
+            case RichEditorShortcutId.InsertLink: _ = EditHyperlinkAsync(); break;
+            case RichEditorShortcutId.Cut: _ = CutAsync(); break;
+            case RichEditorShortcutId.Paste: _ = PasteAsync(false); break;
+            case RichEditorShortcutId.PastePlain: _ = PasteAsync(true); break;
+            case RichEditorShortcutId.Undo: Undo(); break;
+            case RichEditorShortcutId.Redo: Redo(); break;
+            case RichEditorShortcutId.Bold: ToggleBold(); break;
+            case RichEditorShortcutId.Italic: ToggleItalic(); break;
+            case RichEditorShortcutId.Underline: ToggleUnderline(); break;
+            case RichEditorShortcutId.Strikethrough: ToggleStrikethrough(); break;
+            case RichEditorShortcutId.FontLarger: IncreaseFontSize(); break;
+            case RichEditorShortcutId.FontSmaller: DecreaseFontSize(); break;
+            case RichEditorShortcutId.IndentIncrease: Indent(20); break;
+            case RichEditorShortcutId.IndentDecrease: Indent(-20); break;
+            case RichEditorShortcutId.AlignLeft: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Left); break;
+            case RichEditorShortcutId.AlignCenter: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Center); break;
+            case RichEditorShortcutId.AlignRight: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Right); break;
+            case RichEditorShortcutId.AlignJustify: SetTextAlignment(Microsoft.UI.Xaml.TextAlignment.Justify); break;
+            case RichEditorShortcutId.Heading1: SetHeading(1); break;
+            case RichEditorShortcutId.Heading2: SetHeading(2); break;
+            case RichEditorShortcutId.Heading3: SetHeading(3); break;
+            case RichEditorShortcutId.Heading4: SetHeading(4); break;
+            case RichEditorShortcutId.Heading5: SetHeading(5); break;
+            case RichEditorShortcutId.Heading6: SetHeading(6); break;
+            case RichEditorShortcutId.BodyText: SetHeading(0); break;
+            case RichEditorShortcutId.BulletList: ToggleBullet(); break;
+            case RichEditorShortcutId.NumberedList: ToggleNumbering(); break;
+            case RichEditorShortcutId.LineSpacingSingle: SetLineSpacing(1.0); break;
+            case RichEditorShortcutId.LineSpacingOneHalf: SetLineSpacing(1.5); break;
+            case RichEditorShortcutId.LineSpacingDouble: SetLineSpacing(2.0); break;
         }
     }
 

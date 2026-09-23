@@ -18,6 +18,23 @@ and follows [Semantic Versioning](https://semver.org/).
   다른 곳을 지우지 않게. 링크 복사(우클릭)도 같은 재시도를 탄다(전에는 예외 처리가 없었다).
 - 전체 테스트에서 가끔 실패하던 `ControlFeatureFlagTests.AllowRemoteImagesOnPaste_…PastingHtml…`의 원인이 이것이었다.
 
+### 표 행·열 명령과 단축키 표 공개 — 상류 PR #48·#49 백포트 (2026-09-24)
+
+**공개 API 추가**: `RichEditor.InsertTableRow`·`DeleteTableRow`·`InsertTableColumn`·`DeleteTableColumn`(표·인덱스 지정),
+`InsertRowAbove`·`InsertRowBelow`·`DeleteRow`·`InsertColumnLeft`·`InsertColumnRight`·`DeleteColumn`(캐럿 기준),
+`RichEditorShortcuts`(`All`·`Display`), `RichEditorShortcutId`, `RichEditorShortcut`.
+
+- **표 행·열 편집을 호스트가 부를 수 있다.** 전에는 우클릭 메뉴로만 닿아, 자체 툴바를 만드는 호스트는
+  `TableBlock`을 직접 고쳐야 했고 그러면 되돌리기 체크포인트·부모 배선·레이아웃 무효화를 건너뛰었다.
+  호출 하나가 되돌리기 한 단계이고, 바뀐 게 있는지를 돌려준다. 읽기 전용, 범위 밖 인덱스, **다른 문서의 표**,
+  표의 마지막 행·열은 `false`이고 아무것도 바꾸지 않는다. "아래"·"오른쪽"은 메뉴와 같이 병합 영역 뒤다.
+  중첩 표·인라인 표도 된다. `AllowTables`는 보지 않는다(표를 **만드는** 것을 막는 플래그).
+- **단축키 표를 공개한다.** 호스트가 "Ctrl+B"를 편집기가 못 보는 곳에 다시 적지 않고 `RichEditorShortcuts.All`·
+  `Display(id)`로 읽는다. `All`은 읽기 전용 뷰라 호스트가 편집기 자신의 키 핸들러가 맞추는 표를 고칠 수 없다.
+  타입 이름은 `ShortcutId`/`ShortcutSpec`에서 `RichEditorShortcutId`/`RichEditorShortcut`로(내부였으니 호환 영향 없음).
+  enum 값의 순서는 이 패키지 것이고 상류와 다르다. 상류의 `Gesture(id)`(Avalonia `KeyGesture`)는 WinUI 메뉴가
+  힌트를 문자열로 받으므로 옮기지 않았다. `TryMatch`는 상류처럼 내부로 남긴다.
+
 ### 페이지 여백 + 상류 PR #50·#52 백포트 (2026-09-24)
 
 **공개 API 추가**: `PageMargins`(mm 단위 네 변), `PageSetup.Margin`·`DefaultMargin`·`DipsPerMm`·`PaperMillimetres`,
@@ -40,7 +57,6 @@ and follows [Semantic Versioning](https://semver.org/).
   왼쪽 선이 통째로 안 보였다(실기 보고, 2026-09-24 — 포트 전용, 상류는 문제없음).
 - 쪽 여백은 DIP로 바꿀 때 **정수로 반올림**한다(최대 0.13 mm, 파일에는 정확한 mm). 15 mm = 56.69 DIP라
   내용 상자와 Win2D의 안티앨리어싱 클립이 소수점 픽셀에 걸려 가장자리 선이 흐려졌다(실측).
-
 
 ### 상류 라운드34 백포트 (2026-09-23, AvaloniaRichEditor PR #53)
 
@@ -654,7 +670,6 @@ C:\Users\<빌드한 사람>\source\repos\WinUIRichEditor\src\WinUIRichEditor\For
 - **Native AOT 재실측**: 네이티브 exe 14.5 MB, 게시 85.7 MB, 관리형 DLL 부재.
 - **NuGet 소비자 스모크**: 별도 앱이 `PackageReference`로 빌드·실행.
 
-
 ### Fixed — RTF가 머리말·꼬리말을 양방향으로 잃던 것 (2026-08-07) ⚠ 나가는 RTF 변경
 
 모델은 `PageSetup.Header`/`Footer`/`ShowPageNumbers`를 페이지 설정이 생긴 때부터 들고 있었고
@@ -684,7 +699,6 @@ JSON/`.flow`도 보존한다. **RTF에만 양쪽이 다 없었고, 그게 결함
 둘 수 없다.
 
 `RtfPageChromeTests` 10개. **반증**: 쓰는 쪽만 끄면 5개, 읽는 쪽만 끄면 8개 실패.
-
 
 ### Fixed — 전수조사: 서식이 저장에서 사라지던 5건 (2026-08-07)
 
