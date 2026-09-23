@@ -668,49 +668,153 @@ public partial class RichEditor
     internal static int RowBelowIndex(TableBlock tb, int r, int c) => r + Math.Max(1, tb.SpanOf(r, c).rs);
     internal static int ColumnRightIndex(TableBlock tb, int r, int c) => c + Math.Max(1, tb.SpanOf(r, c).cs);
 
-    private void TableInsertRow(TableBlock tb, int at)
+    private bool TableInsertRow(TableBlock tb, int at)
     {
-        if (Document == null || at < 0) return;
+        if (Document == null || at < 0) return false;
         PushUndo(null);
         tb.InsertRow(at);
         UpdateParents(Document);
         int ar = Math.Clamp(at, 0, tb.Rows - 1);
         SetCaretToCell(CellCaretTarget(tb, ar, 0));
         AfterStructuralEdit(tb);
+        return true;
     }
 
-    private void TableDeleteRow(TableBlock tb, int at)
+    private bool TableDeleteRow(TableBlock tb, int at)
     {
-        if (Document == null || tb.Rows <= 1 || at < 0) return;
+        if (Document == null || tb.Rows <= 1 || at < 0) return false;
         PushUndo(null);
         tb.DeleteRow(at);
         UpdateParents(Document);
         int nr = Math.Clamp(at, 0, tb.Rows - 1);
         SetCaretToCell(CellCaretTarget(tb, nr, 0));
         AfterStructuralEdit(tb);
+        return true;
     }
 
-    private void TableInsertColumn(TableBlock tb, int at)
+    private bool TableInsertColumn(TableBlock tb, int at)
     {
-        if (Document == null || at < 0) return;
+        if (Document == null || at < 0) return false;
         PushUndo(null);
         tb.InsertColumn(at);
         UpdateParents(Document);
         int ac = Math.Clamp(at, 0, tb.Columns - 1);
         SetCaretToCell(CellCaretTarget(tb, 0, ac));
         AfterStructuralEdit(tb);
+        return true;
     }
 
-    private void TableDeleteColumn(TableBlock tb, int at)
+    private bool TableDeleteColumn(TableBlock tb, int at)
     {
-        if (Document == null || tb.Columns <= 1 || at < 0) return;
+        if (Document == null || tb.Columns <= 1 || at < 0) return false;
         PushUndo(null);
         tb.DeleteColumn(at);
         UpdateParents(Document);
         int nc = Math.Clamp(at, 0, tb.Columns - 1);
         SetCaretToCell(CellCaretTarget(tb, 0, nc));
         AfterStructuralEdit(tb);
+        return true;
     }
+
+    // ---- public structure commands (upstream PR #48) ----------------------------------------------------
+    // The four commands above were reachable only from the context menu, so a host that builds its own
+    // toolbar - or generates a document by script - had to edit TableBlock itself, which skips the undo
+    // checkpoint, the parent wiring and the layout invalidation they do.
+    //
+    // Two shapes over one body: the Table* four name the table and the index (scripting), the caret six act
+    // where the caret is (a toolbar button). Both return false when nothing changed, and both stop on a
+    // read-only editor. AllowTables is NOT consulted: it gates CREATING tables, and the context menu's
+    // row/column items are not gated by it either.
+
+    // A caller's table is not trusted: one from another document would push an undo checkpoint for, and
+    // edit, a tree this editor does not show. Every table in the document owns at least one cell paragraph,
+    // so this reuses the document walker (AllParagraphs) + FindCell rather than a table walker of its own.
+    // (A parent-chain check would call a detached subtree "inside" — see the round-34 backport.)
+    private bool TableIsInDocument(TableBlock table)
+    {
+        foreach (var p in AllParagraphs())
+            if (FindCell(p) is { } loc && ReferenceEquals(loc.tb, table)) return true;
+        return false;
+    }
+
+    // Insertion accepts one past the end (append); deletion does not.
+    private bool EditableTable(TableBlock? table, int at, int count, bool insert)
+        => table != null && Document != null && !IsReadOnly
+           && at >= 0 && at <= (insert ? count : count - 1)
+           && TableIsInDocument(table);
+
+    /// <summary>Inserts an empty row into <paramref name="table"/> before row <paramref name="at"/>
+    /// (<paramref name="at"/> == <see cref="TableBlock.Rows"/> appends). A cell crossing that boundary as
+    /// part of a vertical merge grows over the new row. One undo step; the caret lands in the new row.</summary>
+    /// <returns><see langword="false"/> when the editor is read-only or has no document, the table is not
+    /// in that document, or <paramref name="at"/> is out of range - nothing changes in those cases.</returns>
+    public bool InsertTableRow(TableBlock table, int at)
+        => EditableTable(table, at, table?.Rows ?? 0, insert: true) && TableInsertRow(table!, at);
+
+    /// <summary>Deletes row <paramref name="at"/> of <paramref name="table"/> with the cells in it.
+    /// One undo step; the caret lands in the row that takes its place.</summary>
+    /// <returns><see langword="false"/> under the same conditions as <see cref="InsertTableRow"/>, plus a
+    /// table of a single row, which always keeps it.</returns>
+    public bool DeleteTableRow(TableBlock table, int at)
+        => EditableTable(table, at, table?.Rows ?? 0, insert: false) && TableDeleteRow(table!, at);
+
+    /// <summary>Inserts an empty column into <paramref name="table"/> before column <paramref name="at"/>
+    /// (<paramref name="at"/> == <see cref="TableBlock.Columns"/> appends), at the default width.
+    /// One undo step; the caret lands in the new column.</summary>
+    /// <returns><see langword="false"/> under the same conditions as <see cref="InsertTableRow"/>.</returns>
+    public bool InsertTableColumn(TableBlock table, int at)
+        => EditableTable(table, at, table?.Columns ?? 0, insert: true) && TableInsertColumn(table!, at);
+
+    /// <summary>Deletes column <paramref name="at"/> of <paramref name="table"/> with the cells in it.
+    /// One undo step; the caret lands in the column that takes its place.</summary>
+    /// <returns><see langword="false"/> under the same conditions as <see cref="InsertTableRow"/>, plus a
+    /// table of a single column, which always keeps it.</returns>
+    public bool DeleteTableColumn(TableBlock table, int at)
+        => EditableTable(table, at, table?.Columns ?? 0, insert: false) && TableDeleteColumn(table!, at);
+
+    // The caret's cell as its merge anchor (what the context menu passes too), or null when the caret is
+    // not in a table - including a table held whole, which names no cell.
+    private (TableBlock tb, int r, int c)? CaretCell()
+    {
+        if (_caret.Paragraph is not { } p || FindCell(p) is not { } loc) return null;
+        var (ar, ac) = loc.tb.AnchorOf(loc.r, loc.c);
+        return (loc.tb, ar, ac);
+    }
+
+    /// <summary>Inserts a row above the caret's row. Nothing happens when the caret is not in a table.</summary>
+    /// <returns>Whether a row was inserted.</returns>
+    public bool InsertRowAbove()
+        => CaretCell() is { } at && InsertTableRow(at.tb, at.r);
+
+    /// <summary>Inserts a row below the caret's row - below the whole merged area when the caret's cell
+    /// spans several rows. Nothing happens when the caret is not in a table.</summary>
+    /// <returns>Whether a row was inserted.</returns>
+    public bool InsertRowBelow()
+        => CaretCell() is { } at && InsertTableRow(at.tb, RowBelowIndex(at.tb, at.r, at.c));
+
+    /// <summary>Deletes the caret's row. Nothing happens when the caret is not in a table, or when the
+    /// table has a single row.</summary>
+    /// <returns>Whether the row was deleted.</returns>
+    public bool DeleteRow()
+        => CaretCell() is { } at && DeleteTableRow(at.tb, at.r);
+
+    /// <summary>Inserts a column to the left of the caret's column. Nothing happens when the caret is not
+    /// in a table.</summary>
+    /// <returns>Whether a column was inserted.</returns>
+    public bool InsertColumnLeft()
+        => CaretCell() is { } at && InsertTableColumn(at.tb, at.c);
+
+    /// <summary>Inserts a column to the right of the caret's column - right of the whole merged area when
+    /// the caret's cell spans several columns. Nothing happens when the caret is not in a table.</summary>
+    /// <returns>Whether a column was inserted.</returns>
+    public bool InsertColumnRight()
+        => CaretCell() is { } at && InsertTableColumn(at.tb, ColumnRightIndex(at.tb, at.r, at.c));
+
+    /// <summary>Deletes the caret's column. Nothing happens when the caret is not in a table, or when the
+    /// table has a single column.</summary>
+    /// <returns>Whether the column was deleted.</returns>
+    public bool DeleteColumn()
+        => CaretCell() is { } at && DeleteTableColumn(at.tb, at.c);
 
     private void TableMergeSelected(TableBlock tb)
     {

@@ -222,7 +222,7 @@ public partial class RichEditorToolbar : UserControl
     private static string Loc(string key) => RichEditorLocalization.GetString(key);
 
     // Tooltip with the command's shortcut appended, e.g. "굵게 (Ctrl+B)". Single-sourced from the table.
-    private static string TipSc(string key, ShortcutId id) => Loc(key) + " (" + RichEditorShortcuts.Display(id) + ")";
+    private static string TipSc(string key, RichEditorShortcutId id) => Loc(key) + " (" + RichEditorShortcuts.Display(id) + ")";
 
     public RichEditorToolbar()
     {
@@ -362,7 +362,7 @@ public partial class RichEditorToolbar : UserControl
         {
             // Read-only = view toolbar: find + page/zoom + Export/Print (no editing controls, Import
             // hidden). Find works read-only, so a viewer keeps it.
-            _findBtn = IconButton("🔎" + Mono, TipSc("Find", ShortcutId.Find),
+            _findBtn = IconButton("🔎" + Mono, TipSc("Find", RichEditorShortcutId.Find),
                 () => Target?.RaiseFindRequested(false), RichEditorIcon.Find);
             Add(_findBtn); AddSep();
             bool page = ShowPageControls, file = ShowFileActions;
@@ -374,15 +374,15 @@ public partial class RichEditorToolbar : UserControl
             // Group order mirrors the AvaloniaRichEditor original toolbar: history → character
             // toggles → colours → font face/size → paragraph style/align → lists·indent·spacing →
             // inserts (table/image/divider) → page/zoom → file actions.
-            _undo = IconButton("↶", TipSc("Undo", ShortcutId.Undo), () => Target?.Undo(), RichEditorIcon.Undo);
-            _redo = IconButton("↷", TipSc("Redo", ShortcutId.Redo), () => Target?.Redo(), RichEditorIcon.Redo);
+            _undo = IconButton("↶", TipSc("Undo", RichEditorShortcutId.Undo), () => Target?.Undo(), RichEditorIcon.Undo);
+            _redo = IconButton("↷", TipSc("Redo", RichEditorShortcutId.Redo), () => Target?.Redo(), RichEditorIcon.Redo);
             Add(_undo); Add(_redo); AddSep();
 
-            _bold = ToggleBtn("B", TipSc("Bold", ShortcutId.Bold), () => Target?.ToggleBold(), bold: true, icon: RichEditorIcon.Bold);
-            _italic = ToggleBtn("I", TipSc("Italic", ShortcutId.Italic), () => Target?.ToggleItalic(), italic: true, icon: RichEditorIcon.Italic);
-            _underline = ToggleBtn("U", TipSc("Underline", ShortcutId.Underline), () => Target?.ToggleUnderline(), icon: RichEditorIcon.Underline,
+            _bold = ToggleBtn("B", TipSc("Bold", RichEditorShortcutId.Bold), () => Target?.ToggleBold(), bold: true, icon: RichEditorIcon.Bold);
+            _italic = ToggleBtn("I", TipSc("Italic", RichEditorShortcutId.Italic), () => Target?.ToggleItalic(), italic: true, icon: RichEditorIcon.Italic);
+            _underline = ToggleBtn("U", TipSc("Underline", RichEditorShortcutId.Underline), () => Target?.ToggleUnderline(), icon: RichEditorIcon.Underline,
                 decorations: Windows.UI.Text.TextDecorations.Underline);
-            _strike = ToggleBtn("S", TipSc("Strikethrough", ShortcutId.Strikethrough), () => Target?.ToggleStrikethrough(), icon: RichEditorIcon.Strikethrough,
+            _strike = ToggleBtn("S", TipSc("Strikethrough", RichEditorShortcutId.Strikethrough), () => Target?.ToggleStrikethrough(), icon: RichEditorIcon.Strikethrough,
                 decorations: Windows.UI.Text.TextDecorations.Strikethrough);
             Add(_bold); Add(_italic); Add(_underline); Add(_strike);
 
@@ -459,8 +459,8 @@ public partial class RichEditorToolbar : UserControl
                 // needs ShowFormattingMenu, and there is no shortcut). Upstream decision, 2026-09-23.
                 _quote = IconButton("❝", Loc("Quote"), () => Target?.ToggleQuote(), RichEditorIcon.Quote);
                 Add(_quote);
-                Add(IconButton("⇥", TipSc("IndentIncrease", ShortcutId.IndentIncrease), () => Target?.Indent(20), RichEditorIcon.IndentIncrease));
-                Add(IconButton("⇤", TipSc("IndentDecrease", ShortcutId.IndentDecrease), () => Target?.Indent(-20), RichEditorIcon.IndentDecrease));
+                Add(IconButton("⇥", TipSc("IndentIncrease", RichEditorShortcutId.IndentIncrease), () => Target?.Indent(20), RichEditorIcon.IndentIncrease));
+                Add(IconButton("⇤", TipSc("IndentDecrease", RichEditorShortcutId.IndentDecrease), () => Target?.Indent(-20), RichEditorIcon.IndentDecrease));
                 Add(BuildLineSpacingControl());
                 AddSep();
 
@@ -474,7 +474,7 @@ public partial class RichEditorToolbar : UserControl
                 // Find: opens whatever find UI the host wired to RichEditor.FindRequested (the built-in
                 // bar in RichEditorView), the same path Ctrl+F takes. Hidden when find is disabled.
                 AddSep();
-                _findBtn = IconButton("🔎" + Mono, TipSc("Find", ShortcutId.Find),
+                _findBtn = IconButton("🔎" + Mono, TipSc("Find", RichEditorShortcutId.Find),
                     () => Target?.RaiseFindRequested(false), RichEditorIcon.Find);
                 Add(_findBtn);
             }

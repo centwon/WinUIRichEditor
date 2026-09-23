@@ -65,7 +65,8 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 3. **상류 백포트 잔여**: 라운드31~32 이후 상류 변경분 대조. 라운드34(상류 PR #53)는 2026-09-23 옮김(아래 절).
    PR #50·#52(페이지 여백·여백 후속)는 2026-09-24 옮김 — CHANGELOG `[Unreleased]`. 목록에 있던 "그림 손잡이 vs 열 경계
    우선순위"와 테스트 `CtrlU_AtALinksEnd_LeavesTheLinkAlone`은 이미 들어와 있었다(`ControlImageResizeTests`·
-   `ControlCaretFormatTests`). **남은 것**: 상류 PR #48(표 행·열 공개 API)·#49(단축키 표 공개) 대조.
+   `ControlCaretFormatTests`). PR #48(표 행·열 공개 API)·#49(단축키 표 공개)도 2026-09-24 옮김 — 상류 PR #53까지
+   대조 끝. (`Gesture(id)`는 Avalonia 전용이라 뺐다. enum 순서는 포트 것 유지.)
 4. 아래 "알려진 한계"의 미수정 항목.
 
 ### 상류 라운드34 백포트 (2026-09-23) — 테스트 832 → 862, 결함 14(보안 2 포함) + 동작 변경 3, 반증 완료
@@ -190,7 +191,6 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
   PBKDF2는 앵커하지 말 것), 평문 `.flow`와 공존하는 외부 봉투, 분실 시 복구 불가 경고, 편집 중 평문이
   UI/임시파일로 새지 않게. **어중간하게 넣어 "암호화됐다"는 잘못된 안심을 주는 건 금지**
   (우회로: 7-Zip AES / BitLocker·VeraCrypt로 감싸면 된다).
-- 표 행/열 조작의 에디터 레벨 공개 API — 상류와 공유하는 백로그.
 - **미측정 성능 후보 2건**(옛 `implementation_plan.md`에서 살아남은 것 — 그 파일은 2026-09-20에 지웠다.
   나머지 제안은 이미 반영됐거나(`FindCell`은 `Parent` 기반) 근거가 없었다):
   ① `EvictLayouts()`가 캐시를 **전부** 비운다 — 바로 위 주석은 "가장 오래된 것만"이라고 말한다(주석/코드 불일치).

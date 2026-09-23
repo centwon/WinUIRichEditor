@@ -53,8 +53,8 @@ public class ShortcutTableTests
     public void AnAliasMatches_ButThePrimaryIsWhatIsShown()
     {
         Assert.True(RichEditorShortcuts.TryMatch(true, true, false, VirtualKey.Z, out var id));
-        Assert.Equal(ShortcutId.Redo, id);
-        Assert.Equal("Ctrl+Y", RichEditorShortcuts.Display(ShortcutId.Redo));
+        Assert.Equal(RichEditorShortcutId.Redo, id);
+        Assert.Equal("Ctrl+Y", RichEditorShortcuts.Display(RichEditorShortcutId.Redo));
     }
 
     // Modifiers must match exactly: Ctrl+Shift+X is strikethrough, not cut; Ctrl+Alt+1 a heading, not single spacing.
