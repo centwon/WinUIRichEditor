@@ -51,7 +51,7 @@ public partial class RichEditor
             _dragObjectActive = true;
         }
         var tp = GetPositionFromPoint(docPt);
-        _dropPreview = tp != null && CanDropObject(_dragObject, tp, copy: ctrl) ? tp : null;
+        _dropPreview = tp != null && CanDropObject(_dragObject, tp, copy: ctrl) && (!ctrl || MayCreate(_dragObject)) ? tp : null;
         SetCursorShape(_dropPreview != null ? InputSystemCursorShape.Arrow : InputSystemCursorShape.UniversalNo);
         InvalidateCanvas();
     }
@@ -112,11 +112,21 @@ public partial class RichEditor
         return table == null || !BlockContains(table, p);
     }
 
+    // A copy CREATES a table or picture, which AllowTables / AllowImages forbid (as they do for the menu and for
+    // paste); a move only relocates one the document already has (upstream round 34).
+    private bool MayCreate(object obj) => obj switch
+    {
+        TableBlock or InlineTable => AllowTables,
+        ImageBlock or InlineImage => AllowImages,
+        _ => true,
+    };
+
     // Moves (or copies) obj to `at`. Returns whether the document changed: a drop where the object already
     // is, or one CanDropObject refuses, is no edit at all — no undo step, not "modified".
     internal bool DropObject(object obj, TextPointer at, bool copy)
     {
         if (Document == null || at.Paragraph is not { } p || !CanDropObject(obj, at, copy)) return false;
+        if (copy && !MayCreate(obj)) return false;
         return obj switch
         {
             ImageBlock or TableBlock => DropBlock((Block)obj, p, at.Offset, copy),

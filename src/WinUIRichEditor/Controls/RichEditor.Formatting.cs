@@ -169,6 +169,7 @@ public partial class RichEditor
     public void SetTextAlignment(TextAlignment align)
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
+        if (SelectedParagraphs().All(p => p.TextAlignment == align)) return; // no undo step that undoes nothing
         PushUndo(null);
         foreach (var p in SelectedParagraphs()) p.TextAlignment = align;
         AfterFormat();
@@ -197,6 +198,8 @@ public partial class RichEditor
     public void SetLineSpacing(double spacing)
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
+        // Equals: NaN matches NaN. Nothing to change -> no undo step that undoes nothing (upstream round 34).
+        if (SelectedParagraphs().All(p => p.LineSpacing.Equals(spacing) && double.IsNaN(p.LineHeight))) return;
         PushUndo(null);
         foreach (var p in SelectedParagraphs()) { p.LineSpacing = spacing; p.LineHeight = double.NaN; }
         AfterFormat();
@@ -207,6 +210,7 @@ public partial class RichEditor
     public void SetLineHeight(double height)
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
+        if (SelectedParagraphs().All(p => p.LineHeight.Equals(height) && double.IsNaN(p.LineSpacing))) return; // see SetLineSpacing
         PushUndo(null);
         foreach (var p in SelectedParagraphs()) { p.LineHeight = height; p.LineSpacing = double.NaN; }
         AfterFormat();
@@ -256,6 +260,8 @@ public partial class RichEditor
     public void Indent(double delta)
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
+        // Outdent at 0 (or indent at the cap) changes nothing: no undo step that undoes nothing.
+        if (SelectedParagraphs().All(p => Math.Clamp(p.Indent + delta, 0, 400) == p.Indent)) return;
         PushUndo(null);
         foreach (var p in SelectedParagraphs()) p.Indent = Math.Clamp(p.Indent + delta, 0, 400);
         AfterFormat();
@@ -277,6 +283,8 @@ public partial class RichEditor
     public void RemoveList()
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
+        // No list anywhere in it: no undo step that undoes nothing.
+        if (SelectedParagraphs().All(p => p.ListType == ListKind.None && p.ListMarker == ListMarkerStyle.Default && p.ListLevel == 0)) return;
         PushUndo(null);
         foreach (var p in SelectedParagraphs()) ClearList(p);
         AfterFormat();

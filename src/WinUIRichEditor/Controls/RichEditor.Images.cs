@@ -46,10 +46,11 @@ public partial class RichEditor
     private void ResetBlockImageNatural(ImageBlock img)
     {
         if (NaturalImageSize(img.RawBytes) is not { } nat) return;
-        PushUndo(null);
         double w = nat.w, h = nat.h;
         double maxW = Math.Max(50, _layoutWidth - 40);
         if (w > maxW) { h *= maxW / w; w = maxW; }
+        if (img.Width == w && img.Height == h) return; // already: no undo step that undoes nothing
+        PushUndo(null);
         img.Width = w; img.Height = h;
         AfterEdit();
     }
@@ -71,10 +72,11 @@ public partial class RichEditor
     private void ResetInlineImageNatural(InlineImage img)
     {
         if (NaturalImageSize(img.RawBytes) is not { } nat) return;
-        PushUndo(null);
         double w = nat.w, h = nat.h;
         double maxW = Math.Max(40, Math.Min(_layoutWidth - 40, 240));
         if (w > maxW) { h *= maxW / w; w = maxW; }
+        if (img.Width == w && img.Height == h) return; // see ResetBlockImageNatural
+        PushUndo(null);
         img.Width = w; img.Height = h;
         _tableRowHeights.Clear();
         AfterEdit();
@@ -371,8 +373,7 @@ public partial class RichEditor
         var blk = new ImageBlock { Width = w, Height = h };
         blk.SetImageData(bytes, src.MimeType ?? ImageMime.Detect(bytes));
 
-        host.Inlines.Remove(src);
-        if (host.Inlines.Count == 0) host.Inlines.Add(new Run { Text = "" });
+        RemoveInlineCharacter(host, src);
         container.Insert(idx + 1, blk);
         UpdateParents(Document);
 

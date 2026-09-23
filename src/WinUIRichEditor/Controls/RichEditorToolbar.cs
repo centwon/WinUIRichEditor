@@ -120,6 +120,7 @@ public partial class RichEditorToolbar : UserControl
     // null-guard every access. Null = "not built at the current ToolbarLevel".
     private ToggleButton? _bold, _italic, _underline, _strike, _painter;
     private Button? _bullet, _number;                 // list-box icon buttons (toggle the list)
+    private Button? _quote;                           // quote toggle
     private TextBlock? _bulletPreview, _numberPreview; // current list marker shown in the list boxes
     [ThreadStatic] private static SolidColorBrush? _dimInk; // per UI thread, as _activeBrush
     private static SolidColorBrush DimInk => _dimInk ??= new(Color.FromArgb(255, 0xBF, 0xC3, 0xC7)); // inactive marker
@@ -337,7 +338,7 @@ public partial class RichEditorToolbar : UserControl
         // Reset reflected controls; only the ones the current level/state re-builds are re-assigned. Sync()
         // null-guards each, so a Minimal or read-only toolbar (a subset) reflects safely.
         _bold = _italic = _underline = _strike = _painter = null;
-        _bullet = _number = _undo = _redo = _tableBtn = _imageBtn = _dividerBtn = _findBtn = null;
+        _bullet = _number = _quote = _undo = _redo = _tableBtn = _imageBtn = _dividerBtn = _findBtn = null;
         _bulletPreview = _numberPreview = null;
         _font = _size = _heading = _align = null; _fontReflected = null;
         _spacingBox = null; _colorSwatch = _highlightSwatch = null;
@@ -454,7 +455,10 @@ public partial class RichEditorToolbar : UserControl
                     (ListMarkerStyle.LowerAlpha, "a)"), (ListMarkerStyle.UpperAlpha, "A)"), (ListMarkerStyle.LowerRoman, "i)"));
                 _number = number.Icon; _numberPreview = number.Preview;
                 Add(number.Box);
-                // Quote is via the right-click menu / ToggleQuote(); no toolbar button (matches original).
+                // Quote beside the lists: without it the default UI had no way to set one (the right-click item
+                // needs ShowFormattingMenu, and there is no shortcut). Upstream decision, 2026-09-23.
+                _quote = IconButton("❝", Loc("Quote"), () => Target?.ToggleQuote(), RichEditorIcon.Quote);
+                Add(_quote);
                 Add(IconButton("⇥", TipSc("IndentIncrease", ShortcutId.IndentIncrease), () => Target?.Indent(20), RichEditorIcon.IndentIncrease));
                 Add(IconButton("⇤", TipSc("IndentDecrease", ShortcutId.IndentDecrease), () => Target?.Indent(-20), RichEditorIcon.IndentDecrease));
                 Add(BuildLineSpacingControl());
@@ -748,6 +752,7 @@ public partial class RichEditorToolbar : UserControl
             if (_strike != null) SetActive(_strike, f.Strike);
             if (_bullet != null) SetActive(_bullet, f.List == ListKind.Bullet);
             if (_number != null) SetActive(_number, f.List == ListKind.Ordered);
+            if (_quote != null) SetActive(_quote, f.Quote);
             if (_painter != null) SetActive(_painter, rt.IsFormatPainterActive);
 
             // List previews show the caret paragraph's current marker, full-ink when that list kind is

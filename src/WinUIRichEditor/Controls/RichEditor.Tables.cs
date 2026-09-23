@@ -465,20 +465,23 @@ public partial class RichEditor
         int idx = all.IndexOf(current);
         if (idx < 0) return;
 
+        // The outermost table around the caret (through nested and in-cell inline tables); nested tables don't
+        // grow via Tab — use the right-click menu.
+        var top = tb;
+        while (EnclosingTableOf(top) is { } up) top = up;
+
         if (shift)
         {
             if (idx > 0) FocusCell(all[idx - 1].Para); // else: first cell of the document -> no-op
         }
-        else if (idx + 1 < all.Count)
+        else if (idx + 1 < all.Count && IsWithin(all[idx + 1], top))
         {
             FocusCell(all[idx + 1].Para);
         }
         else
         {
-            // Past the document's last cell: add a row to the enclosing TOP-LEVEL table (nested tables
-            // grow via the right-click menu, not Tab), walking up the parent chain if the cell is nested.
-            var top = tb;
-            while (top.Parent is TableCell pcell && pcell.Parent is TableBlock gp) top = gp;
+            // Past this table's last cell: add a row to it (Word/HWP). Only the document's last table used to
+            // grow — from any other, Tab jumped into the next table below (upstream round 34, user decision).
             PushUndo(null);
             top.InsertRow(top.Rows);
             if (Document != null) UpdateParents(Document);
@@ -486,6 +489,31 @@ public partial class RichEditor
             RelayoutToViewport();
             FocusCell(top.Cells[top.Rows - 1][0].Para);
         }
+    }
+
+    // Takes one inline object's character (a picture, an inline table) out of `p` and returns the offset it sat at.
+    // Caret and selection ends past it are pulled back one: they kept their offsets, so a caret after a trailing
+    // object sat one past the paragraph's end and the next keys went nowhere (upstream round 34).
+    private int RemoveInlineCharacter(Paragraph p, Inline obj)
+    {
+        int idx = p.Inlines.IndexOf(obj), off = 0;
+        for (int i = 0; i < idx; i++) off += InlineLen(p.Inlines[i]);
+        p.Inlines.Remove(obj);
+        if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
+        TextPointer Back(TextPointer t) => ReferenceEquals(t.Paragraph, p) && t.Offset > off ? new TextPointer(p, t.Offset - 1) : t;
+        _caret = Back(_caret);
+        _selStart = Back(_selStart);
+        _selEnd = Back(_selEnd);
+        return off;
+    }
+
+    // Whether `e` is `ancestor` or lies inside it, through the parent chain (cells, nested and inline tables).
+    // Only for nodes in the document: a detached subtree keeps its Parent links.
+    private static bool IsWithin(object? e, object ancestor)
+    {
+        for (object? cur = e; cur != null; cur = (cur as TextElement)?.Parent)
+            if (ReferenceEquals(cur, ancestor)) return true;
+        return false;
     }
 
     // Selects the whole content of a cell (caret at end), redirecting covered cells to their merge anchor.
@@ -852,8 +880,12 @@ public partial class RichEditor
 
         PushUndo(null);
         var tb = (TableBlock)it.Table.Clone();
-        host.Inlines.Remove(it);
-        if (host.Inlines.Count == 0) host.Inlines.Add(new Run { Text = "" });
+        // The caret (and a whole-table selection) may be in the inline original's cells, which leave the document
+        // with it — typing went nowhere (upstream round 34). It goes where the table was.
+        bool caretInside = IsWithin(_caret.Paragraph, it.Table)
+            || IsWithin(_selStart.Paragraph, it.Table) || IsWithin(_selEnd.Paragraph, it.Table);
+        int off = RemoveInlineCharacter(host, it);
+        if (caretInside) _caret = new TextPointer(host, off);
         container.Insert(idx + 1, tb);
         UpdateParents(Document);
 

@@ -160,6 +160,10 @@ public partial class RichEditor
         // Right-clicking outside an existing selection moves the caret there first (Word/VS behavior).
         // Only when no object was hit — those select the object instead.
         bool onObject = hitBlockImage != null || hitInlineImage != null || hitInlineTable != null || edgeTable != null;
+        // Not on an object: one selected earlier (a table held by its border) lets go, as a left press does. It
+        // stayed selected while the caret moved to the text, and Delete then removed it (upstream round 34; the
+        // read-only branch below already dropped it).
+        if (!onObject && HasBlockSelection) { ClearObjectSelection(); InvalidateCanvas(); }
         // On a link, the caret goes just past the character UNDER the pointer — inside the link — so the link
         // menu and its caret-based actions (open/edit/remove) act on the link the pointer is on. The nearest
         // boundary alone put the left half of a link's first character before the link (the text menu) and a
@@ -467,7 +471,7 @@ public partial class RichEditor
             {
                 double vv = v;
                 var ri = new RadioMenuFlyoutItem { Text = $"{vv:0} px", GroupName = label, IsChecked = Math.Abs(get() - vv) < 0.5, FontSize = MenuFontSize };
-                ri.Click += (_, _) => { if (Document != null) PushUndo(null); set(vv); AfterFormat(); };
+                ri.Click += (_, _) => PickMargin(get, set, vv);
                 s.Items.Add(ri);
             }
             return s;
@@ -478,6 +482,15 @@ public partial class RichEditor
         sub.Items.Add(Side(Loc("MarginLeft"), () => target.Indent, v => target.Indent = v));
         if (target is Paragraph mp) sub.Items.Add(Side(Loc("MarginRight"), () => mp.MarginRight, v => mp.MarginRight = v));
         return sub;
+    }
+
+    // A margin preset's click (split out so a test can reach it — a flyout item cannot be clicked from code).
+    private void PickMargin(Func<double> get, Action<double> set, double v)
+    {
+        if (get().Equals(v)) return; // already in force: no undo step that undoes nothing (as the cell v-align radio)
+        if (Document != null) PushUndo(null);
+        set(v);
+        AfterFormat();
     }
 
     // Cell vertical-alignment radio submenu for the anchor cell at (r,c) — Top/Center/Bottom, checked

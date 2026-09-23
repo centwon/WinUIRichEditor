@@ -35,6 +35,7 @@ public class ToolbarVectorIconAndPrintTests
         RichEditorIcon.IndentIncrease, RichEditorIcon.IndentDecrease, RichEditorIcon.InsertTable, RichEditorIcon.InsertImage,
         RichEditorIcon.InsertDivider, RichEditorIcon.Undo, RichEditorIcon.Redo, RichEditorIcon.Highlight,
         RichEditorIcon.Export, RichEditorIcon.Import, RichEditorIcon.Print, RichEditorIcon.Find, RichEditorIcon.ClearFormatting,
+        RichEditorIcon.Quote,
     };
 
     private static IEnumerable<DependencyObject> Walk(object? root)
@@ -51,6 +52,16 @@ public class ToolbarVectorIconAndPrintTests
     }
 
     // ---- icons ------------------------------------------------------------------------------------
+
+    // The quote button beside the lists (upstream round 34 decision): without it the default UI had no way to set
+    // a quote. Found by its tooltip, as a person finds it.
+    [Fact]
+    public void TheToolbarHasAQuoteButton() => UiThread.Run(() =>
+    {
+        var tb = new RichEditorToolbar { Target = new RichEditor() };
+        Assert.Contains(Walk(tb.Content).OfType<Button>(),
+            b => ToolTipService.GetToolTip(b) as string == RichEditorLocalization.GetString("Quote"));
+    });
 
     // Every toolbar slot that has a picture builds one — each layer's path data parses into a figure with
     // segments — and the letters do not (they are styled text).

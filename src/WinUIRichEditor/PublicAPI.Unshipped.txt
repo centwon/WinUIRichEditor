@@ -1,1 +1,1 @@
-﻿
+﻿WinUIRichEditor.Controls.RichEditorIcon.Quote = 49 -> WinUIRichEditor.Controls.RichEditorIcon
