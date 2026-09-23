@@ -100,6 +100,10 @@ internal static class ToolbarIcons
         RichEditorIcon.IndentDecrease => Build(box,
             ("M4 6 H20 M4 18 H20 M11 12 H20", false),
             ("M8 9 L4 12 L8 15 Z", true)),
+        // A page with its content box inset — the margin band around it (same paths as upstream's).
+        RichEditorIcon.PageMargin => Build(box,
+            ("M6 3 H18 V21 H6 Z", false),
+            ("M9 7 H15 V17 H9 Z", false)),
         // The quote bar the editor draws, beside the lines it marks (same path as upstream's).
         RichEditorIcon.Quote => Build(box,
             ("M5 5 V19", false),

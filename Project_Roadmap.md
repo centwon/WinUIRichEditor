@@ -63,8 +63,9 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 2. **실기에만 있는 검증 항목**: AltGr 자판(처리기 배선은 `KeyRoutedEventArgs`를 만들 수 없어 자동 검증 밖),
    IME 조합, 포커스·캐럿 깜빡임.
 3. **상류 백포트 잔여**: 라운드31~32 이후 상류 변경분 대조. 라운드34(상류 PR #53)는 2026-09-23 옮김(아래 절).
-   **남은 것**: PR #50~#52의 여백 후속(`Block.AutoTopMargin` 등 — 들어오면 여백 메뉴의 "자동(한 줄)" 항목도 함께),
-   그림 손잡이 vs 열 경계 우선순위, 테스트 `CtrlU_AtALinksEnd_LeavesTheLinkAlone`.
+   PR #50·#52(페이지 여백·여백 후속)는 2026-09-24 옮김 — CHANGELOG `[Unreleased]`. 목록에 있던 "그림 손잡이 vs 열 경계
+   우선순위"와 테스트 `CtrlU_AtALinksEnd_LeavesTheLinkAlone`은 이미 들어와 있었다(`ControlImageResizeTests`·
+   `ControlCaretFormatTests`). **남은 것**: 상류 PR #48(표 행·열 공개 API)·#49(단축키 표 공개) 대조.
 4. 아래 "알려진 한계"의 미수정 항목.
 
 ### 상류 라운드34 백포트 (2026-09-23) — 테스트 832 → 862, 결함 14(보안 2 포함) + 동작 변경 3, 반증 완료

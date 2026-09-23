@@ -15,11 +15,18 @@ public partial class RichEditor
 {
     internal const double A4PageWidth = 794;
     internal const double A4PageHeight = 1123;
-    // Aliases of the shared page geometry (Documents.PageSetup): the RTF writer needs the same numbers
-    // for its footer tab stop, and it cannot read them off this type without triggering the dependency-
-    // property static constructor, which requires the WinUI runtime.
-    internal const double PagePadX = Documents.PageSetup.MarginX; // left/right page margin
-    internal const double PagePadY = Documents.PageSetup.MarginY; // top/bottom page margin
+    // The page margins in DIPs, from PageMargin (millimetres). Every reader of the margins goes through these
+    // four, so the conversion lives in one place. They were two constants (48 x 40 DIP) until the margins
+    // became a document setting (upstream PR #50/#52, ported 2026-09-24).
+    //
+    // Rounded to whole DIPs (at most 0.13 mm off; the document keeps the exact millimetres): 15 mm is 56.69 DIP,
+    // which puts the content box — and the page clip, which Win2D antialiases — on a fractional pixel. A table's
+    // outer border there came out at 60% of an interior line even drawn inside its box (measured). Every walker,
+    // the clip, the transforms and the hit-tests read these four, so the rounding cannot make them disagree.
+    internal double PagePadLeft => Math.Round(PageMargin.LeftDips);
+    internal double PagePadRight => Math.Round(PageMargin.RightDips);
+    internal double PagePadTop => Math.Round(PageMargin.TopDips);
+    internal double PagePadBottom => Math.Round(PageMargin.BottomDips);
     internal const double PageGap = 14;    // grey desk gap between stacked pages (page view)
 
     // ---- visual zoom -------------------------------------------------------
@@ -147,6 +154,7 @@ public partial class RichEditor
         else if (changed == PageHeaderProperty) _hostPageSetup.Header = PageHeader;
         else if (changed == PageFooterProperty) _hostPageSetup.Footer = PageFooter;
         else if (changed == ShowPageNumbersProperty) _hostPageSetup.ShowPageNumbers = ShowPageNumbers;
+        else if (changed == PageMarginProperty) _hostPageSetup.Margin = PageMargin;
     }
 
     // On Document change: a document that specifies a PageSetup drives the control's page DPs (model ->
@@ -176,6 +184,7 @@ public partial class RichEditor
             PageHeader = ps.Header;
             PageFooter = ps.Footer;
             ShowPageNumbers = ps.ShowPageNumbers;
+            PageMargin = ps.Margin;
         }
         finally { _syncingPageSetup = false; }
     }
@@ -195,6 +204,7 @@ public partial class RichEditor
             Header = PageHeader,
             Footer = PageFooter,
             ShowPageNumbers = ShowPageNumbers,
+            Margin = PageMargin,
         };
         // Null — "no setup", read back as the HOST's — only when the host's defaults are plain too. Under a host
         // that defaults to A4, a document switched to Continuous stored null, saved without a setup and reopened as
@@ -273,6 +283,38 @@ public partial class RichEditor
         set => SetValue(ShowPageNumbersProperty, value);
     }
 
+    /// <summary>The page margins in MILLIMETRES — the band between the paper's edge and the text, where the
+    /// header, footer and page number are drawn. Four sides, as Word, HWP and RTF have them; part of the
+    /// document's <see cref="Documents.PageSetup"/>, so it is saved with the document and applied on load. Only
+    /// meaningful for a concrete paper size. A margin that leaves no page to write on (negative, NaN, or two
+    /// sides swallowing the paper) is refused: the editor keeps the last usable margins.</summary>
+    public static readonly DependencyProperty PageMarginProperty = DependencyProperty.Register(
+        nameof(PageMargin), typeof(Documents.PageMargins), typeof(RichEditor),
+        new PropertyMetadata(Documents.PageSetup.DefaultMargin, OnPageMarginChanged));
+
+    /// <summary>Gets or sets the page margins (millimetres, four sides). Defaults to
+    /// <see cref="Documents.PageSetup.DefaultMargin"/>.</summary>
+    public Documents.PageMargins PageMargin
+    {
+        get => (Documents.PageMargins)GetValue(PageMarginProperty);
+        set => SetValue(PageMarginProperty, value);
+    }
+
+    // WinUI has no coerce callback, so an unusable value is put back here — the layout width would be zero or
+    // negative, and every page-view measurement divides by it. A DP is reachable from XAML and bindings, so the
+    // refusal lives here rather than at the dozen places that read it.
+    private static void OnPageMarginChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var ed = (RichEditor)d;
+        var (w, h) = Documents.PageSetup.PaperMillimetres(ed.PageSize, ed.PageOrientation);
+        if (!Documents.PageSetup.IsUsableMargin((Documents.PageMargins)e.NewValue, w, h))
+        {
+            ed.SetValue(PageMarginProperty, e.OldValue); // re-enters with the old (usable) value
+            return;
+        }
+        OnLayoutAffectingChanged(d, e);
+    }
+
     /// <summary>True when a concrete (non-Continuous) paper size is set.</summary>
     internal bool IsPaged => PageSize != RichEditorPageSize.Continuous;
 
@@ -282,8 +324,8 @@ public partial class RichEditor
 
     internal double PaperWidth => PaperDims.w;
     internal double PaperHeight => PaperDims.h;
-    internal double PaperContentWidth => PaperWidth - 2 * PagePadX;
-    internal double PaperContentHeight => PaperHeight - 2 * PagePadY;
+    internal double PaperContentWidth => PaperWidth - PagePadLeft - PagePadRight;
+    internal double PaperContentHeight => PaperHeight - PagePadTop - PagePadBottom;
 
     /// <summary>The current paper's pixel size at 96 DPI (accounts for <see cref="PageOrientation"/>).
     /// Continuous reports its A4 fallback. Useful for host fit-to-width and print math.</summary>
@@ -365,7 +407,7 @@ public partial class RichEditor
 
         foreach (var block in Document.Blocks)
         {
-            y += block.MarginTop;
+            y += TopGapOf(block);
             if (block is Paragraph p)
             {
                 double px = ParaLeft(p);
@@ -423,8 +465,8 @@ public partial class RichEditor
         var br = EnsurePageBreaks();
         double stride = PaperHeight + PageGap;
         int i = System.Math.Clamp((int)((v.Y - PageGap) / System.Math.Max(1, stride)), 0, br.Count - 1);
-        double viewContentLeft = PageDeskX + PagePadX;
-        double viewContentTop = PageGap + i * stride + PagePadY;
+        double viewContentLeft = PageDeskX + PagePadLeft;
+        double viewContentTop = PageGap + i * stride + PagePadTop;
         return new Point(v.X - (viewContentLeft - DocContentLeft), br[i] + (v.Y - viewContentTop));
     }
 
@@ -440,8 +482,8 @@ public partial class RichEditor
             var br = EnsurePageBreaks();
             double stride = PaperHeight + PageGap;
             int i = PageOfDocY(d.Y);
-            double viewContentLeft = PageDeskX + PagePadX;
-            double viewContentTop = PageGap + i * stride + PagePadY;
+            double viewContentLeft = PageDeskX + PagePadLeft;
+            double viewContentTop = PageGap + i * stride + PagePadTop;
             lv = new Point(d.X + (viewContentLeft - DocContentLeft), viewContentTop + (d.Y - br[i]));
         }
         return new Point(lv.X * z, lv.Y * z);

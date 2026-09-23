@@ -78,6 +78,10 @@ public static class DocumentSerializer
                 Header = string.IsNullOrEmpty(ps.Header) ? null : ps.Header,
                 Footer = string.IsNullOrEmpty(ps.Footer) ? null : ps.Footer,
                 ShowPageNumbers = ps.ShowPageNumbers,
+                MarginLeft = ps.Margin.Left == PageSetup.DefaultMargin.Left ? null : ps.Margin.Left,
+                MarginTop = ps.Margin.Top == PageSetup.DefaultMargin.Top ? null : ps.Margin.Top,
+                MarginRight = ps.Margin.Right == PageSetup.DefaultMargin.Right ? null : ps.Margin.Right,
+                MarginBottom = ps.Margin.Bottom == PageSetup.DefaultMargin.Bottom ? null : ps.Margin.Bottom,
             };
         return dto;
     }
@@ -151,6 +155,7 @@ public static class DocumentSerializer
                 Header = psd.Header,
                 Footer = psd.Footer,
                 ShowPageNumbers = psd.ShowPageNumbers,
+                Margin = ReadMargin(psd),
             };
         // A file without the HeadingFormat marker (older, or upstream's) is read as it is — the marker's
         // absence stays on the document, and the EDITOR converts it when it receives it (OnDocumentAssigned).
@@ -168,7 +173,12 @@ public static class DocumentSerializer
             case Paragraph p:
                 return ParagraphToDto(p, pool);
             case DividerBlock dv:
-                return new BlockDto { Type = "Divider", MarginTop = dv.MarginTop, MarginBottom = dv.MarginBottom };
+                return new BlockDto
+                {
+                    Type = "Divider",
+                    MarginTop = double.IsNaN(dv.MarginTop) ? null : dv.MarginTop, // see the table branch
+                    MarginBottom = dv.MarginBottom,
+                };
             case ImageBlock img:
                 return new BlockDto
                 {
@@ -178,7 +188,7 @@ public static class DocumentSerializer
                     Height = NanToNull(img.Height),
                     Alt = img.AltText,
                     Indent = img.Indent,
-                    MarginTop = img.MarginTop,
+                    MarginTop = double.IsNaN(img.MarginTop) ? null : img.MarginTop, // see the table branch
                     MarginBottom = img.MarginBottom
                 };
             case TableBlock tb:
@@ -188,7 +198,9 @@ public static class DocumentSerializer
                     Rows = tb.Rows,
                     Columns = tb.Columns,
                     Indent = tb.Indent,
-                    MarginTop = tb.MarginTop,
+                    // NaN is "let the editor choose the gap" (Block.AutoTopMargin) and JSON has no NaN: it goes
+                    // out as no field at all, and comes back as NaN on the next read.
+                    MarginTop = double.IsNaN(tb.MarginTop) ? null : tb.MarginTop,
                     MarginBottom = tb.MarginBottom,
                     ColumnWidths = new List<double>(tb.ColumnWidths),
                     RowHeights = new List<double>(tb.RowHeights),
@@ -297,13 +309,27 @@ public static class DocumentSerializer
     // Far beyond any real document, and matched to the HTML importer's own cap.
     private const int MaxTableDimension = 1000;
 
+    // A file is untrusted input (it reaches here by Open and by paste), so a margin that leaves no page to
+    // write on is dropped whole rather than per side — half a stated margin is not what the file meant.
+    // Paper: what the file itself declares, since the margins are read alongside it.
+    private static PageMargins ReadMargin(PageSetupDto psd)
+    {
+        var d = PageSetup.DefaultMargin;
+        var m = new PageMargins(psd.MarginLeft ?? d.Left, psd.MarginTop ?? d.Top,
+                                psd.MarginRight ?? d.Right, psd.MarginBottom ?? d.Bottom);
+        var size = Enum.TryParse<RichEditorPageSize>(psd.PageSize, out var sz) ? sz : RichEditorPageSize.Continuous;
+        var orient = Enum.TryParse<RichEditorPageOrientation>(psd.Orientation, out var or) ? or : RichEditorPageOrientation.Portrait;
+        var (w, h) = PageSetup.PaperMillimetres(size, orient);
+        return PageSetup.IsUsableMargin(m, w, h) ? m : d;
+    }
+
     private static Block? DtoToBlock(BlockDto? d, Dictionary<string, (byte[] Bytes, string Mime)> pool)
     {
         if (d == null) return null; // a JSON null inside "Blocks" must not take the load down
         switch (d.Type)
         {
             case "Divider":
-                return new DividerBlock { MarginTop = d.MarginTop ?? 0, MarginBottom = d.MarginBottom ?? 0 };
+                return new DividerBlock { MarginTop = d.MarginTop ?? Block.AutoTopMargin, MarginBottom = d.MarginBottom ?? 0 };
             case "Image":
                 {
                     var ib = new ImageBlock
@@ -312,7 +338,7 @@ public static class DocumentSerializer
                         Height = d.Height ?? double.NaN,
                         AltText = d.Alt,
                         Indent = d.Indent,
-                        MarginTop = d.MarginTop ?? 0,
+                        MarginTop = d.MarginTop ?? Block.AutoTopMargin, // absent = the editor's own gap
                         MarginBottom = d.MarginBottom ?? 10
                     };
                     if (ResolveImage(d.ImageRef, d.ImageBase64, d.MimeType, pool) is { } img)
@@ -326,7 +352,7 @@ public static class DocumentSerializer
                 // exhausted it before a single cell was read.
                 var tb = new TableBlock(1, 1);
                 tb.Indent = d.Indent;
-                tb.MarginTop = d.MarginTop ?? 0;
+                tb.MarginTop = d.MarginTop ?? Block.AutoTopMargin; // absent = the editor's own gap
                 tb.MarginBottom = d.MarginBottom ?? 10;
                 tb.Cells.Clear();
                 tb.ColumnWidths.Clear();
@@ -520,6 +546,13 @@ internal class PageSetupDto
     public string? Header { get; set; }
     public string? Footer { get; set; }
     public bool ShowPageNumbers { get; set; }
+    // Page margins in MILLIMETRES, one per side. Omitted when they are the default, so a document that never
+    // touched them keeps its bytes; a reader that predates them (or a file that omits one side) falls back to
+    // the default for that side. Same fields and unit as upstream.
+    public double? MarginLeft { get; set; }
+    public double? MarginTop { get; set; }
+    public double? MarginRight { get; set; }
+    public double? MarginBottom { get; set; }
 }
 
 internal class ImagePoolDto

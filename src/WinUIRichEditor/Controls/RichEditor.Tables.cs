@@ -249,6 +249,8 @@ public partial class RichEditor
             DrawTableSelectionChrome(ds, tb, tl.ColX[0], top, tl);
         }
         var cellSel = _printMode ? null : _renderCellSel; // per-pass cache (see DrawDocument)
+        var tableBox = new Rect(tl.ColX[0], top, tl.TableWidth, tl.TotalHeight);
+        bool topLevel = tb.Parent is FlowDocument;
         foreach (var (r, c, rect) in tl.AnchorRects)
         {
             var cell = tb.Cells[r][c];
@@ -257,10 +259,25 @@ public partial class RichEditor
             if (cellSel is { } cb && ReferenceEquals(cb.tb, tb)
                 && r >= cb.r0 && r <= cb.r1 && c >= cb.c0 && c <= cb.c1)
                 ds.FillRectangle(rect, SelectionFill);
-            ds.DrawRectangle(rect, GrayBorderColor, 1f);
+            ds.DrawRectangle(topLevel ? InsetTableEdges(rect, tableBox) : rect, GrayBorderColor, 1f);
             DrawCellBlockList(ds, cell.Blocks, rect.X + CellPad, rect.Y + CellPad + CellContentOffsetY(cell, rect),
                 Math.Max(10, rect.Width - 2 * CellPad));
         }
+    }
+
+    // A 1px pen is centred on the rect it strokes, so a cell on the table's edge put half its line OUTSIDE the
+    // table's box — and a page's content clip, which starts exactly there, cut it (upstream PR #52: at a page
+    // break, 67% of a line; measured here on the print clip's left edge: 34%). The edges that ARE the table's
+    // boundary are pulled half a pen inwards, so all of a table's ink is inside the box pagination knows about.
+    // Interior edges are shared by two cells and stay centred — insetting those would draw each line twice.
+    private static Rect InsetTableEdges(Rect cell, Rect table)
+    {
+        const double half = 0.5, eps = 0.01;
+        double left = cell.X + (Math.Abs(cell.X - table.X) < eps ? half : 0);
+        double top = cell.Y + (Math.Abs(cell.Y - table.Y) < eps ? half : 0);
+        double right = cell.X + cell.Width - (Math.Abs(cell.X + cell.Width - (table.X + table.Width)) < eps ? half : 0);
+        double bottom = cell.Y + cell.Height - (Math.Abs(cell.Y + cell.Height - (table.Y + table.Height)) < eps ? half : 0);
+        return new Rect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
     }
 
     // Extra Y offset placing a cell's content per its vertical alignment: 0 for Top, half/all of the

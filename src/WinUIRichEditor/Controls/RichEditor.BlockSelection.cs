@@ -404,7 +404,21 @@ public partial class RichEditor
     private void DrawBlockImageChrome(CanvasDrawingSession ds, ImageBlock img, Rect rect)
     {
         if (_printMode || !ReferenceEquals(_selectedBlock, img)) return;
-        DrawSelectionChrome(ds, rect);
+        // Queued, not drawn: the border lies outside the picture and the walk runs under the page's content clip
+        // (see DrawPagedDocument).
+        _outsideChrome.Add(d => DrawSelectionChrome(d, rect));
+    }
+
+    // Selection chrome that lies OUTSIDE its object — a top-level picture's or table's border — queued by the walk
+    // in its coordinates and drawn after it: in page view the walk runs under the page's content clip, and an
+    // object on the content box's edge lost that side of its border (a table at left margin 0: all of its left
+    // line — reported from the demo, 2026-09-24; a picture opening a page: its top line, upstream PR #52).
+    private readonly System.Collections.Generic.List<Action<CanvasDrawingSession>> _outsideChrome = new();
+
+    private void FlushOutsideChrome(CanvasDrawingSession ds)
+    {
+        foreach (var draw in _outsideChrome) draw(ds);
+        _outsideChrome.Clear();
     }
 
     // Records a cell-hosted block image's DRAWN rect for hit-testing and draws its selection chrome if
@@ -427,7 +441,11 @@ public partial class RichEditor
 
     private void DrawSelectionChrome(CanvasDrawingSession ds, Rect rect)
     {
-        ds.DrawRectangle(rect, BlockSelBorder, 2.5f);
+        // Half a pen OUTSIDE the picture: a pen is centred on the rect it strokes, so a border drawn on the
+        // picture's own rect painted over its outermost 1.25 px (upstream PR #52 — "the picture is cut by a
+        // pixel or two", seen at a high zoom). The handles still sit on the picture's edges, as Word and HWP draw them.
+        const float pen = 2.5f;
+        ds.DrawRectangle(new Rect(rect.X - pen / 2, rect.Y - pen / 2, rect.Width + pen, rect.Height + pen), BlockSelBorder, pen);
         if (IsReadOnly) return; // a viewer selects pictures but cannot resize them
         // The handles GripAt finds: corner, middle of the right edge, middle of the bottom edge.
         foreach (var (cx, cy) in new[] { (rect.Right, rect.Bottom), (rect.Right, rect.Top + rect.Height / 2), (rect.Left + rect.Width / 2, rect.Bottom) })

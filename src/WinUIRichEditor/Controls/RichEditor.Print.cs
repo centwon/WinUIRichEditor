@@ -98,10 +98,10 @@ public partial class RichEditor
         var paperToDevice = ds.Transform;
         var breaks = EnsurePageBreaks();
         double docTop = breaks[Math.Clamp(pageIndex, 0, breaks.Count - 1)];
-        using (ds.CreateLayer(1f, new Rect(PagePadX, PagePadY, PaperContentWidth, PaperContentHeight)))
+        using (ds.CreateLayer(1f, new Rect(PagePadLeft, PagePadTop, PaperContentWidth, PaperContentHeight)))
         {
             // Document space → paper, then the caller's paper → device (row vectors: left applies first).
-            ds.Transform = Matrix3x2.CreateTranslation((float)(PagePadX - DocContentLeft), (float)(PagePadY - docTop)) * paperToDevice;
+            ds.Transform = Matrix3x2.CreateTranslation((float)(PagePadLeft - DocContentLeft), (float)(PagePadTop - docTop)) * paperToDevice;
             // _printMode gates all geometry recording, so this walk can't pollute hit-test caches.
             // Clip to this page's doc range so printing/PDF renders O(page), not O(document) per page.
             DrawContentWalk(ds, docTop - 1, docTop + PaperContentHeight + 1);
