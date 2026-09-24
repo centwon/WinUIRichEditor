@@ -48,6 +48,9 @@ public sealed partial class MainWindow : Window
             // because a WinExe has no console to print to.
             else if (arg.StartsWith("--roundtrip=", System.StringComparison.OrdinalIgnoreCase))
                 RunRoundTrip(arg["--roundtrip=".Length..]);
+            // `--pageprobe=<file>`: page-margin readback for the JIT/AOT comparison (PageMarginProbe).
+            else if (arg.StartsWith("--pageprobe=", System.StringComparison.OrdinalIgnoreCase))
+                PageMarginProbe.Run(arg["--pageprobe=".Length..]);
         }
 
         switch (page)

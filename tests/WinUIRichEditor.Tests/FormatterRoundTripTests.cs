@@ -565,6 +565,38 @@ public class FormatterRoundTripTests
         Assert.Equal("P[a]P[b]", Shape(foreign));
     }
 
+    // The same marker on a list item. The writer put data-are-empty on an empty <li> too, but the list reader
+    // dropped every empty item regardless — so a blank numbered item vanished on the first round trip, and
+    // the items either side of it could then merge into one list and lose a marker on the second (fuzz seed
+    // 8178 at 20000 seeds, 2026-09-24). Twice, as round trips are run here.
+    [Fact]
+    public void Html_RoundTrips_AnEmptyListItem_ButStillDropsForeignEmptyItems()
+    {
+        static Paragraph Item(string? text)
+        {
+            var p = new Paragraph { ListType = ListKind.Ordered };
+            if (text != null) p.Inlines.Add(new Run { Text = text });
+            return p;
+        }
+        var doc = new FlowDocument();
+        doc.Blocks.Add(Item("a"));
+        doc.Blocks.Add(Item(null));
+        doc.Blocks.Add(Item("b"));
+
+        var once = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc));
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+
+        foreach (var back in new[] { once, twice })
+        {
+            var items = back.Blocks.OfType<Paragraph>().Where(p => p.ListType == ListKind.Ordered).ToList();
+            Assert.Equal(3, items.Count);
+            Assert.DoesNotContain(items[1].Inlines.OfType<Run>(), r => !string.IsNullOrEmpty(r.Text));
+        }
+
+        var foreign = HtmlDocumentFormatter.ParseHtml("<ol><li>a</li><li></li><li>b</li></ol>");
+        Assert.Equal(2, foreign.Blocks.OfType<Paragraph>().Count(p => p.ListType == ListKind.Ordered));
+    }
+
     // A <p> holding nothing but an image is walked as a block (an <img> is block-or-media), so there is
     // no pending paragraph on import and the image used to rejoin the PRECEDING one — a picture on its
     // own line jumped up into the paragraph above it on every second round trip.

@@ -279,10 +279,43 @@ public class DocumentFuzzTests
         var paras = AllParagraphs(doc).ToList();
         var tables = AllTables(doc).ToList();
 
-        // 23 ops, and `default` is still one of them (RunNormalizer.Compact) — a new case must WIDEN this
+        // 25 ops, and `default` is still one of them (RunNormalizer.Compact) — a new case must WIDEN this
         // bound, not take the last number, or the default branch silently stops running.
-        switch (rng.Next(23))
+        switch (rng.Next(25))
         {
+            case 23:
+            {
+                // The page setup — paper, orientation, header/footer, page numbers and, since the 1.3 cycle, the
+                // four margins in millimetres. None of it was generated (or observed, see PageFmt) until the
+                // 2026-09-24 audit, so the fields that cycle added to JSON/.flow and RTF were outside the fuzz.
+                var sizes = Enum.GetValues<WinUIRichEditor.Controls.RichEditorPageSize>();
+                var ps = doc.PageSetup ??= new PageSetup();
+                ps.PageSize = sizes[rng.Next(sizes.Length)];
+                ps.Orientation = (WinUIRichEditor.Controls.RichEditorPageOrientation)rng.Next(2);
+                if (rng.Next(3) == 0) ps.ShowPageBoundaries = rng.Next(2) == 0;
+                ps.Header = rng.Next(3) == 0 ? "머리 " + rng.Next(10) : null;
+                ps.Footer = rng.Next(3) == 0 ? "바닥 " + rng.Next(10) : null;
+                ps.ShowPageNumbers = rng.Next(3) == 0;
+                // Three kinds of millimetre: the picker's steps, tenths (what the RTF reader snaps back to), and
+                // values between tenths (which it must NOT move). All usable on A5 landscape, the smallest page.
+                double Mm() => rng.Next(3) switch
+                {
+                    0 => new[] { 5.0, 10, 15, 20, 30 }[rng.Next(5)],
+                    1 => rng.Next(351) / 10.0,
+                    _ => Math.Round(rng.NextDouble() * 35, 3),
+                };
+                ps.Margin = rng.Next(4) == 0 ? PageSetup.DefaultMargin : new PageMargins(Mm(), Mm(), Mm(), Mm());
+                return "page setup";
+            }
+            case 24:
+            {
+                // The gap above a table, picture or divider: NaN is "one line gap, the editor's choice"
+                // (Block.AutoTopMargin) and has no JSON spelling — it goes out as no field at all.
+                var objs = BlockWalk.DocumentOrder(doc.Blocks).Where(x => x is not Paragraph).ToList();
+                if (objs.Count == 0) return "object top margin (skipped)";
+                objs[rng.Next(objs.Count)].MarginTop = rng.Next(3) == 0 ? Block.AutoTopMargin : rng.Next(4) * 6;
+                return "object top margin";
+            }
             case 18:
                 doc.Blocks.Insert(rng.Next(doc.Blocks.Count + 1), new DividerBlock());
                 return "insert divider";
@@ -604,7 +637,7 @@ public class DocumentFuzzTests
 
     internal static string Shape(FlowDocument doc)
     {
-        var sb = new StringBuilder();
+        var sb = new StringBuilder(PageFmt(doc.PageSetup));
         foreach (var b in doc.Blocks) ShapeBlock(sb, b);
         return sb.ToString();
     }
@@ -618,9 +651,9 @@ public class DocumentFuzzTests
                 ShapeInlines(sb, p);
                 sb.Append(']');
                 break;
-            case TableBlock tb: sb.Append("T"); ShapeTable(sb, tb); break;
-            case ImageBlock ib: sb.Append("IMGBLK").Append(ImgFmt(ib.Width, ib.Height, ib.AltText)); break;
-            case DividerBlock: sb.Append("HR"); break;
+            case TableBlock tb: sb.Append("T").Append(ObjFmt(tb)); ShapeTable(sb, tb); break;
+            case ImageBlock ib: sb.Append("IMGBLK").Append(ObjFmt(ib)).Append(ImgFmt(ib.Width, ib.Height, ib.AltText)); break;
+            case DividerBlock dv: sb.Append("HR").Append(ObjFmt(dv)); break;
         }
     }
 
@@ -704,6 +737,25 @@ public class DocumentFuzzTests
         if (!double.IsNaN(p.LineSpacing)) parts.Add("ls" + Num(p.LineSpacing));
         if (!double.IsNaN(p.LineHeight)) parts.Add("lh" + Num(p.LineHeight));
         return Wrap(parts);
+    }
+
+    // The gap above an object block. NaN (Block.AutoTopMargin, a new block's default) is its own value, not
+    // "unset": the editor turns it into a line gap, while 0 means flush.
+    private static string ObjFmt(Block b) => double.IsNaN(b.MarginTop) ? "" : "{mt" + Num(b.MarginTop) + "}";
+
+    // A document with no setup and one whose setup says nothing (PageSetup.IsDefault) are the same document —
+    // a writer may drop the empty one. Margins go through Num like every other length (two decimals).
+    private static string PageFmt(PageSetup? ps)
+    {
+        if (ps == null || ps.IsDefault) return "";
+        var parts = new List<string> { ps.PageSize + "/" + ps.Orientation };
+        if (!ps.ShowPageBoundaries) parts.Add("nobounds");
+        if (!string.IsNullOrEmpty(ps.Header)) parts.Add("hd" + ps.Header);
+        if (!string.IsNullOrEmpty(ps.Footer)) parts.Add("ft" + ps.Footer);
+        if (ps.ShowPageNumbers) parts.Add("pn");
+        var m = ps.Margin;
+        parts.Add("m" + Num(m.Left) + "/" + Num(m.Top) + "/" + Num(m.Right) + "/" + Num(m.Bottom));
+        return "PAGE" + Wrap(parts);
     }
 
     private static string CellFmt(TableCell cell)

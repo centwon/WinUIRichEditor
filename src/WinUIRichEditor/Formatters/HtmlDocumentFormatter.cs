@@ -426,7 +426,11 @@ public static class HtmlDocumentFormatter
             // `name` is passed as "li" so the heading-from-tag rule does not disturb data-are-h above.
             ApplyBlockLeafFormat(child, "li", p);
             ParseInlines(child, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
-            if (p.Inlines.Count > 0) flow.Blocks.Add(p);
+            // An empty item is dropped like any empty element — unless our export marked it as a blank item
+            // the author made (data-are-empty, as for paragraphs). Dropped regardless, a blank numbered item
+            // vanished on the first round trip, and the items either side could merge into one list on the
+            // second and lose a marker (fuzz seed 8178, 2026-09-24).
+            if (p.Inlines.Count > 0 || child.GetAttributeValue("data-are-empty", "") == "1") flow.Blocks.Add(p);
 
             // A sublist nested INSIDE the item (the shape most other producers emit) still follows it.
             foreach (var nested in child.ChildNodes.Where(n => n.Name.Equals("ul", StringComparison.OrdinalIgnoreCase) || n.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)))

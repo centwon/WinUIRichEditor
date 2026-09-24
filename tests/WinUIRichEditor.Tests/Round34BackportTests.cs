@@ -65,7 +65,7 @@ public class Round34BackportTests
     // exported and clipboard HTML. A host's SetHyperlink reaches the writer too, so it is the backstop.
 
     private static Run Clicked(FlowDocument doc)
-        => doc.Blocks.OfType<Paragraph>().SelectMany(p => p.Inlines.OfType<Run>()).First(r => r.Text.Contains("click"));
+        => doc.Blocks.OfType<Paragraph>().SelectMany(p => p.Inlines.OfType<Run>()).First(r => r.Text?.Contains("click") == true);
 
     private static FlowDocument Linked(string href)
     {
