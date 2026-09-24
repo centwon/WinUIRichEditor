@@ -361,7 +361,11 @@ public static class HtmlDocumentFormatter
                     pre: name == "pre"); // <pre> keeps its whitespace/newlines verbatim
                 // Empty elements are dropped — foreign HTML uses them for spacing — unless this export
                 // marked one as a blank line the author actually typed (see data-are-empty).
-                if (p.Inlines.Count > 0 || child.GetAttributeValue("data-are-empty", "") == "1")
+                bool markedEmpty = child.GetAttributeValue("data-are-empty", "") == "1";
+                // A marked paragraph carries a <br> so outside renderers give it a line; that <br> is the blank
+                // line's rendering, not its content, and reading it back would turn one blank line into two.
+                if (markedEmpty) p.Inlines.Clear();
+                if (p.Inlines.Count > 0 || markedEmpty)
                     flow.Blocks.Add(p);
             }
             else
@@ -427,10 +431,12 @@ public static class HtmlDocumentFormatter
             ApplyBlockLeafFormat(child, "li", p);
             ParseInlines(child, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
             // An empty item is dropped like any empty element — unless our export marked it as a blank item
-            // the author made (data-are-empty, as for paragraphs). Dropped regardless, a blank numbered item
-            // vanished on the first round trip, and the items either side could merge into one list on the
-            // second and lose a marker (fuzz seed 8178, 2026-09-24).
-            if (p.Inlines.Count > 0 || child.GetAttributeValue("data-are-empty", "") == "1") flow.Blocks.Add(p);
+            // the author made (data-are-empty, as for paragraphs), and then its <br> is rendering, not content.
+            // Dropped regardless, a blank numbered item vanished on the first round trip, and the items either
+            // side could merge into one list on the second and lose a marker (fuzz seed 8178, 2026-09-24).
+            bool markedEmpty = child.GetAttributeValue("data-are-empty", "") == "1";
+            if (markedEmpty) p.Inlines.Clear();
+            if (p.Inlines.Count > 0 || markedEmpty) flow.Blocks.Add(p);
 
             // A sublist nested INSIDE the item (the shape most other producers emit) still follows it.
             foreach (var nested in child.ChildNodes.Where(n => n.Name.Equals("ul", StringComparison.OrdinalIgnoreCase) || n.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)))
@@ -1127,6 +1133,12 @@ public static class HtmlDocumentFormatter
         // reattachment would otherwise grab whatever paragraph precedes it.
         for (int i = 0; i < p.Inlines.Count; i++)
             EmitInline(sb, p.Inlines[i], i == 0, i == p.Inlines.Count - 1, tag[0] == 'h' ? p.HeadingLevel : 0);
+        // The marker tells only THIS reader about the blank line. An element with no content has zero height, so
+        // in a browser the author's blank line (or blank list item) was invisible — upstream measured the gap
+        // across it as the same 16px as between any two paragraphs (round 9; ported 2026-09-24). The <br> gives it
+        // a line everywhere else — it is what contenteditable editors emit — and the reader drops it when the
+        // marker is present, so one blank line does not become two.
+        if (p.Inlines.Count == 0) sb.Append("<br/>");
         sb.Append($"</{tag}>");
         if (newlineAfter) sb.Append('\n');
     }
@@ -1208,10 +1220,14 @@ public static class HtmlDocumentFormatter
                 // and read those correctly (foreign Word tables with bulleted cells prove it). A lone plain
                 // paragraph keeps the bare form, so the common cell's bytes do not change and the
                 // whitespace rules earned there still stand.
-                bool manyParagraphs = cell.Blocks.Count(b => b is Paragraph) > 1;
+                // An <img> is INLINE, so a bare paragraph followed by a block image in the same cell shared the
+                // image's line — the picture sat beside the caption instead of under it. Counting paragraphs
+                // missed it: the cell has only ONE. <hr> and <table> are block-level and break the line by
+                // themselves, so only an image forces the issue (upstream round 9; ported 2026-09-24).
+                bool needsElementForm = cell.Blocks.Count(b => b is Paragraph) > 1 || cell.Blocks.Any(b => b is ImageBlock);
                 foreach (var cblk in cell.Blocks)
                 {
-                    if (cblk is Paragraph cpara && (manyParagraphs || NeedsOwnElement(cpara)))
+                    if (cblk is Paragraph cpara && (needsElementForm || NeedsOwnElement(cpara)))
                     {
                         if (cpara.IsListItem) cellLists.Sync(cpara.ListType, cpara.ListMarker, cpara.ListLevel);
                         else cellLists.CloseAll();
