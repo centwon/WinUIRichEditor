@@ -1385,6 +1385,7 @@ public partial class RichEditor
     // After a content edit: re-measure and repaint (the changed paragraph reshapes via ParagraphSig).
     private void AfterEdit()
     {
+        DropDetachedObjectSelection();
         InvalidateCaretTableMeasure();
         RelayoutToViewport();
         RestartBlink();

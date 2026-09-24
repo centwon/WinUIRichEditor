@@ -875,6 +875,7 @@ public partial class RichEditor
 
     private void AfterStructuralEdit(TableBlock tb)
     {
+        DropDetachedObjectSelection(); // a host call edits without clearing it first (DeleteTableRow)
         InvalidateTableMeasure(tb);
         _coalesceKey = null;
         RelayoutToViewport();

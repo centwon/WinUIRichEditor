@@ -607,7 +607,9 @@ internal sealed class RtfParser
         if (inst.Length == 0) return;
         var m = System.Text.RegularExpressions.Regex.Match(inst, "HYPERLINK\\s+(?:\"([^\"]+)\"|(\\S+))",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (m.Success) _pendingFieldUrl = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+        // A script link (javascript:, vbscript:, data:) is dropped as the HTML reader drops it — RTF is a clipboard
+        // flavour, and the link would otherwise go back out in exported and clipboard HTML (2026-09-24).
+        if (m.Success) _pendingFieldUrl = HtmlDocumentFormatter.SafeHref(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value);
     }
 
     // ---- font table ----
@@ -692,7 +694,7 @@ internal sealed class RtfParser
     // Continuous here (margins but no size, or a size with no name here): its print fallback is A4.
     private void ApplyMargins()
     {
-        double Side(int i, double fallback) => _marginTwips[i] >= 0 ? _marginTwips[i] / PageSetup.TwipsPerMm : fallback;
+        double Side(int i, double fallback) => _marginTwips[i] >= 0 ? PageSetup.TwipsToMm(_marginTwips[i]) : fallback;
         var d = PageSetup.DefaultMargin;
         var m = new PageMargins(Side(0, d.Left), Side(1, d.Top), Side(2, d.Right), Side(3, d.Bottom));
         var ps = _doc.PageSetup;

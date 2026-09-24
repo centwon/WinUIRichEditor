@@ -100,11 +100,16 @@ public static class Sweep
 }
 '@
 
+# The page-margin probe (the demo's --pageprobe) writes one line per step next to the log. Page margins are
+# the first dependency property holding a C# record struct, boxed through WinRT on every get/set, and no
+# keystroke below reaches them - so the probe reads them back and the two runs are diffed on that file too.
+$pageProbe = "$Log.page.txt"
 if (Test-Path $Log) { Remove-Item $Log -Force }
+if (Test-Path $pageProbe) { Remove-Item $pageProbe -Force }
 Get-Process -Name "WinUIRichEditor.Demo" -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 400
 
-$proc = Start-Process -FilePath $Exe -ArgumentList "--page=$Page", "--faultlog=$Log" -PassThru
+$proc = Start-Process -FilePath $Exe -ArgumentList "--page=$Page", "--faultlog=$Log", "--pageprobe=$pageProbe" -PassThru
 Start-Sleep -Seconds 4
 $proc.Refresh()
 $h = $proc.MainWindowHandle
@@ -195,6 +200,13 @@ Start-Sleep -Milliseconds 600
 Start-Sleep -Seconds 1
 $proc | Stop-Process -Force
 Start-Sleep -Milliseconds 400
+
+if (Test-Path $pageProbe) {
+    "--- page margin probe ($pageProbe) ---"
+    Get-Content $pageProbe
+} else {
+    "WARNING: the page margin probe wrote nothing - the demo predates --pageprobe, or it failed before writing"
+}
 
 if (Test-Path $Log) {
     "--- faults ---"

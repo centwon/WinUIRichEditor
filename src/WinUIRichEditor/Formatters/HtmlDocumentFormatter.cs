@@ -426,7 +426,11 @@ public static class HtmlDocumentFormatter
             // `name` is passed as "li" so the heading-from-tag rule does not disturb data-are-h above.
             ApplyBlockLeafFormat(child, "li", p);
             ParseInlines(child, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
-            if (p.Inlines.Count > 0) flow.Blocks.Add(p);
+            // An empty item is dropped like any empty element — unless our export marked it as a blank item
+            // the author made (data-are-empty, as for paragraphs). Dropped regardless, a blank numbered item
+            // vanished on the first round trip, and the items either side could merge into one list on the
+            // second and lose a marker (fuzz seed 8178, 2026-09-24).
+            if (p.Inlines.Count > 0 || child.GetAttributeValue("data-are-empty", "") == "1") flow.Blocks.Add(p);
 
             // A sublist nested INSIDE the item (the shape most other producers emit) still follows it.
             foreach (var nested in child.ChildNodes.Where(n => n.Name.Equals("ul", StringComparison.OrdinalIgnoreCase) || n.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)))
@@ -1306,7 +1310,10 @@ public static class HtmlDocumentFormatter
         if (r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)) t = $"<s>{t}</s>";
         if (r.FontWeight.IsBold()) t = $"<b>{t}</b>";
         if (r.FontStyle == FontStyle.Italic) t = $"<i>{t}</i>";
-        if (!string.IsNullOrEmpty(r.NavigateUri)) t = $"<a href=\"{AttrEscape(r.NavigateUri)}\">{t}</a>";
+        // The readers drop script links, but a host's SetHyperlink reaches here without passing one — the same
+        // check, so no script link leaves in exported or clipboard HTML whatever put it in the document.
+        if (!string.IsNullOrEmpty(r.NavigateUri) && SafeHref(r.NavigateUri) is { } href)
+            t = $"<a href=\"{AttrEscape(href)}\">{t}</a>";
         sb.Append(t);
     }
 
