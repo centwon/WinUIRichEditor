@@ -53,7 +53,24 @@ internal static class PageMarginProbe
         });
         // The toolbar reads Target.PageMargin in its sync and matches it against its presets.
         Step("toolbar", () => { _ = new RichEditorToolbar { Target = ed }; ed.PageMargin = new PageMargins(10); return ed.PageMargin; });
+        // Not a margin, but the same kind of risk, so it rides this probe: the font list is read with
+        // CanvasFontSet.GetPropertyValues, which returns a WinRT STRUCT ARRAY (CanvasFontProperty carries two
+        // strings). A non-blittable struct array is exactly what broke LineMetrics under AOT — and a failure
+        // here is silent, falling back to six stock names. Count + a stable hash of the whole list (FNV-1a, not
+        // string.GetHashCode, which is randomized per process), so any drift diffs.
+        Step("fonts", () =>
+        {
+            var names = ed.FontFamilyChoices;
+            return $"{names.Count} names, fnv {Fnv(string.Join("\n", names)):X16}, first {(names.Count > 0 ? names[0] : "-")}";
+        });
         Write(path, lines);
+    }
+
+    private static ulong Fnv(string s)
+    {
+        ulong h = 14695981039346656037;
+        foreach (char c in s) h = (h ^ c) * 1099511628211;
+        return h;
     }
 
     private static void Write(string path, List<string> lines)

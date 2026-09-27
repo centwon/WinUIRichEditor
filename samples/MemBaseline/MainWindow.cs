@@ -20,6 +20,9 @@ namespace MemBaseline;
 ///   reclaim   — load big doc, then clear it + GC, logging WS before/after (reclaim/leak check)
 ///   images    — insert photos / delete them by EDITING / swap / drop history, logging Priv AND GPU memory
 ///               (see ImageScenario)
+///   scroll    page through a long document to its end, then unload/reload the editor (see ScrollScenario)
+///   win2d     the bare CanvasVirtualControl the editor draws on — editor minus this is the library's own cost
+///   fonts     what the toolbar's font list costs (MEMTEST_FONTPROBE=1 also compares two ways of reading it)
 /// Results are read externally via Get-Process; reclaim mode also writes a small text log.
 /// </summary>
 public sealed class MainWindow : Window
@@ -35,6 +38,23 @@ public sealed class MainWindow : Window
         if (mode == "baseline")
         {
             root.Children.Add(new TextBlock { Text = "baseline — no editor" });
+            return;
+        }
+
+        // Win2D alone: the bare CanvasVirtualControl the editor is built on, in a ScrollViewer, drawing one
+        // line of text. editor − win2d = what the library itself adds on top of its render backend.
+        if (mode == "win2d")
+        {
+            var cvc = new Microsoft.Graphics.Canvas.UI.Xaml.CanvasVirtualControl { Width = 800, Height = 600 };
+            cvc.RegionsInvalidated += (s, e) =>
+            {
+                foreach (var r in e.InvalidatedRegions)
+                {
+                    using var ds = s.CreateDrawingSession(r);
+                    ds.DrawText("win2d baseline", 10, 10, Microsoft.UI.Colors.Black);
+                }
+            };
+            root.Children.Add(new ScrollViewer { Content = cvc });
             return;
         }
 
@@ -83,6 +103,54 @@ public sealed class MainWindow : Window
                 AppWindow.Resize(new Windows.Graphics.SizeInt32(1400, 1000)); // every inserted photo on screen, so every one decodes
                 editor.Document = new FlowDocument();
                 editor.Loaded += async (_, _) => await new ImageScenario(editor).RunAsync();
+                break;
+            case "scroll":
+                AppWindow.Resize(new Windows.Graphics.SizeInt32(1100, 900));
+                editor.Document = new FlowDocument();
+                RoutedEventHandler? once = null;
+                once = async (_, _) => { editor.Loaded -= once; await new ScrollScenario(editor, root).RunAsync(); };
+                editor.Loaded += once;
+                break;
+            case "fonts":
+                // What the toolbar's font list costs: FontFamilyChoices enumerates the system font set once.
+                editor.Document = new FlowDocument();
+                editor.Loaded += async (_, _) =>
+                {
+                    var path = Path.Combine(Path.GetTempPath(), "membaseline_fonts.txt");
+                    void L(string s)
+                    {
+                        var pr = Process.GetCurrentProcess(); pr.Refresh();
+                        File.AppendAllText(path, $"{s,-10} Priv={pr.PrivateMemorySize64 / 1048576.0,7:N1}MB  managed={GC.GetTotalMemory(false) / 1048576.0,6:N1}MB\n");
+                    }
+                    async System.Threading.Tasks.Task Settle() { await System.Threading.Tasks.Task.Delay(1500); GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); await System.Threading.Tasks.Task.Delay(500); }
+                    File.AppendAllText(path, $"\n=== fonts {DateTime.Now:HH:mm:ss}\n");
+                    await Settle(); L("before");
+                    if (Environment.GetEnvironmentVariable("MEMTEST_FONTPROBE") == "1")
+                    {
+                        var psw = Stopwatch.StartNew();
+                        string locale = System.Globalization.CultureInfo.CurrentUICulture.Name.ToLowerInvariant();
+                        string lang = locale.Length >= 2 ? locale[..2] : locale;
+                        using var set = Microsoft.Graphics.Canvas.Text.CanvasFontSet.GetSystemFontSet();
+                        var props = set.GetPropertyValues(Microsoft.Graphics.Canvas.Text.CanvasFontPropertyIdentifier.FamilyName, $"{locale};{lang};en-us");
+                        var viaProps = new System.Collections.Generic.SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var pv in props) if (!string.IsNullOrWhiteSpace(pv.Value)) viaProps.Add(pv.Value);
+                        double pms = psw.Elapsed.TotalMilliseconds;
+                        L("props"); File.AppendAllText(path, $"    {viaProps.Count} via GetPropertyValues in {pms:N0}ms; locales seen: {string.Join(",", System.Linq.Enumerable.Distinct(System.Linq.Enumerable.Select(props, x => x.Locale)))}\n");
+                        await Settle(); L("props-gc");
+                        var viaFaces = new System.Collections.Generic.SortedSet<string>(editor.FontFamilyChoices, StringComparer.OrdinalIgnoreCase);
+                        var onlyFaces = new System.Collections.Generic.List<string>(viaFaces); onlyFaces.RemoveAll(viaProps.Contains);
+                        var onlyProps = new System.Collections.Generic.List<string>(viaProps); onlyProps.RemoveAll(viaFaces.Contains);
+                        File.AppendAllText(path, $"    faces={viaFaces.Count} props={viaProps.Count}\n    only in faces: {string.Join(" | ", onlyFaces)}\n    only in props: {string.Join(" | ", onlyProps)}\n");
+                        File.AppendAllText(path, "DONE\n");
+                        return;
+                    }
+                    var sw = Stopwatch.StartNew();
+                    int n = editor.FontFamilyChoices.Count;
+                    double ms = sw.Elapsed.TotalMilliseconds;
+                    L("listed"); File.AppendAllText(path, $"    {n} families in {ms:N0}ms\n");
+                    await Settle(); L("gc");
+                    File.AppendAllText(path, "DONE\n");
+                };
                 break;
             case "reclaim":
                 editor.Document = HtmlDocumentFormatter.ParseHtml(BigHtml(200));
