@@ -264,7 +264,12 @@ public partial class RichEditor : ContentControl
     public static readonly DependencyProperty DocumentProperty = DependencyProperty.Register(
         nameof(Document), typeof(FlowDocument), typeof(RichEditor), new PropertyMetadata(null, OnDocumentChanged));
 
-    /// <summary>The document model being rendered.</summary>
+    /// <summary>The document model being rendered.
+    /// <para>Assigning it (in code or through a binding) counts as an edit: <see cref="IsModified"/> becomes true,
+    /// since the editor cannot tell a document read from a file from one built in code. To open a file as
+    /// unmodified, use <see cref="LoadJson"/>, <see cref="LoadJsonAsync"/>, <see cref="LoadPackageAsync"/>,
+    /// <see cref="LoadHtml"/> or <see cref="LoadRtf"/> (which also clear the undo history), or call
+    /// <see cref="MarkSaved"/> after assigning.</para></summary>
     public FlowDocument? Document
     {
         get => (FlowDocument?)GetValue(DocumentProperty);
