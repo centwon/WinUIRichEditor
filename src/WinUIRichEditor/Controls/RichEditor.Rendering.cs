@@ -50,7 +50,13 @@ public partial class RichEditor
                 RichEditorDiagnostics.Report(ex);
             }
         }
+        // The draw pass is over and nothing holds a layout or a bitmap: bound what scrolling left behind.
+        TrimLayoutCache();
+        TrimOffscreenImages(ImageOffscreenBytes);
+        DrawPasses++;
     }
+
+    internal int DrawPasses; // test hook: lets a test wait for a real draw pass
 
     // The cell-block selection, computed ONCE per draw pass. CellBlockSelection() walks the whole
     // document twice (FindCell per endpoint); calling it per drawn paragraph made selection rendering

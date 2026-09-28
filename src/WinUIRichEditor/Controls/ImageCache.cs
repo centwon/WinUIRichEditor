@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
+using Windows.Foundation;
 using WinUIRichEditor.Documents;
 
 namespace WinUIRichEditor.Controls;
@@ -55,10 +56,11 @@ internal sealed class ImageCache
     /// <paramref name="pixelWidth"/> × <paramref name="pixelHeight"/> is the device-pixel size it is about to
     /// be drawn at: a cached bitmap smaller than that is still returned, and a sharper one is decoded behind it.</summary>
     public CanvasBitmap? Get(ICanvasResourceCreator device, object key, byte[]? rawBytes, CanvasBitmap? already,
-        int pixelWidth, int pixelHeight)
+        int pixelWidth, int pixelHeight, Rect where = default)
     {
         if (already != null) return already;
         object k = KeyFor(rawBytes, key);
+        if (rawBytes != null) _seen[k] = (where, ++_stamp);
         if (_decoded.TryGetValue(k, out var bmp))
         {
             if (bmp != null && rawBytes != null && NeedsMore(k, bmp, pixelWidth, pixelHeight) && _inflight.Add(k))
@@ -150,8 +152,10 @@ internal sealed class ImageCache
     /// <summary>Disposes the bitmaps decoded for the print that just finished.</summary>
     public void EndPrint()
     {
-        foreach (var (bmp, _) in _print.Values) bmp?.Dispose();
+        bool any = false;
+        foreach (var (bmp, _) in _print.Values) if (bmp != null) { bmp.Dispose(); any = true; }
         _print.Clear();
+        if (any) OnReleased?.Invoke(); // print-resolution pictures are the largest this cache ever holds
     }
 
     /// <summary>Drops the cached bitmap for one element so its (changed) bytes are re-decoded.
@@ -165,13 +169,75 @@ internal sealed class ImageCache
         _inflight.Remove(k);
     }
 
+    /// <summary>Raised after a decoded bitmap is disposed (the control asks the device to trim — see
+    /// <c>RichEditor.ScheduleDeviceTrim</c>).</summary>
+    public event Action? OnReleased;
+
     private void Evict(object key)
     {
-        if (_decoded.TryGetValue(key, out var bmp)) bmp?.Dispose();
+        if (_decoded.TryGetValue(key, out var bmp) && bmp != null)
+        {
+            bmp.Dispose();
+            OnReleased?.Invoke();
+        }
         _decoded.Remove(key);
         _atSourceSize.Remove(key);
+        _seen.Remove(key);
         Unretire(key);
     }
+
+    // ---- pictures scrolled out of view --------------------------------------------------------------------
+
+    // Where each picture was last drawn (control DIPs) and a use stamp that orders the draws, for TrimOffscreen.
+    private readonly Dictionary<object, (Rect where, long stamp)> _seen = new();
+    private long _stamp;
+
+    /// <summary>Disposes the bitmaps of pictures still IN the document but drawn nowhere near
+    /// <paramref name="keep"/> (the viewport plus a margin, in control DIPs), least recently drawn first, until
+    /// what is left out there totals at most <paramref name="keepBytes"/>. A picture scrolled back into view
+    /// re-decodes; the loading placeholder shows until it lands.
+    /// <para>Why this exists (measured 2026-09-27, MemBaseline scroll mode): the cache held every picture ever
+    /// DRAWN, and paging once to the end of a document draws all of them. 2,000 paragraphs with 100 photos:
+    /// Private bytes 183 MB at the top, 501 MB after scrolling to the end and back, and it never came down while
+    /// the document was open. Prune can't help — every one of those pictures is still in the document.</para>
+    /// <para>Pictures an edit removed are not counted here; the retired list has its own budget (Prune).</para></summary>
+    public void TrimOffscreen(Rect keep, long keepBytes)
+    {
+        List<(object key, long stamp, long bytes)>? far = null;
+        long farBytes = 0;
+        foreach (var (k, bmp) in _decoded)
+        {
+            if (bmp == null || _retiredIndex.ContainsKey(k)) continue;
+            // No recorded draw (a test seed): nothing says where it is, so it is the first to go.
+            var seen = _seen.TryGetValue(k, out var s) ? s : (where: Rect.Empty, stamp: 0L);
+            if (Overlaps(seen.where, keep)) continue;
+            long bytes = PixelBytes(bmp);
+            (far ??= new()).Add((k, seen.stamp, bytes));
+            farBytes += bytes;
+        }
+        if (far != null && farBytes > keepBytes)
+        {
+            far.Sort((a, b) => a.stamp.CompareTo(b.stamp));
+            foreach (var (k, _, bytes) in far)
+            {
+                if (farBytes <= keepBytes) break;
+                Evict(k);
+                farBytes -= bytes;
+            }
+        }
+        // A position recorded for a key that neither holds a bitmap nor is decoding (a decode that was pruned
+        // in flight) would otherwise sit here until the same picture is drawn again.
+        if (_seen.Count > _decoded.Count + _inflight.Count)
+        {
+            List<object>? stale = null;
+            foreach (var k in _seen.Keys)
+                if (!_decoded.ContainsKey(k) && !_inflight.Contains(k)) (stale ??= new()).Add(k);
+            if (stale != null) foreach (var k in stale) _seen.Remove(k);
+        }
+    }
+
+    private static bool Overlaps(Rect a, Rect b)
+        => !a.IsEmpty && !b.IsEmpty && a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
 
     // Entries the document no longer references but that are kept decoded anyway, oldest first, so undoing
     // the edit that removed a picture finds it warm. Bounded by the retainBytes each Prune passes.
@@ -230,6 +296,8 @@ internal sealed class ImageCache
 
     // ---- test seams: decodes are async and device-bound, so tests place entries directly ----
     internal int DecodedCount => _decoded.Count;
+    internal int SeenCount => _seen.Count;
+    internal Rect? SeenAt(byte[] rawBytes) => _seen.TryGetValue(KeyFor(rawBytes, rawBytes), out var s) ? s.where : null;
     internal long RetiredBytes => _retiredBytes;
     internal bool IsCached(byte[] rawBytes) => _decoded.ContainsKey(KeyFor(rawBytes, rawBytes));
     internal bool IsDecoding(byte[] rawBytes) => _inflight.Contains(KeyFor(rawBytes, rawBytes));

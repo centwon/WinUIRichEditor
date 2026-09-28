@@ -95,7 +95,34 @@ public partial class RichEditor : ContentControl
     // memory no longer scales with document length. LayoutCacheCap is a safety net (clear-all when
     // exceeded) far larger than any single draw's working set, so it never disposes an in-use layout.
     private const int LayoutCacheCap = 2048;
-    private readonly Dictionary<Paragraph, (long sig, double width, CanvasTextLayout layout)> _layoutCache = new();
+    private sealed class LayoutEntry(long sig, double width, CanvasTextLayout layout)
+    {
+        public readonly long Sig = sig; public readonly double Width = width; public readonly CanvasTextLayout Layout = layout;
+        public long Stamp; // last use, for TrimLayoutCache
+    }
+    private readonly Dictionary<Paragraph, LayoutEntry> _layoutCache = new();
+    private long _layoutStamp;
+
+    // "Viewport-sized" held only while nothing scrolled: the render path caches every paragraph it DRAWS, and
+    // paging once to the end of a document draws all of them — measured 2026-09-27 (MemBaseline scroll mode),
+    // 2,000 paragraphs left 2,000 native layouts resident until the 2048 clear-all. After each screen draw pass
+    // the cache is trimmed back to the LayoutKeep most recently used once it passes LayoutKeep + LayoutTrimSlack
+    // (the slack keeps it from sorting on every frame). A trimmed paragraph that comes back into view rebuilds
+    // its layout — CPU only, nothing visible. Safe where the cap is not: at the end of a draw pass no walk is
+    // holding a layout, so no in-use layout can be disposed, whatever the number.
+    private const int LayoutKeep = 256, LayoutTrimSlack = 128;
+
+    private void TrimLayoutCache()
+    {
+        if (_layoutPinDepth != 0 || _layoutCache.Count <= LayoutKeep + LayoutTrimSlack) return;
+        var byAge = new List<KeyValuePair<Paragraph, LayoutEntry>>(_layoutCache);
+        byAge.Sort((a, b) => a.Value.Stamp.CompareTo(b.Value.Stamp));
+        for (int i = 0; i < byAge.Count - LayoutKeep; i++)
+        {
+            byAge[i].Value.Layout.Dispose();
+            _layoutCache.Remove(byAge[i].Key);
+        }
+    }
 
     // ---- the per-paragraph side caches ------------------------------------
     // Height, pagination lines and text statistics are cached per paragraph, keyed by identity and
@@ -172,7 +199,57 @@ public partial class RichEditor : ContentControl
             RelayoutToViewport();
         };
 
+        Unloaded += (_, _) => ReleaseWhileUnloaded();
+        _images.OnReleased += ScheduleDeviceTrim;
+
         SetupInput();
+    }
+
+    // Disposing a CanvasBitmap releases the texture, but the driver keeps the memory it staged the upload
+    // through (and its pools) until the device is trimmed. Measured 2026-09-27 (MemBaseline scroll mode,
+    // Intel UHD): after scrolling back from the end of a 100-photo document, CanvasDevice.Trim() released a
+    // further 38 MB of Private bytes and 70 MB of GPU memory. It is a hint that costs a stall, so it runs once,
+    // two seconds after the last release (a scroll through photos releases every few frames), never per frame.
+    // The device is shared by every Win2D control in the process; trimming only drops what nothing is using.
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _deviceTrimTimer;
+
+    private void ScheduleDeviceTrim()
+    {
+        if (_deviceTrimTimer == null)
+        {
+            if (DispatcherQueue is not { } queue) return;
+            _deviceTrimTimer = queue.CreateTimer();
+            _deviceTrimTimer.Interval = TimeSpan.FromSeconds(2);
+            _deviceTrimTimer.IsRepeating = false;
+            _deviceTrimTimer.Tick += (_, _) => TrimDevice();
+        }
+        _deviceTrimTimer.Stop();
+        _deviceTrimTimer.Start();
+    }
+
+    internal int DeviceTrims; // test hook
+
+    private void TrimDevice()
+    {
+        try
+        {
+            if (_canvas.Device is { } device) { device.Trim(); DeviceTrims++; }
+        }
+        catch (Exception ex) { RichEditorDiagnostics.Report(ex); } // a lost device: nothing to trim
+    }
+
+    // Out of the visual tree (a hidden tab, a page navigated away from) nothing is drawn, yet the editor kept
+    // every native layout and decoded picture it had — measured 2026-09-27 (MemBaseline scroll mode), nothing
+    // came back on unload. The layouts rebuild on the next draw (CPU only); the pictures near the viewport are
+    // kept so coming back shows them at once, and everything else re-decodes if it is scrolled to again.
+    // IsLoaded: a move within the tree can raise the old Unloaded after the new Loaded.
+    private void ReleaseWhileUnloaded()
+    {
+        if (IsLoaded) return;
+        EvictLayouts();
+        ClearMarkerLayouts();
+        TrimOffscreenImages(0);
+        ScheduleDeviceTrim(); // even with no picture released: the text and surfaces it drew staged through it too
     }
 
     // ---- accessibility ----------------------------------------------------
@@ -187,7 +264,12 @@ public partial class RichEditor : ContentControl
     public static readonly DependencyProperty DocumentProperty = DependencyProperty.Register(
         nameof(Document), typeof(FlowDocument), typeof(RichEditor), new PropertyMetadata(null, OnDocumentChanged));
 
-    /// <summary>The document model being rendered.</summary>
+    /// <summary>The document model being rendered.
+    /// <para>Assigning it (in code or through a binding) counts as an edit: <see cref="IsModified"/> becomes true,
+    /// since the editor cannot tell a document read from a file from one built in code. To open a file as
+    /// unmodified, use <see cref="LoadJson"/>, <see cref="LoadJsonAsync"/>, <see cref="LoadPackageAsync"/>,
+    /// <see cref="LoadHtml"/> or <see cref="LoadRtf"/> (which also clear the undo history), or call
+    /// <see cref="MarkSaved"/> after assigning.</para></summary>
     public FlowDocument? Document
     {
         get => (FlowDocument?)GetValue(DocumentProperty);
@@ -309,7 +391,7 @@ public partial class RichEditor : ContentControl
 
     private void ClearLayoutCache()
     {
-        foreach (var entry in _layoutCache.Values) entry.layout.Dispose();
+        foreach (var entry in _layoutCache.Values) entry.Layout.Dispose();
         _layoutCache.Clear();
         _heightCache.Clear();
         _lineCache.Clear();
@@ -319,12 +401,12 @@ public partial class RichEditor : ContentControl
         ClearMarkerLayouts(); // device-bound like the layouts above (device recreate path)
     }
 
-    // Bound the heavy layout cache: dispose + drop the oldest entries so only ~viewport-worth of native
-    // CanvasTextLayouts stay resident. Safe because no caller holds a returned layout across building
-    // LayoutCacheCap other layouts (each use is synchronous within one measure/draw step).
+    // The heavy layout cache's safety net: dispose + drop EVERY entry (the per-draw-pass bound is
+    // TrimLayoutCache). Safe because no caller holds a returned layout across building LayoutCacheCap other
+    // layouts (each use is synchronous within one measure/draw step), and pinned walks defer it.
     private void EvictLayouts()
     {
-        foreach (var entry in _layoutCache.Values) entry.layout.Dispose();
+        foreach (var entry in _layoutCache.Values) entry.Layout.Dispose();
         _layoutCache.Clear();
     }
 
@@ -461,17 +543,20 @@ public partial class RichEditor : ContentControl
     internal CanvasTextLayout BuildTextLayout(Paragraph p, double maxWidth)
     {
         long sig = ParagraphSig(p);
-        if (_layoutCache.TryGetValue(p, out var cached) && cached.width == maxWidth && cached.sig == sig)
-            return cached.layout;
+        if (_layoutCache.TryGetValue(p, out var cached) && cached.Width == maxWidth && cached.Sig == sig)
+        {
+            cached.Stamp = ++_layoutStamp;
+            return cached.Layout;
+        }
 
         var layout = CreateLayout(p, maxWidth);
-        if (_layoutCache.TryGetValue(p, out var prev)) { prev.layout.Dispose(); _layoutCache.Remove(p); }
+        if (_layoutCache.TryGetValue(p, out var prev)) { prev.Layout.Dispose(); _layoutCache.Remove(p); }
         // Don't evict while a walk holds a cached layout (see _layoutPinDepth): an inline-table walk keeps
         // the HOST paragraph's layout live across building every cell layout, so a clear-all here would
         // dispose the layout still in use and the next GetCharacterRegions on it would throw. Deferring
         // lets the cache overshoot the cap briefly; the next unpinned build evicts it.
         if (_layoutPinDepth == 0 && _layoutCache.Count >= LayoutCacheCap) EvictLayouts();
-        _layoutCache[p] = (sig, maxWidth, layout);
+        _layoutCache[p] = new LayoutEntry(sig, maxWidth, layout) { Stamp = ++_layoutStamp };
         return layout;
     }
 

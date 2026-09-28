@@ -132,7 +132,39 @@ public partial class RichEditor
         int w = (int)Math.Ceiling(Math.Max(1, rect.Width) * scale), h = (int)Math.Ceiling(Math.Max(1, rect.Height) * scale);
         return _printMode
             ? _images.GetForPrint(element, rawBytes, already, w, h)
-            : _images.Get(_canvas, element, rawBytes, already, w, h);
+            : _images.Get(_canvas, element, rawBytes, already, w, h, ControlRect(m, rect));
+    }
+
+    // `rect` (drawing-session coordinates) in the control's own DIPs — the space a CanvasVirtualControl
+    // session starts in before the zoom and page transforms are applied — for ImageCache.TrimOffscreen.
+    private static Windows.Foundation.Rect ControlRect(System.Numerics.Matrix3x2 m, Windows.Foundation.Rect rect)
+    {
+        var a = System.Numerics.Vector2.Transform(new((float)rect.Left, (float)rect.Top), m);
+        var b = System.Numerics.Vector2.Transform(new((float)rect.Right, (float)rect.Bottom), m);
+        return new Windows.Foundation.Rect(new Windows.Foundation.Point(a.X, a.Y), new Windows.Foundation.Point(b.X, b.Y));
+    }
+
+    // Decoded pictures still in the document but drawn nowhere near the viewport are kept up to this many pixel
+    // bytes (ImageCache.TrimOffscreen); beyond it the least recently drawn are released and re-decode when they
+    // come back into view. internal, not const: tests shrink it.
+    internal long ImageOffscreenBytes = 32L * 1024 * 1024;
+
+    // After every screen draw pass: release pictures far from the viewport beyond ImageOffscreenBytes (see
+    // ImageCache.TrimOffscreen). The protected band is the viewport plus one viewport above and below, so a
+    // short scroll back never meets a placeholder, and the scroll offset lagging the draw can't matter.
+    private void TrimOffscreenImages(long keepBytes)
+    {
+        if (_images.IsEmpty) return;
+        _images.TrimOffscreen(NearViewport(), keepBytes);
+    }
+
+    // The viewport in control DIPs (the canvas sits DocContentLeft below the top of the scroll content),
+    // grown by one viewport on each side.
+    private Windows.Foundation.Rect NearViewport()
+    {
+        double vw = Math.Max(1, _scroll.ViewportWidth), vh = Math.Max(1, _scroll.ViewportHeight);
+        return new Windows.Foundation.Rect(_scroll.HorizontalOffset - _canvas.Margin.Left - vw,
+            _scroll.VerticalOffset - _canvas.Margin.Top - vh, vw * 3, vh * 3);
     }
 
     // Every picture draw. The bitmap is decoded to COVER its rect with the source's aspect (ImageDecoder.CoverBox),
@@ -239,7 +271,7 @@ public partial class RichEditor
     // bitmap can differ; clearing the layout cache for the affected paragraph forces a reshape.
     private void ClearLayoutCacheFor(object imageElement)
     {
-        if (imageElement is InlineImage) _layoutCache.Clear();
+        if (imageElement is InlineImage) EvictLayouts(); // disposes: a bare Clear() left the natives to the finalizer
     }
 
     /// <summary>Inserts an image (from its encoded bytes) as a block at the caret. The natural pixel size

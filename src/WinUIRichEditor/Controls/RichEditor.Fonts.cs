@@ -21,6 +21,19 @@ public partial class RichEditor
     // names resolve back through the same font set, so they're used as-is for both display and application.
     private static IReadOnlyList<string>? _systemFontChoices;
 
+    // The names come from the system collection's family list, in the UI language when a family has it, then
+    // the bare language, then en-us. The list used to be read face by face (CanvasFontSet.Fonts → FamilyNames),
+    // which opens every installed font: measured 2026-09-27 (MemBaseline fonts mode), +31.6 MB of Private
+    // bytes and 843 ms on the UI thread the first time a toolbar asked, held until a GC finalized the
+    // undisposed faces — and a quiet app, whose managed heap grew by 0.6 MB, has no reason to run one. This
+    // way: +0.7 MB, 140 ms, and the same names (TheFontList_… compares them with that walk, name by name).
+    // ⚠ Two things that look equivalent FAIL UNDER NATIVE AOT, silently (the catch below falls back to six
+    // stock names), both found by the demo's --pageprobe "fonts" line diffed between JIT and AOT:
+    //   · CanvasFontSet.GetPropertyValues — returns CanvasFontProperty[], a non-blittable struct array
+    //     (two strings); the same marshalling gap as LineMetrics.
+    //   · a collection expression `[locale, lang, "en-us"]` for the locale list — the compiler synthesizes a
+    //     read-only list type CsWinRT has no CCW for (InvalidCastException). A real string[] marshals.
+
     private static IReadOnlyList<string> SystemFontChoices()
     {
         if (_systemFontChoices != null) return _systemFontChoices;
@@ -30,11 +43,8 @@ public partial class RichEditor
             string locale = CultureInfo.CurrentUICulture.Name.ToLowerInvariant();      // e.g. "ko-kr"
             string lang = locale.Length >= 2 ? locale.Substring(0, 2) : locale;          // e.g. "ko"
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var face in CanvasFontSet.GetSystemFontSet().Fonts)
-            {
-                string? name = LocalizedFamilyName(face.FamilyNames, locale, lang);
-                if (!string.IsNullOrWhiteSpace(name) && seen.Add(name!)) names.Add(name!);
-            }
+            foreach (var name in CanvasTextFormat.GetSystemFontFamilies(new string[] { locale, lang, "en-us" }))
+                if (!string.IsNullOrWhiteSpace(name) && seen.Add(name)) names.Add(name);
             names.Sort(StringComparer.Create(CultureInfo.CurrentUICulture, ignoreCase: true));
         }
         catch (Exception ex)
@@ -46,18 +56,6 @@ public partial class RichEditor
         if (names.Count == 0)
             names.AddRange(new[] { "Segoe UI", "Arial", "Times New Roman", "Courier New", "Verdana", "Georgia" });
         return _systemFontChoices = names;
-    }
-
-    // Picks the family name for the UI language: exact locale → language-only → en-us → first available.
-    private static string? LocalizedFamilyName(IReadOnlyDictionary<string, string> familyNames, string locale, string lang)
-    {
-        if (familyNames.Count == 0) return null;
-        if (familyNames.TryGetValue(locale, out var exact)) return exact;
-        foreach (var kv in familyNames)
-            if (kv.Key.StartsWith(lang, StringComparison.OrdinalIgnoreCase)) return kv.Value;
-        if (familyNames.TryGetValue("en-us", out var en)) return en;
-        foreach (var kv in familyNames) return kv.Value;
-        return null;
     }
 
     /// <summary>Font families offered in the font pickers (toolbar combo and right-click submenu). Defaults
