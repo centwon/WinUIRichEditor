@@ -148,7 +148,9 @@ public class ControlMemoryTrimTests
     }
 
     private static IDictionary LayoutCache(RichEditor ed) => (IDictionary)T.GetField("_layoutCache", NP)!.GetValue(ed)!;
-    private static void TrimLayoutCache(RichEditor ed) => T.GetMethod("TrimLayoutCache", NP)!.Invoke(ed, null);
+    // As a draw pass that used none of them: every entry predates `passStart`.
+    private static void TrimLayoutCache(RichEditor ed)
+        => T.GetMethod("TrimLayoutCache", NP)!.Invoke(ed, [(long)T.GetField("_layoutStamp", NP)!.GetValue(ed)!]);
 
     [Fact]
     public void TheLayoutCache_IsTrimmedToTheMostRecentlyUsed_AndDisposesWhatItDrops()
@@ -239,6 +241,44 @@ public class ControlMemoryTrimTests
         finally { Unhost(ed); }
     }
 
+    // A table whose cells are all on screen at once: every cell paragraph is a layout the draw pass needs.
+    private static FlowDocument VisibleTable(int rows, int cols)
+    {
+        var tb = new TableBlock(rows, cols);
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+                tb.Cells[r][c] = new TableCell(new Paragraph { Inlines = { new Run { Text = $"{r}.{c}", FontSize = 6 } } });
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph());
+        doc.Blocks.Add(tb);
+        doc.Blocks.Add(new Paragraph());
+        return doc;
+    }
+
+    // A pass that changes nothing — what every caret blink is, twice a second — must build nothing. With the trim
+    // cutting the pass's own working set back to LayoutKeep, 600 visible cells built and disposed 346 layouts a
+    // pass: the ones drawn first were the oldest by the end of it. (Audit of PR #59, 2026-09-29.)
+    [Fact]
+    public void APassThatChangesNothing_BuildsNoLayout_EvenWhenMoreThanLayoutKeepAreOnScreen()
+    {
+        var ed = HostedWith(VisibleTable(30, 20));
+        try
+        {
+            UiThread.Run(() => ed.Zoom = 0.5); // the whole table in view, whatever the host window's size
+            WaitForDraw(ed);
+            WaitForDraw(ed);
+            int builds = UiThread.Run(() => ed.LayoutBuilds);
+            WaitForDraw(ed);
+            UiThread.Run(() =>
+            {
+                Assert.True(ed.LayoutCacheCount >= 600,
+                    $"the visible cells were not all drawn ({ed.LayoutCacheCount}): nothing is tested");
+                Assert.Equal(0, ed.LayoutBuilds - builds);
+            });
+        }
+        finally { Unhost(ed); }
+    }
+
     // ---- leaving the visual tree ----------------------------------------------------------------------------
 
     private static ImageCache Cache(RichEditor ed) => (ImageCache)T.GetField("_images", NP)!.GetValue(ed)!;
@@ -324,6 +364,58 @@ public class ControlMemoryTrimTests
             Assert.True(IsDisposed(farBmp));
         });
         WaitUntil(() => ed.DeviceTrims > trimsBefore, "the deferred device trim");
+    }
+
+    private static IDictionary MarkerLayouts(RichEditor ed) => (IDictionary)T.GetField("_markerLayouts", NP)!.GetValue(ed)!;
+
+    // The Unloaded release disposes every layout (paragraphs AND list markers) while the editor still has a
+    // document a host can edit through the API. Anything that kept a layout past the release — a side cache,
+    // a field — would hand the next draw a disposed one. Two cycles: the second releases what the edits made
+    // while hidden. A disposed layout throws out of the draw handler, so the pass never completes and WaitForDraw
+    // times out — falsified both ways (markers or paragraph layouts disposed but left cached: red on the reload
+    // draw). (Audit of PR #59, 2026-09-29.)
+    [Fact]
+    public void EditingWhileUnloaded_AndComingBack_DrawsFromFreshLayouts_ThroughTwoCycles()
+    {
+        var doc = Paragraphs(400);
+        foreach (var p in doc.Blocks.OfType<Paragraph>().Take(5)) p.ListType = ListKind.Bullet;
+        var ed = HostedWith(doc);
+        var faults = new List<Exception>();
+        void OnFault(object? _, RichEditorFaultEventArgs e) { lock (faults) faults.Add(e.Exception); }
+        RichEditorDiagnostics.Reset();
+        RichEditorDiagnostics.Fault += OnFault;
+        try
+        {
+            UiThread.Run(() => Assert.True(ed.LayoutCacheCount > 0 && MarkerLayouts(ed).Count > 0,
+                "nothing was drawn: the release would have nothing to dispose"));
+            for (int cycle = 0; cycle < 2; cycle++)
+            {
+                Unhost(ed);
+                WaitUntil(() => !ed.IsLoaded && ed.LayoutCacheCount == 0, "the Unloaded release");
+                UiThread.Run(() =>
+                {
+                    Assert.Empty(MarkerLayouts(ed));
+                    ed.InsertText($"typed while hidden {cycle} ");
+                    ed.ToggleBold();
+                    ed.InsertTable(2, 2);
+                    Assert.True(ed.LayoutCacheCount > 0, "the edits built no layout: the next cycle releases nothing new");
+                });
+                UiThread.Host(ed);
+                WaitForDraw(ed);
+                UiThread.Run(() =>
+                {
+                    Assert.True(MarkerLayouts(ed).Count > 0, "the list markers were not drawn again");
+                    Assert.Contains($"typed while hidden {cycle}", ed.GetPlainText());
+                });
+            }
+            lock (faults) Assert.DoesNotContain(faults, e => e is ObjectDisposedException);
+        }
+        finally
+        {
+            RichEditorDiagnostics.Fault -= OnFault;
+            RichEditorDiagnostics.Reset();
+            UiThread.Run(() => { if (ed.Parent is Microsoft.UI.Xaml.Controls.Panel p) p.Children.Remove(ed); });
+        }
     }
 
     // ---- the font list ----------------------------------------------------------------------------------------

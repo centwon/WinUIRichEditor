@@ -27,6 +27,7 @@ public partial class RichEditor
     // (plain paragraphs outside the clip advance by their cached height — see DrawContentWalk).
     private void OnRegionsInvalidated(CanvasVirtualControl sender, CanvasRegionsInvalidatedEventArgs args)
     {
+        long passStart = _layoutStamp; // layouts used from here on are this pass's own (TrimLayoutCache)
         foreach (var region in args.InvalidatedRegions)
         {
             try
@@ -51,7 +52,7 @@ public partial class RichEditor
             }
         }
         // The draw pass is over and nothing holds a layout or a bitmap: bound what scrolling left behind.
-        TrimLayoutCache();
+        TrimLayoutCache(passStart);
         TrimOffscreenImages(ImageOffscreenBytes);
         DrawPasses++;
     }

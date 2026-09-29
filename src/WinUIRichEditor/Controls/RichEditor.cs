@@ -110,19 +110,26 @@ public partial class RichEditor : ContentControl
     // (the slack keeps it from sorting on every frame). A trimmed paragraph that comes back into view rebuilds
     // its layout — CPU only, nothing visible. Safe where the cap is not: at the end of a draw pass no walk is
     // holding a layout, so no in-use layout can be disposed, whatever the number.
+    // ⚠ Never one the pass itself used (stamped after `passStart`): a visible table draws every cell, and trimming
+    // a pass's own working set had every caret blink (a full-canvas pass twice a second) rebuild and drop it —
+    // audit of 2026-09-29: a 30×20 table on screen built and disposed 346 native layouts per blink. The upstream
+    // peer's version of this trim (in progress 2026-09-28) guards the same way.
     private const int LayoutKeep = 256, LayoutTrimSlack = 128;
 
-    private void TrimLayoutCache()
+    private void TrimLayoutCache(long passStart)
     {
         if (_layoutPinDepth != 0 || _layoutCache.Count <= LayoutKeep + LayoutTrimSlack) return;
-        var byAge = new List<KeyValuePair<Paragraph, LayoutEntry>>(_layoutCache);
-        byAge.Sort((a, b) => a.Value.Stamp.CompareTo(b.Value.Stamp));
-        for (int i = 0; i < byAge.Count - LayoutKeep; i++)
+        var old = new List<KeyValuePair<Paragraph, LayoutEntry>>();
+        foreach (var kv in _layoutCache) if (kv.Value.Stamp <= passStart) old.Add(kv);
+        old.Sort((a, b) => a.Value.Stamp.CompareTo(b.Value.Stamp));
+        for (int i = 0; i < old.Count && _layoutCache.Count > LayoutKeep; i++)
         {
-            byAge[i].Value.Layout.Dispose();
-            _layoutCache.Remove(byAge[i].Key);
+            old[i].Value.Layout.Dispose();
+            _layoutCache.Remove(old[i].Key);
         }
     }
+
+    internal int LayoutBuilds; // test hook: layouts BuildTextLayout had to create (cache misses)
 
     // ---- the per-paragraph side caches ------------------------------------
     // Height, pagination lines and text statistics are cached per paragraph, keyed by identity and
@@ -550,6 +557,7 @@ public partial class RichEditor : ContentControl
         }
 
         var layout = CreateLayout(p, maxWidth);
+        LayoutBuilds++;
         if (_layoutCache.TryGetValue(p, out var prev)) { prev.Layout.Dispose(); _layoutCache.Remove(p); }
         // Don't evict while a walk holds a cached layout (see _layoutPinDepth): an inline-table walk keeps
         // the HOST paragraph's layout live across building every cell layout, so a clear-all here would
