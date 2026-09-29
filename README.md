@@ -15,10 +15,11 @@ dotnet add package WinUIRichEditor
 
 **Requirements:** .NET 10 · Windows 10 build 26100+ · **Windows App SDK 2.2.1 or later**.
 
-> **Status: 1.2 — the public API follows SemVer and is tracked in `PublicAPI.Shipped.txt`,** so it cannot
-> change unnoticed. 1.2 is the first feature release since the freeze and **adds only 7 dependency
-> properties**, so upgrading needs no code edits — but a few behaviours changed, two of them visible in
-> existing documents (line spacing is now HWP-style, and a heading's bold/size are character properties).
+> **Status: 1.3 in this repository — the public API follows SemVer and is tracked in `PublicAPI.Shipped.txt`,**
+> so it cannot change unnoticed. **1.3.0 is not published to NuGet; the package's latest is 1.2.0.** Build from
+> source to use it. 1.3 **only adds API** (page margins, table row/column commands, the shortcut table), so
+> upgrading needs no code edits — but a few behaviours changed: pages default to 15 mm margins, and new
+> tables/pictures/dividers sit one line below the text above (`Block.MarginTop` defaults to NaN).
 > Read the upgrade notes at the top of [`CHANGELOG.md`](https://github.com/centwon/WinUIRichEditor/blob/main/CHANGELOG.md).
 > [`Project_Roadmap.md`](https://github.com/centwon/WinUIRichEditor/blob/main/Project_Roadmap.md) is the engineering log.
 
@@ -66,7 +67,9 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
 **Tables**
 - colspan/rowspan, nested tables, recursive cell content (paragraphs, images, dividers, nested tables)
 - Tab cell navigation, right-click row/column insert·delete, **cell merge/split**, drag-select cells,
-  **single-cell selection (F5)** and Shift+arrow cell blocks
+  **single-cell selection (F5)** and Shift+arrow cell blocks; the same row/column edits as **host-callable
+  commands** (`InsertTableRow`/`DeleteTableColumn`/…, and caret-relative `InsertRowAbove`/`DeleteColumn`/…),
+  one undo step each
 - **Draw-to-size insert** (toolbar grid picker), **column-width & row-height resize** (drag borders),
   table block selection, **drag a table to move it** (Ctrl to copy), **block↔inline ("treat as character") toggle**
 
@@ -83,7 +86,8 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
   [document format spec](https://github.com/centwon/WinUIRichEditor/blob/main/docs/DOCUMENT_FORMAT.md) (byte-compatible with AvaloniaRichEditor)
 
 **Page view, print & PDF**
-- `PageSize` / `PageOrientation` / `ShowPageBoundaries`, stacked page view with **line-aware page breaks**,
+- `PageSize` / `PageOrientation` / **`PageMargin`** (millimetres, saved with the document and read/written by
+  RTF with the paper size) / `ShowPageBoundaries`, stacked page view with **line-aware page breaks**,
   headers / footers / page numbers
 - **Vector printing** (`CanvasPrintDocument`, printer resolution, real text — the dialog opens under Native
   AOT too) and **`SavePdf(stream)` → a text PDF** via "Microsoft Print to PDF", no dialog; plus
@@ -98,7 +102,8 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
 - **Icon theming**: built-in Segoe Fluent Icons glyphs, host-overridable per slot via `RichEditorIcons.Provider`
 - **Capability**: `IsReadOnly` (a viewer is `IsReadOnly=true` + no/minimal toolbar) + feature flags
   (`AllowImages` / `AllowTables` / `AllowRichPaste`). Toolbar density via **`ToolbarLevel`** (Minimal / Normal / Maximum)
-- **Word-standard keyboard shortcuts** from a single table (`RichEditorShortcuts`), shown in menu hints + toolbar tooltips
+- **Word-standard keyboard shortcuts** from a single table, **public** as `RichEditorShortcuts.All`/`Display(id)` —
+  shown in menu hints + toolbar tooltips, readable by a host's own UI
 - **Localization** (KO / EN, host-extensible) via `RichEditorLocalization`; **accessibility** peer (`IValueProvider`)
 - Change events (`TextChanged` / `SelectionChanged` / `DocumentChanged`) and appearance DPs
   (`SelectionBrush` / `CaretBrush`)
@@ -143,7 +148,7 @@ page (see `samples/.../ViewDemoPage.xaml`). File pickers need HWND interop (`Ini
 
 ```
 dotnet build WinUIRichEditor.slnx
-dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 815 tests (see below)
+dotnet test  tests/WinUIRichEditor.Tests/WinUIRichEditor.Tests.csproj   # 953 tests (see below)
 dotnet build samples/WinUIRichEditor.Demo/WinUIRichEditor.Demo.csproj
 # run the unpackaged exe directly:
 #   samples/WinUIRichEditor.Demo/bin/Debug/net10.0-windows10.0.26100.0/win-x64/WinUIRichEditor.Demo.exe
@@ -173,7 +178,7 @@ activation in the model/formatter layer), and the **self-contained** profile
 (`samples/.../PublishProfiles/win-x64.pubxml`: `PublishAot` + `SelfContained` + `PublishSingleFile` +
 `PublishTrimmed`, `WindowsAppSDKSelfContained=true`) builds cleanly with 0 trim/AOT warnings, runs, and
 renders — Win2D `CanvasTextLayout`, `CanvasDevice` and `CanvasFontSet` all activate under AOT. Measured at
-1.2: a **15.2 MB** native exe, 74.6 MB published (excluding the PDB), with no `coreclr.dll`, `clrjit.dll` or
+1.3: a **15.2 MB** native exe, 74.7 MB published (excluding the PDB), with no `coreclr.dll`, `clrjit.dll` or
 managed `WinUIRichEditor.dll` in the output. (An earlier "crashes at startup in `combase 0x80004005`" was a
 *framework-dependent*-only limitation; the self-contained bundle supplies WinRT activation.)
 
