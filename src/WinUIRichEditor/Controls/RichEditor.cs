@@ -292,6 +292,10 @@ public partial class RichEditor : ContentControl
         // placeholder flash / full re-decode on every Ctrl+Z — and the pictures the step took out are
         // kept within the edit budget, so the matching redo is warm too. A genuine swap frees everything.
         ed._images.Prune(ed.CollectLiveImageKeys(), ed._applyingHistory ? ed.ImageRetainBytes : 0);
+        // A new document starts a new history; undo and redo, which swap documents through this property too, keep
+        // theirs. A host that opened a file by assigning it left the previous file's edits undoable, so Ctrl+Z
+        // brought the OLD file back into the new one, for the next save to write (upstream round 35; measured here too).
+        if (!ed._applyingHistory) ed._undo.Clear();
         ed.OnDocumentAssigned();
         ed.SyncPageSetupOnDocumentChanged(); // apply the loaded doc's page setup (or adopt current into it)
         ed.RelayoutToViewport();

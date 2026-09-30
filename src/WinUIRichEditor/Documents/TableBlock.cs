@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WinUIRichEditor.Documents;
 
@@ -66,6 +67,18 @@ public class TableBlock : Block
     }
 
     private TableCell NewCell() => new TableCell { Parent = this };
+
+    // Bounds for a table an IMPORTER builds. Every reader pads short rows out to the widest one, so a file can make
+    // rows x columns cells out of a few that exist: one wide row over many one-cell rows, a colspan, a run of \cellx
+    // boundaries (1,500 columns from a few KB, upstream round 35 — measured here too). No real document is near
+    // either number; Word stops at 63 columns.
+    internal const int MaxImportColumns = 1000;
+    internal const int MaxImportCells = 250_000;
+
+    // The column count an imported table of `rows` rows keeps: its own, within both bounds. Cells past it are
+    // dropped — hostile input only.
+    internal static int ImportColumns(int rows, int columns)
+        => System.Math.Clamp(System.Math.Min(columns, MaxImportCells / System.Math.Max(1, rows)), 1, MaxImportColumns);
 
     // A table with its size declared but NO grid materialised — for the callers that fill every slot
     // themselves. `new TableBlock(0, 0)` runs InitializeCells over empty ranges, so this allocates the
@@ -346,7 +359,14 @@ public class TableBlock : Block
             for (int c = c0; c <= c1; c++) { ColSpans[r][c] = 1; RowSpans[r][c] = 1; }
 
         var anchorCell = Cells[r0][c0];
-        var anchorPara = anchorCell.Para;
+        // The anchor cell's OWN first paragraph. Para descends into a leading nested table, so the merged text went
+        // into that table's first cell instead of the cell being merged into (upstream round 35; measured here too).
+        var anchorPara = anchorCell.Blocks.OfType<Paragraph>().FirstOrDefault();
+        if (anchorPara == null)
+        {
+            anchorPara = new Paragraph { Inlines = { new Run { Text = "" } }, Parent = anchorCell };
+            anchorCell.Blocks.Add(anchorPara);
+        }
         for (int r = r0; r <= r1; r++)
             for (int c = c0; c <= c1; c++)
             {
