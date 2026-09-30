@@ -131,7 +131,7 @@ public static class DocumentSerializer
             {
                 if (entry == null) continue; // `"Images":{"k":null}` threw NullReferenceException out of the load
                 var bytes = TryFromBase64(entry.Data);
-                if (bytes != null) pool[key] = (bytes, entry.MimeType ?? "image/png");
+                if (bytes != null) pool[key] = (bytes, ImageMime.Safe(entry.MimeType ?? "image/png", bytes));
             }
         return (dto, pool);
     }
@@ -394,7 +394,11 @@ public static class DocumentSerializer
                 // that really exists always wins below, so a legitimate document is unaffected.
                 int maxCols = Math.Clamp(d.Columns, 1, MaxTableDimension);
                 foreach (var row in tb.Cells) if (row.Count > maxCols) maxCols = row.Count;
-                tb.Columns = maxCols;
+                // The widest row wins within the import bounds: one wide row padded every other row out to it
+                // (upstream round 35; measured here too).
+                tb.Columns = TableBlock.ImportColumns(tb.Rows, maxCols);
+                foreach (var row in tb.Cells)
+                    if (row.Count > tb.Columns) row.RemoveRange(tb.Columns, row.Count - tb.Columns);
                 foreach (var row in tb.Cells)
                     while (row.Count < tb.Columns) row.Add(new TableCell());
                 tb.ColSpans.Clear();
@@ -433,7 +437,9 @@ public static class DocumentSerializer
             Background = ColorUtil.Parse(d.Background),
             Indent = d.Indent,
             IsQuote = d.IsQuote,
-            ListLevel = d.ListLevel,
+            // The levels RTF reads too. -1 threw out of the HTML writer — so out of every copy — and a million wrote
+            // a million <ul> tags (upstream round 35; measured here too).
+            ListLevel = Math.Clamp(d.ListLevel, 0, 8),
             ListType = Enum.TryParse<ListKind>(d.ListType, out var lk) ? lk : (d.IsListItem ? ListKind.Bullet : ListKind.None),
             ListMarker = Enum.TryParse<ListMarkerStyle>(d.ListMarker, out var lm) ? lm : ListMarkerStyle.Default
         };
@@ -477,6 +483,32 @@ public static class DocumentSerializer
         return p;
     }
 
+    // Every pool key the document's blocks refer to, at any depth (cells, inline tables). Thread-free: the package
+    // reader runs it in the background, to read only the picture entries that are used.
+    internal static HashSet<string> ImageRefs(FlowDocumentDto? dto)
+    {
+        var refs = new HashSet<string>(StringComparer.Ordinal);
+        void Walk(IEnumerable<BlockDto?>? blocks)
+        {
+            if (blocks == null) return;
+            foreach (var b in blocks)
+            {
+                if (b == null) continue;
+                if (b.ImageRef != null) refs.Add(b.ImageRef);
+                Walk(b.Blocks);
+                if (b.Cells != null) foreach (var row in b.Cells) Walk(row);
+                if (b.Inlines != null)
+                    foreach (var i in b.Inlines)
+                    {
+                        if (i?.ImageRef != null) refs.Add(i.ImageRef);
+                        if (i?.Table != null) Walk([i.Table]);
+                    }
+            }
+        }
+        Walk(dto?.Blocks);
+        return refs;
+    }
+
     // ---- helpers ----
 
     private static double? NanToNull(double v) => double.IsNaN(v) ? (double?)null : v;
@@ -509,7 +541,7 @@ public static class DocumentSerializer
     {
         if (imageRef != null && pool.TryGetValue(imageRef, out var pooled)) return pooled;
         var bytes = TryFromBase64(inlineBase64);
-        return bytes != null ? (bytes, mimeType ?? "image/png") : null;
+        return bytes != null ? (bytes, ImageMime.Safe(mimeType ?? "image/png", bytes)) : null;
     }
 
     private static byte[]? TryFromBase64(string? value)

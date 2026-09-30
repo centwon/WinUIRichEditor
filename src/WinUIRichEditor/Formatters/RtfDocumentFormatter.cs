@@ -1016,12 +1016,18 @@ internal sealed class RtfParser
     {
         if (rowCellx == null || rows.Count == 0) return null;
 
-        var grid = new List<int>();
+        var union = new HashSet<int>(); // List.Contains per boundary was quadratic in them
         foreach (var rc in rowCellx)
             foreach (int b in rc)
-                if (b > 0 && !grid.Contains(b)) grid.Add(b);
-        if (grid.Count == 0) return null;
+                if (b > 0) union.Add(b);
+        if (union.Count == 0) return null;
+        var grid = new List<int>(union);
         grid.Sort();
+        // Within the import bounds (TableBlock.ImportColumns): a run of \cellx made 1,500 columns — and every row
+        // padded out to them — from a few KB (upstream round 35; measured here too). Cells past the grid kept are
+        // not placed, by the `start >= grid.Count` below.
+        int keep = TableBlock.ImportColumns(rows.Count, grid.Count);
+        if (grid.Count > keep) grid.RemoveRange(keep, grid.Count - keep);
 
         // Per row: where each emitted cell starts in the grid and how many columns it spans.
         var placed = new List<List<(int start, int span, TableCell cell, CellDef def)>>();
@@ -1128,6 +1134,7 @@ internal sealed class RtfParser
         int cols = 0;
         foreach (var r in rows) if (r.Count > cols) cols = r.Count;
         if (cols == 0) return null;
+        cols = TableBlock.ImportColumns(rows.Count, cols); // cells past it are not placed (the `c < cols` below)
 
         var tb = new TableBlock(rows.Count, cols);
         tb.Cells.Clear();
@@ -1431,7 +1438,9 @@ internal sealed class RtfWriter
         sb.Append(@"{\rtf1\ansi\ansicpg1252\uc1\deff0");
         sb.Append(@"{\fonttbl");
         for (int i = 0; i < _fonts.Count; i++)
-            sb.Append($@"{{\f{i}\fnil ").Append(EscapeText(_fonts[i].Length == 0 ? "Default" : _fonts[i])).Append(";}");
+            // A ';' ends a font table entry and RTF has no escape for one inside a name: "A;B" came out as the font
+            // "A" followed by stray text (upstream round 35; measured here too). It goes.
+            sb.Append($@"{{\f{i}\fnil ").Append(EscapeText(_fonts[i].Length == 0 ? "Default" : _fonts[i].Replace(";", ""))).Append(";}");
         sb.Append('}');
         sb.Append(@"{\colortbl;");
         foreach (var c in _colors) sb.Append($@"\red{c.R}\green{c.G}\blue{c.B};");
