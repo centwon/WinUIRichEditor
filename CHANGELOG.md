@@ -6,6 +6,19 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — JSON 작성기는 모든 판독기가 가정하는 값을 쓰지 않는다 (2026-10-01)
+
+상류(AvaloniaRichEditor PR #62)와 같은 변경. **스키마는 그대로 `"1.0"`** 이고, 1.0 이후의 모든 판독기가 새 출력을 읽는다.
+- 읽기 기본값과 같은 필드는 생략한다(`Type`이 `Paragraph`/`Run`, `false`, 0, 글자 크기 10, 표·이미지 아래 여백 10 등).
+  `Rows`/`Columns`는 쓰지 않고(판독기가 `Cells`에서 셈), 병합 격자는 병합이 있는 표만 쓴다.
+- 들여쓰기 없음. 한글은 `\uXXXX`가 아니라 그대로 쓴다(`<`·`>`·`&`·`'`·`"`는 여전히 이스케이프). `.flow`의 `document.json`도 같다.
+- 상류 kitchen-sink 문서: 15.9 KB → 1.3 KB. 실문서 코퍼스 3.0 MB → 378 KB.
+- **메이저가 더 큰 문서(`"2.0"` 등)는 로드 경로가 `JsonException`으로 거부한다** — 열린 문서는 그대로 둔다. 레거시 정수 `1`·`2`와
+  같은 메이저의 새 판(`"1.9"`)은 읽는다. 공개 `DocumentSerializer.Deserialize`는 관대하다.
+- 모르는 블록·인라인 `Type`은 전처럼 텍스트로 읽되 `RichEditorDiagnostics`로 보고한다.
+- 출력은 상류와 **형식이 같고 바이트는 다를 수 있다**: 이 포트는 로드할 때 같은 서식의 run을 합친다.
+- 테스트: `LeanJsonFormatTests`(상류가 쓴 같은 문서의 구·신 두 형태를 `Fixtures/`에 두고 같게 읽는지 확인). 반증 8/8.
+
 ### 상류 라운드35 백포트 — 입력의 크기·깊이 (2026-10-01)
 
 상류(AvaloniaRichEditor PR #59·#61)의 결함 20건을 여기서 먼저 재 봤다. **14건이 이 포트에도 있었고**, 전부 빨강 먼저 →

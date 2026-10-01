@@ -1,7 +1,7 @@
 # WinUIRichEditor 문서 형식 명세 (Document Format Specification)
 
 이 문서는 WinUIRichEditor가 문서를 저장/교환하는 두 가지 자체 형식을 정의한다. 이 형식은 원본
-AvaloniaRichEditor와 **바이트 호환**(동일 DTO·직렬화 로직 이식)이라 두 에디터 간 문서가 그대로 왕복한다.
+AvaloniaRichEditor와 **형식 호환**(동일 DTO·직렬화 규칙)이라 두 에디터 간 문서가 그대로 왕복한다. 바이트까지 같지는 않다 — 이 포트는 로드할 때 같은 서식의 이웃 run을 합친다(`RunNormalizer`).
 
 | 형식 | 용도 | 진입점 API |
 |---|---|---|
@@ -46,10 +46,11 @@ FlowDocument
 
 ### 2.1 직렬화 일반 규칙
 
-- 인코딩: UTF-8, `System.Text.Json` 소스 생성 컨텍스트(AOT 호환), 들여쓰기 출력.
-- **null인 필드는 생략**된다(`WhenWritingNull`). 숫자/불리언 기본값(`0`, `false`, `"Indent": 0` 등)은 기록된다.
+- 인코딩: UTF-8, `System.Text.Json` 소스 생성 컨텍스트(AOT 호환). **들여쓰기 없음**(2026-10-01부터, 상류와 같은 날).
+- **한글 등 비ASCII 글자는 이스케이프하지 않는다**(`JavaScriptEncoder.Create(UnicodeRanges.All)`). HTML에 민감한 `<`·`>`·`&`·`'`·`"`는 여전히 이스케이프한다.
+- **판독기가 없을 때 가정하는 값과 같은 필드는 쓰지 않는다**(아래 필드 표의 "읽기 기본값"). `Type`이 `"Paragraph"`/`"Run"`이면 `Type`도 생략한다. 1.0 이후 모든 판독기(상류 포함)가 그대로 읽는다(상류가 구 트리로 직접 확인, 이 포트는 상류가 쓴 구·신 형식 kitchen-sink를 같게 읽는 테스트로 확인).
 - **판독기는 모르는 필드를 무시해야 한다**(System.Text.Json 기본 동작). 전방 호환의 근거.
-- 파싱 실패 시 `Deserialize`는 예외 대신 **빈 문서**를 반환한다.
+- **손상된 입력은 예외다**: 유효하지 않은 JSON은 `JsonException`, `Blocks` 없는 JSON은 로드 경로(`LoadJson`·`LoadJsonAsync`·`LoadPackageAsync`)에서 `JsonException`. 리터럴 `null`은 빈 문서.
 
 ### 2.2 루트: `FlowDocumentDto`
 
@@ -68,7 +69,7 @@ FlowDocument
 }
 ```
 
-- **`PageSetup`**: 열거형은 이름으로 쓴다(모르는 값은 기본값으로 degrade). 상류 AvaloniaRichEditor는 이 객체를 무시한다(내용 전용 형식).
+- **`PageSetup`**: 열거형은 이름으로 쓴다(모르는 값은 기본값으로 degrade). 상류 AvaloniaRichEditor도 같은 객체를 읽고 쓴다(여백 포함).
 - **`HeadingFormat`**(1.2.0 도입): `1`은 제목의 굵게·제목 크기가 **런의 글자 속성으로 저장돼 있다**는 표시다.
   이 표식이 없는 파일(옛 버전·상류가 쓴 것)은 렌더러가 제목을 강제하던 시절의 것이라, **에디터가 받을 때 한 번**
   런에 적어 넣는다(`HeadingStyle.Materialize`). **판독기는 변환하지 않는다** — 저장된 모델 그대로 읽는다.
@@ -76,7 +77,8 @@ FlowDocument
 
 #### 버전 이력
 
-> **버전 표기**: 포맷 버전은 이제 **SemVer 문자열**(`"Version": "1.0"`)이다. 판독기는 로직에서 이 값을 분기하지 않으며(정보용 스탬프), **레거시 정수형(`1`·`2`)도 그대로 읽는다**(숫자/문자열 모두 허용). 필드가 없으면 `"1"`(레거시)로 간주.
+> **버전 표기**: 포맷 버전은 **SemVer 문자열**(`"Version": "1.0"`)이다. **레거시 정수형(`1`·`2`)도 그대로 읽는다**(둘 다 `"1.0"`보다 오래된 형식). 필드가 없으면 `"1"`(레거시)로 간주.
+> 판독기가 분기하는 것은 **메이저**뿐이다: 로드 경로는 메이저가 지원 범위(현재 1)보다 큰 문서를 `JsonException`으로 거부한다(§4). 공개 `DocumentSerializer.Deserialize`는 관대하게 읽는다.
 
 | 버전 | 변경 | 읽기 호환 |
 |---|---|---|
@@ -94,15 +96,17 @@ FlowDocument
 
 ### 2.3 블록: `BlockDto`
 
-블록은 `Type` 판별자를 가진 평면(flat) 객체다. 값: `"Paragraph"`(기본), `"Table"`, `"Image"`, `"Divider"`. 알 수 없는 `Type`은 Paragraph로 읽힌다.
+블록은 `Type` 판별자를 가진 평면(flat) 객체다. 값: `"Paragraph"`(기본 — 쓰지 않는다), `"Table"`, `"Image"`, `"Divider"`. 알 수 없는 `Type`은 그 텍스트를 가진 Paragraph로 읽히고 `RichEditorDiagnostics`에 `NotSupportedException`으로 보고된다(저장하면 그 블록은 빠진다).
 
 #### 공통 필드 (모든 블록)
 
-| 필드 | 타입 | 쓰기 | 읽기 기본값 |
-|---|---|---|---|
-| `Indent` | number | 항상 | 0 (왼쪽 여백 px) |
-| `MarginTop` | number? | 항상 | 없으면 **0** |
-| `MarginBottom` | number? | 항상 | **문단·Divider는 0**, 이미지·표는 **10**. (1.2.0에서 문단 기본값이 10 → 0으로 바뀌었다 — HWP처럼 줄 간격만으로 문단을 나눈다. 저장된 파일은 값을 적어 두므로 그대로다.) |
+아래 모든 표에서 **"읽기 기본값"과 같은 값은 쓰지 않는다**.
+
+| 필드 | 타입 | 읽기 기본값 |
+|---|---|---|
+| `Indent` | number? | 0 (왼쪽 여백 px) |
+| `MarginTop` | number? | 문단 **0**. 표·이미지·구분선은 **자동**(NaN = `Block.AutoTopMargin`) — 자동일 때 생략, 0을 포함한 명시 값은 기록 |
+| `MarginBottom` | number? | **문단·Divider는 0**, 이미지·표는 **10**. (1.2.0에서 문단 기본값이 10 → 0으로 바뀌었다 — HWP처럼 줄 간격만으로 문단을 나눈다. 저장된 파일은 값을 적어 두므로 그대로다.) |
 
 #### `Type: "Paragraph"`
 
@@ -115,11 +119,11 @@ FlowDocument
 | `MarginRight` | number? | 오른쪽 여백 px(줄바꿈 폭 축소). **문단 전용**. 없으면 0 |
 | `ListType` | string | `"None"`/`"Bullet"`/`"Ordered"`. 파싱 실패 시 레거시 `IsListItem` 참조 |
 | `ListMarker` | string? | 글머리표/번호 모양: `Disc`/`Circle`/`Square`/`Dash`(글머리표), `Decimal`/`DecimalParen`/`LowerAlpha`/`UpperAlpha`/`LowerRoman`(번호). 없으면 `Default`(•/"1.") |
-| `IsListItem` | bool | **v1 레거시, 읽기 전용 폴백**: `ListType` 없고 true면 Bullet |
-| `ListLevel` | int | 중첩 리스트 깊이 (0=최상위) |
-| `HeadingLevel` | int | 0=본문, 1~6=h1~h6 |
+| `IsListItem` | bool? | **v1 레거시, 읽기 전용 폴백**: `ListType` 없고 true면 Bullet. 쓰지 않는다 |
+| `ListLevel` | int? | 중첩 리스트 깊이 (0=최상위). 읽을 때 0~8로 자른다 |
+| `HeadingLevel` | int? | 0=본문, 1~6=h1~h6 |
 | `Background` | string? | 문단/셀 배경색 (색상 형식은 §2.5) |
-| `IsQuote` | bool | 인용 블록(blockquote) 여부 |
+| `IsQuote` | bool? | 인용 블록(blockquote) 여부 |
 
 #### `Type: "Image"` (블록 이미지)
 
@@ -134,11 +138,13 @@ FlowDocument
 
 | 필드 | 타입 | 의미 / 읽기 규칙 |
 |---|---|---|
-| `Rows`, `Columns` | int | 행/열 수. **로드 시 `Cells` 격자에서 재계산**되므로 참고값 |
+| `Rows`, `Columns` | int? | 행/열 수. **쓰지 않는다** — 판독기는 `Cells` 격자에서 재계산한다 |
 | `ColumnWidths` | number[] | 열 너비 px (열 수만큼) |
-| `RowHeights` | number[] | 행 최소 높이 px. **빈 배열 또는 0 = 자동(내용 높이)** |
+| `RowHeights` | number[]? | 행 최소 높이 px. **없음·빈 배열·0 = 자동**. 비어 있으면 쓰지 않는다 |
 | `Cells` | BlockDto[][] | 행 우선(row-major) **밀집 격자**. 평범한 1문단 셀은 Paragraph형 BlockDto(레거시 호환), 다중 블록·비문단 셀은 `Type:"Cell"` 래퍼(아래). 병합으로 가려진 칸도 자리는 유지 |
-| `ColSpans`, `RowSpans` | int[][] | 셀 병합 격자(밀집, `Cells`와 같은 크기). 앵커 셀=병합 칸 수(평범한 셀은 1), **가려진(covered) 셀=0**. 없으면 전부 1×1 |
+| `ColSpans`, `RowSpans` | int[][]? | 셀 병합 격자(밀집, `Cells`와 같은 크기). 앵커 셀=병합 칸 수(평범한 셀은 1), **가려진(covered) 셀=0**. 없으면 전부 1×1 — **병합이 없는 표는 쓰지 않는다** |
+
+가져오기 상한(신뢰할 수 없는 입력, 상류 라운드35): 표는 **1,000열·25만 셀**까지 읽고 넘는 셀은 버린다.
 
 병합 규약: 병합 영역의 왼쪽-위 셀이 **앵커**이며 `ColSpans[r][c]`/`RowSpans[r][c]`에 병합 크기를 갖는다. 영역 내 나머지 칸은 두 배열 모두 0으로 마킹되고, 그 칸의 `Cells` 내용은 무시된다(빈 문단 권장). 격자는 항상 직사각형이어야 한다.
 
@@ -158,19 +164,19 @@ FlowDocument
 
 ### 2.4 인라인: `InlineDto`
 
-`Type` 판별자: `"Run"`(기본), `"Image"`, 또는 `"Table"`.
+`Type` 판별자: `"Run"`(기본 — 쓰지 않는다), `"Image"`, 또는 `"Table"`. 알 수 없는 `Type`은 그 `Text`를 가진 Run으로 읽고 보고한다.
 
 #### `Type: "Run"`
 
 | 필드 | 타입 | 의미 / 읽기 규칙 |
 |---|---|---|
 | `Text` | string? | 텍스트. `\n` = 하드 줄바꿈 |
-| `Bold`, `Italic` | bool | 굵게/기울임 |
-| `FontSize` | number | 글자 크기 **pt**(이전 px). 기본 10, 읽을 때 ≤0이면 10. 렌더 시 ×4/3로 px 변환 |
+| `Bold`, `Italic` | bool? | 굵게/기울임. 없으면 false |
+| `FontSize` | number? | 글자 크기 **pt**(이전 px). 없거나 ≤0이면 10. 렌더 시 ×4/3로 px 변환 |
 | `FontFamily` | string? | 글꼴 이름. 없으면 에디터 기본 글꼴. **주의: OS가 현지화한 이름(예: "맑은 고딕")이 저장될 수 있어 다른 OS에서 해석되지 않을 수 있음** |
 | `Foreground` | string? | 글자색 (§2.5). 없으면 기본(검정) |
 | `Background` | string? | 형광펜 배경색 |
-| `Underline`, `Strikethrough` | bool | 밑줄/취소선 (둘 다 가능) |
+| `Underline`, `Strikethrough` | bool? | 밑줄/취소선 (둘 다 가능). 없으면 false |
 | `NavigateUri` | string? | 하이퍼링크 URL. 있으면 파랑+밑줄로 렌더, 에디터는 http/https만 연다 |
 
 #### `Type: "Image"` (인라인 이미지)
@@ -251,8 +257,9 @@ FlowDocument
 
 - `document.json`의 `Images[키]`와 `images/키` 엔트리가 1:1 대응한다. base64가 빠지므로 같은 문서의 JSON 대비 약 25% 작다.
 - 이미지 엔트리는 이미 압축된 형식(JPEG/PNG)이므로 **무압축(Stored)** 으로 저장한다.
-- 로드 시: `document.json`이 없으면 빈 문서. `images/` 엔트리의 MIME은 풀 메타에서 읽고, 메타가 없으면 **매직 넘버 스니핑**(png/jpeg/gif/bmp/webp)으로 결정한다.
-- 손상된 ZIP/JSON은 예외 없이 빈 문서를 반환한다.
+- 로드 시: `images/` 엔트리의 MIME은 풀 메타에서 읽고, 메타가 없거나 평범한 `image/…` 형식이 아니면 **매직 넘버 스니핑**(png/jpeg/gif/bmp/webp)으로 결정한다.
+- 로드 시 **문서가 참조하는 `images/` 엔트리만** 읽고, 엔트리 하나가 256 MB를 넘으면 읽지 않는다(zip 폭탄 방지).
+- **손상은 예외다**: ZIP이 아니거나 깨졌거나 `document.json`이 없으면 `InvalidDataException`, `document.json`이 유효한 JSON이 아니면 `JsonException`.
 - 파일 식별: 데모는 ZIP 매직 `PK`(0x50 0x4B) 스니핑으로 `.flow`와 일반 JSON을 구분한다.
 - `meta.json`은 **컨테이너 포맷** 버전 마커다(`document.json`의 문서 포맷 버전과 같은 값으로 기록). 컨테이너 레이아웃이 독립적으로 진화할 여지를 남기고, 너무 새로운 패키지를 판독기가 구분할 수 있게 한다. 현재 판독기는 로직에서 사용하지 않으며 **없어도 무방**(이전 버전 `.flow`와 하위호환).
 
@@ -263,12 +270,14 @@ FlowDocument
 **판독기(reader) 의무**
 - 모르는 JSON 필드는 무시한다.
 - `Version`이 없으면 레거시(`"1"`)로 간주하고 폴백(`ImageBase64`, `IsListItem`)을 적용한다. 레거시 정수(`1`·`2`)와 SemVer 문자열(`"1.0"`)을 모두 읽는다.
-- `Version`이 현재 지원 버전보다 커도 가능한 만큼 읽는다(현재 구현은 버전 검사로 거부하지 않음).
+- `Version`의 **메이저가 더 크면 로드 경로는 거부한다**(`JsonException`). 같은 메이저의 더 새 판은 가능한 만큼 읽고, 모르는 블록·인라인 `Type`은 보고한다. 공개 `Deserialize`는 관대하다.
+- 없는 필드는 필드 표의 "읽기 기본값"으로 읽는다. **이 기본값은 작성기가 생략에 쓰는 값과 같아야 한다** — 바꾸면 기존 파일의 의미가 바뀐다.
 
 **작성기(writer) 의무**
 - 항상 현재 포맷 버전(`DocumentSerializer.CurrentSchemaVersion` = `"1.0"`)을 기록한다.
 - 이미지 바이트를 재인코딩하지 않는다(원본 보존). 풀 키는 반드시 바이트의 SHA-256 hex.
 - 레거시 쓰기 필드(`ImageBase64`, `IsListItem`)는 **쓰지 않는다** (읽기 폴백 전용).
+- 판독기의 기본값과 같은 필드는 쓰지 않는다(§2.1). 2026-10-01 이전의 작성기는 모든 필드를 들여 써서 기록했다 — 두 형태 모두 같은 스키마다(`tests/WinUIRichEditor.Tests/Fixtures/`에 같은 문서의 두 형태).
 
 **스키마를 바꿀 때**
 1. 기존 문서를 깨뜨리는 변경(필드 의미 변경·제거)이면 `CurrentSchemaVersion`을 올리고(SemVer 문자열 — 호환 깨짐은 메이저, 하위호환 추가는 마이너) 읽기 폴백을 추가한다. 필드 *추가*는 버전 증가 없이 가능하다(생략=기본값 규칙 유지).
