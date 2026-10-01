@@ -426,6 +426,9 @@ public static class DocumentSerializer
                         tb.Cells.Add(row);
                     }
                 tb.Rows = tb.Cells.Count;
+                // No rows is no table, as upstream reads it (round 35) and as the HTML and RTF readers make none —
+                // so one file loads as the same document in both editors.
+                if (tb.Rows == 0) return null;
                 // The declared width pads short rows, so it is allocated too — cap it. The widest row
                 // that really exists always wins below, so a legitimate document is unaffected.
                 int maxCols = Math.Clamp(d.Columns ?? 0, 1, MaxTableDimension);

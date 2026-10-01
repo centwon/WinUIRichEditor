@@ -113,12 +113,27 @@ public class LeanJsonFormatTests
         Assert.DoesNotContain("\"Italic\":false", lean);
         Assert.Equal(DocumentSerializer.Serialize(DocumentSerializer.Deserialize(verbose)),
                      DocumentSerializer.Serialize(DocumentSerializer.Deserialize(lean)));
-        // Not byte-equal to upstream's own output: this port joins equal runs on load (RunNormalizer) where upstream
-        // keeps the split. The FORMAT is the same; the model each builds from it is normalised its own way. What must
-        // hold here is that this writer's output reads back to itself.
-        string mine = DocumentSerializer.Serialize(DocumentSerializer.Deserialize(lean));
-        Assert.Equal(mine, DocumentSerializer.Serialize(DocumentSerializer.Deserialize(mine)));
-        Assert.DoesNotContain("\"Italic\":false", mine);
+        // And byte-equal to upstream's own output: both join equal runs on load, so one document is one file.
+        Assert.Equal(lean, DocumentSerializer.Serialize(DocumentSerializer.Deserialize(lean)));
+    }
+
+    // The interchange contract with upstream: one document using every field, in the canonical form. Upstream
+    // (AvaloniaRichEditor) holds the same file and the same test, so a change to what either editor writes — a
+    // field's order, a colour's spelling, a default — fails in the repository that made it.
+    [Fact]
+    public void TheInterchangeDocument_ReadsAndWritesBackByteForByte()
+    {
+        string canonical = Fixture("format-1.0-interchange.json");
+        Assert.Equal(canonical, DocumentSerializer.Serialize(DocumentSerializer.Deserialize(canonical)));
+    }
+
+    // A table with no rows is no table, in both editors (upstream drops it too).
+    [Fact]
+    public void ATableWithNoRows_IsNotRead()
+    {
+        var doc = DocumentSerializer.Deserialize("{\"Version\":\"1.0\",\"Blocks\":[{\"Inlines\":[{\"Text\":\"a\"},{\"Type\":\"Table\",\"Table\":{\"Type\":\"Table\",\"Cells\":[]}}]},{\"Type\":\"Table\",\"Cells\":[]}]}");
+        Assert.Empty(doc.Blocks.OfType<TableBlock>());
+        Assert.Empty(doc.Blocks.OfType<Paragraph>().SelectMany(p => p.Inlines).OfType<InlineTable>());
     }
 
     [Fact]
