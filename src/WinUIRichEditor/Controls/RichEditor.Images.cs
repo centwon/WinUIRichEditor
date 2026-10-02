@@ -125,7 +125,7 @@ public partial class RichEditor
     private Microsoft.Graphics.Canvas.CanvasBitmap? ImageToDraw(Microsoft.Graphics.Canvas.CanvasDrawingSession ds,
         object element, byte[]? rawBytes, Microsoft.Graphics.Canvas.CanvasBitmap? already, Windows.Foundation.Rect rect)
     {
-        var m = ds.Transform;
+        var m = SessionToControlDips(ds); // a screen pass draws in pixel units (UseExactPixelOrigin)
         double scale = Math.Max(Math.Sqrt(m.M11 * m.M11 + m.M12 * m.M12), Math.Sqrt(m.M21 * m.M21 + m.M22 * m.M22))
             * ds.Dpi / 96.0;
         if (_printMode) scale = Math.Max(scale, PrintImageDpi / 96.0);
