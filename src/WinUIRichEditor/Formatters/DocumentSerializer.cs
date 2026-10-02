@@ -13,9 +13,20 @@ using WinUIRichEditor.Documents;
 
 namespace WinUIRichEditor.Formatters;
 
-[JsonSourceGenerationOptions(WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(FlowDocumentDto))]
-internal partial class DocumentJsonContext : JsonSerializerContext { }
+internal partial class DocumentJsonContext : JsonSerializerContext
+{
+    // What every document is WRITTEN with. The default encoder escapes everything outside ASCII, so Korean text went
+    // out as 정보… — six bytes a character where UTF-8 takes three, and a file no one could read or diff.
+    // UnicodeRanges.All leaves letters as they are and still escapes what HTML is sensitive to (< > & ' "). Not
+    // indented: indentation was half of every document. (Upstream 2026-10-01.)
+    internal static DocumentJsonContext Wire { get; } = new(new JsonSerializerOptions
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All),
+    });
+}
 
 /// <summary>Serializes and deserializes a <see cref="FlowDocument"/> to/from the library's JSON format.
 /// Images are stored as base64 of their original encoded bytes (no re-encoding); bitmaps
@@ -51,7 +62,7 @@ public static class DocumentSerializer
             foreach (var (key, img) in images)
                 dto.Images[key] = new ImagePoolDto { Data = Convert.ToBase64String(img.Bytes), MimeType = img.Mime };
         }
-        return JsonSerializer.Serialize(dto, DocumentJsonContext.Default.FlowDocumentDto);
+        return JsonSerializer.Serialize(dto, DocumentJsonContext.Wire.FlowDocumentDto);
     }
 
     // Builds the wire DTO; image bytes land in `images` keyed by content hash (the dto references
@@ -116,6 +127,22 @@ public static class DocumentSerializer
     {
         if (dto != null && dto.Blocks == null)
             throw new JsonException("The JSON is not a WinUIRichEditor document: it has no \"Blocks\".");
+        // A newer MAJOR format is one this reader cannot promise to read whole: it would come in with what it does
+        // not know turned into empty paragraphs, and a save would write that over the file. Refused like a damaged
+        // file, so the host tells the user instead. (Legacy integer versions "1" and "2" predate "1.0" and read.)
+        if (dto != null && MajorVersion(dto.Version) is int major && major > SupportedMajorVersion)
+            throw new JsonException($"The document is format {dto.Version}, newer than this reader ({CurrentSchemaVersion}).");
+    }
+
+    private const int SupportedMajorVersion = 1;
+
+    // The major of a SemVer "M.m" version; null for the legacy integer form, which has no dot.
+    private static int? MajorVersion(string? version)
+    {
+        if (version == null) return null;
+        int dot = version.IndexOf('.');
+        return dot > 0 && int.TryParse(version.AsSpan(0, dot), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out int major) ? major : null;
     }
 
     // Thread-free half of Deserialize: JSON parsing + base64 decode only, no model objects.
@@ -177,7 +204,7 @@ public static class DocumentSerializer
                 {
                     Type = "Divider",
                     MarginTop = double.IsNaN(dv.MarginTop) ? null : dv.MarginTop, // see the table branch
-                    MarginBottom = dv.MarginBottom,
+                    MarginBottom = Unless(dv.MarginBottom, 0),
                 };
             case ImageBlock img:
                 return new BlockDto
@@ -187,23 +214,23 @@ public static class DocumentSerializer
                     Width = NanToNull(img.Width),
                     Height = NanToNull(img.Height),
                     Alt = img.AltText,
-                    Indent = img.Indent,
+                    Indent = Unless(img.Indent, 0),
                     MarginTop = double.IsNaN(img.MarginTop) ? null : img.MarginTop, // see the table branch
-                    MarginBottom = img.MarginBottom
+                    MarginBottom = Unless(img.MarginBottom, 10)
                 };
             case TableBlock tb:
                 var td = new BlockDto
                 {
                     Type = "Table",
-                    Rows = tb.Rows,
-                    Columns = tb.Columns,
-                    Indent = tb.Indent,
+                    // Rows and Columns are not written: every reader rebuilds both from Cells (the widest row
+                    // wins over a declared width, and an absent one reads as the narrowest).
+                    Indent = Unless(tb.Indent, 0),
                     // NaN is "let the editor choose the gap" (Block.AutoTopMargin) and JSON has no NaN: it goes
                     // out as no field at all, and comes back as NaN on the next read.
                     MarginTop = double.IsNaN(tb.MarginTop) ? null : tb.MarginTop,
-                    MarginBottom = tb.MarginBottom,
+                    MarginBottom = Unless(tb.MarginBottom, 10),
                     ColumnWidths = new List<double>(tb.ColumnWidths),
-                    RowHeights = new List<double>(tb.RowHeights),
+                    RowHeights = tb.RowHeights.Count > 0 ? new List<double>(tb.RowHeights) : null,
                     Cells = new List<List<BlockDto>>()
                 };
                 foreach (var row in tb.Cells)
@@ -240,10 +267,14 @@ public static class DocumentSerializer
                     }
                     td.Cells.Add(rd);
                 }
-                td.ColSpans = new List<List<int>>();
-                td.RowSpans = new List<List<int>>();
-                foreach (var row in tb.ColSpans) td.ColSpans.Add(new List<int>(row));
-                foreach (var row in tb.RowSpans) td.RowSpans.Add(new List<int>(row));
+                // Only a table with a merge carries the span grids; absent, every reader reads them as all 1s.
+                if (HasMerge(tb))
+                {
+                    td.ColSpans = new List<List<int>>();
+                    td.RowSpans = new List<List<int>>();
+                    foreach (var row in tb.ColSpans) td.ColSpans.Add(new List<int>(row));
+                    foreach (var row in tb.RowSpans) td.RowSpans.Add(new List<int>(row));
+                }
                 return td;
             default:
                 return new BlockDto { Type = "Paragraph", Inlines = new List<InlineDto>() };
@@ -252,40 +283,45 @@ public static class DocumentSerializer
 
     private static BlockDto ParagraphToDto(Paragraph p, Dictionary<string, (byte[] Bytes, string Mime)> pool)
     {
+        // A field that holds what a reader assumes when it is absent is not written (Unless): every reader since
+        // 1.0 defaults the same way, so they all read this back unchanged (upstream 2026-10-01, checked there with an
+        // old tree and here likewise). "Paragraph" and "Run" are the readers' default Type too.
         var d = new BlockDto
         {
-            Type = "Paragraph",
+            Type = null,
             Inlines = new List<InlineDto>(),
-            TextAlignment = p.TextAlignment.ToString(),
+            TextAlignment = p.TextAlignment == TextAlignment.Left ? null : p.TextAlignment.ToString(),
             LineHeight = NanToNull(p.LineHeight),
             LineSpacing = NanToNull(p.LineSpacing),
-            MarginTop = p.MarginTop,
-            MarginBottom = p.MarginBottom,
-            MarginRight = p.MarginRight,
-            ListType = p.ListType.ToString(),
+            // NaN (a host's AutoTopMargin on a paragraph) has no JSON spelling — writing it threw — and a paragraph
+            // reads an absent top margin as 0.
+            MarginTop = double.IsNaN(p.MarginTop) ? null : Unless(p.MarginTop, 0),
+            MarginBottom = Unless(p.MarginBottom, 0),
+            MarginRight = Unless(p.MarginRight, 0),
+            ListType = p.ListType == ListKind.None ? null : p.ListType.ToString(),
             ListMarker = p.ListMarker == ListMarkerStyle.Default ? null : p.ListMarker.ToString(),
-            HeadingLevel = p.HeadingLevel,
+            HeadingLevel = Unless(p.HeadingLevel, 0),
             Background = ColorToString(p.Background),
-            Indent = p.Indent,
-            IsQuote = p.IsQuote,
-            ListLevel = p.ListLevel
+            Indent = Unless(p.Indent, 0),
+            IsQuote = Unless(p.IsQuote, false),
+            ListLevel = Unless(p.ListLevel, 0)
         };
         foreach (var inline in p.Inlines)
         {
             if (inline is Run r)
                 d.Inlines.Add(new InlineDto
                 {
-                    Type = "Run",
+                    Type = null,
                     Text = r.Text,
-                    Bold = r.FontWeight.IsBold(),
-                    Italic = r.FontStyle == FontStyle.Italic,
-                    FontSize = r.FontSize,
+                    Bold = Unless(r.FontWeight.IsBold(), false),
+                    Italic = Unless(r.FontStyle == FontStyle.Italic, false),
+                    FontSize = Unless(r.FontSize, 10),
                     Foreground = ColorToString(r.Foreground),
                     Background = ColorToString(r.Background),
                     FontFamily = r.FontFamily,
                     NavigateUri = r.NavigateUri,
-                    Underline = r.TextDecorations.HasFlag(TextDecorationFlags.Underline),
-                    Strikethrough = r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)
+                    Underline = Unless(r.TextDecorations.HasFlag(TextDecorationFlags.Underline), false),
+                    Strikethrough = Unless(r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough), false)
                 });
             else if (inline is InlineImage im)
                 d.Inlines.Add(new InlineDto
@@ -337,7 +373,7 @@ public static class DocumentSerializer
                         Width = d.Width ?? double.NaN,
                         Height = d.Height ?? double.NaN,
                         AltText = d.Alt,
-                        Indent = d.Indent,
+                        Indent = d.Indent ?? 0,
                         MarginTop = d.MarginTop ?? Block.AutoTopMargin, // absent = the editor's own gap
                         MarginBottom = d.MarginBottom ?? 10
                     };
@@ -351,7 +387,7 @@ public static class DocumentSerializer
                 // attacker-controlled numbers only ever wasted memory — a file claiming 100000000 rows
                 // exhausted it before a single cell was read.
                 var tb = new TableBlock(1, 1);
-                tb.Indent = d.Indent;
+                tb.Indent = d.Indent ?? 0;
                 tb.MarginTop = d.MarginTop ?? Block.AutoTopMargin; // absent = the editor's own gap
                 tb.MarginBottom = d.MarginBottom ?? 10;
                 tb.Cells.Clear();
@@ -390,9 +426,12 @@ public static class DocumentSerializer
                         tb.Cells.Add(row);
                     }
                 tb.Rows = tb.Cells.Count;
+                // No rows is no table, as upstream reads it (round 35) and as the HTML and RTF readers make none —
+                // so one file loads as the same document in both editors.
+                if (tb.Rows == 0) return null;
                 // The declared width pads short rows, so it is allocated too — cap it. The widest row
                 // that really exists always wins below, so a legitimate document is unaffected.
-                int maxCols = Math.Clamp(d.Columns, 1, MaxTableDimension);
+                int maxCols = Math.Clamp(d.Columns ?? 0, 1, MaxTableDimension);
                 foreach (var row in tb.Cells) if (row.Count > maxCols) maxCols = row.Count;
                 // The widest row wins within the import bounds: one wide row padded every other row out to it
                 // (upstream round 35; measured here too).
@@ -420,9 +459,16 @@ public static class DocumentSerializer
                 tb.EnsureSpanConsistency(); // the file's span VALUES are data too — see there
                 return tb;
             default:
+                // A block type this reader does not know — a newer format's — is read as a paragraph (its text, if
+                // it has any), and said so: saving the document afterwards writes it back without that block.
+                if (d.Type is not null and not "Paragraph") ReportUnknownType("block", d.Type);
                 return DtoToParagraph(d, pool);
         }
     }
+
+    private static void ReportUnknownType(string what, string type)
+        => RichEditorDiagnostics.Report(new NotSupportedException(
+            $"Unknown {what} type \"{type}\" in the document: read as plain text; saving drops what it was."));
 
     private static Paragraph DtoToParagraph(BlockDto d, Dictionary<string, (byte[] Bytes, string Mime)> pool)
     {
@@ -433,14 +479,14 @@ public static class DocumentSerializer
             MarginTop = d.MarginTop ?? 0,
             MarginBottom = d.MarginBottom ?? 0,
             MarginRight = d.MarginRight ?? 0,
-            HeadingLevel = d.HeadingLevel,
+            HeadingLevel = d.HeadingLevel ?? 0,
             Background = ColorUtil.Parse(d.Background),
-            Indent = d.Indent,
-            IsQuote = d.IsQuote,
+            Indent = d.Indent ?? 0,
+            IsQuote = d.IsQuote == true,
             // The levels RTF reads too. -1 threw out of the HTML writer — so out of every copy — and a million wrote
             // a million <ul> tags (upstream round 35; measured here too).
-            ListLevel = Math.Clamp(d.ListLevel, 0, 8),
-            ListType = Enum.TryParse<ListKind>(d.ListType, out var lk) ? lk : (d.IsListItem ? ListKind.Bullet : ListKind.None),
+            ListLevel = Math.Clamp(d.ListLevel ?? 0, 0, 8),
+            ListType = Enum.TryParse<ListKind>(d.ListType, out var lk) ? lk : (d.IsListItem == true ? ListKind.Bullet : ListKind.None),
             ListMarker = Enum.TryParse<ListMarkerStyle>(d.ListMarker, out var lm) ? lm : ListMarkerStyle.Default
         };
         if (Enum.TryParse<TextAlignment>(d.TextAlignment, out var ta)) p.TextAlignment = ta;
@@ -466,19 +512,22 @@ public static class DocumentSerializer
                         p.Inlines.Add(new InlineTable { Table = itb });
                 }
                 else
+                {
+                    if (id.Type is not null and not "Run" and not "Table") ReportUnknownType("inline", id.Type);
                     p.Inlines.Add(new Run
                     {
                         Text = id.Text,
-                        FontWeight = id.Bold ? FontWeightValues.Bold : FontWeightValues.Normal,
-                        FontStyle = id.Italic ? FontStyle.Italic : FontStyle.Normal,
-                        FontSize = id.FontSize <= 0 ? 10 : id.FontSize, // pt; body default
+                        FontWeight = id.Bold == true ? FontWeightValues.Bold : FontWeightValues.Normal,
+                        FontStyle = id.Italic == true ? FontStyle.Italic : FontStyle.Normal,
+                        FontSize = id.FontSize is { } fs && fs > 0 ? fs : 10, // pt; body default (absent, or a damaged <= 0)
                         Foreground = ColorUtil.Parse(id.Foreground),
                         Background = ColorUtil.Parse(id.Background),
                         FontFamily = id.FontFamily,
                         // A file is untrusted input: a script link is dropped as the HTML reader drops it (2026-09-24).
                         NavigateUri = id.NavigateUri is { } uri ? HtmlDocumentFormatter.SafeHref(uri) : null,
-                        TextDecorations = BuildDecorations(id.Underline, id.Strikethrough)
+                        TextDecorations = BuildDecorations(id.Underline == true, id.Strikethrough == true)
                     });
+                }
             }
         return p;
     }
@@ -512,6 +561,17 @@ public static class DocumentSerializer
     // ---- helpers ----
 
     private static double? NanToNull(double v) => double.IsNaN(v) ? (double?)null : v;
+
+    // `value`, or null (not written) when it is what every reader assumes for an absent field.
+    private static T? Unless<T>(T value, T absent) where T : struct
+        => EqualityComparer<T>.Default.Equals(value, absent) ? null : value;
+
+    private static bool HasMerge(TableBlock tb)
+    {
+        foreach (var row in tb.ColSpans) foreach (int v in row) if (v != 1) return true;
+        foreach (var row in tb.RowSpans) foreach (int v in row) if (v != 1) return true;
+        return false;
+    }
 
     private static TextDecorationFlags BuildDecorations(bool underline, bool strikethrough)
     {
@@ -596,7 +656,7 @@ internal class ImagePoolDto
 
 internal class BlockDto
 {
-    public string Type { get; set; } = "Paragraph";
+    public string? Type { get; set; } = "Paragraph"; // written as null (absent) for a paragraph
 
     // Paragraph
     public List<InlineDto>? Inlines { get; set; }
@@ -606,14 +666,14 @@ internal class BlockDto
     public double? MarginTop { get; set; }
     public double? MarginBottom { get; set; }
     public double? MarginRight { get; set; }
-    public bool IsListItem { get; set; } // legacy (read fallback); replaced by ListType
+    public bool? IsListItem { get; set; } // legacy (read fallback); replaced by ListType
     public string? ListType { get; set; }
     public string? ListMarker { get; set; }
-    public int HeadingLevel { get; set; }
+    public int? HeadingLevel { get; set; }
     public string? Background { get; set; }
-    public double Indent { get; set; }
-    public bool IsQuote { get; set; }
-    public int ListLevel { get; set; }
+    public double? Indent { get; set; }
+    public bool? IsQuote { get; set; }
+    public int? ListLevel { get; set; }
 
     // Image block
     public string? ImageRef { get; set; }
@@ -624,8 +684,8 @@ internal class BlockDto
     public string? Alt { get; set; } // accessibility description; omitted when null (format unchanged)
 
     // Table block
-    public int Rows { get; set; }
-    public int Columns { get; set; }
+    public int? Rows { get; set; } // not written: readers rebuild it from Cells
+    public int? Columns { get; set; } // not written: readers rebuild it from Cells (old files: a floor on the width)
     public List<double>? ColumnWidths { get; set; }
     public List<double>? RowHeights { get; set; }
     public List<List<BlockDto>>? Cells { get; set; }
@@ -640,19 +700,19 @@ internal class BlockDto
 
 internal class InlineDto
 {
-    public string Type { get; set; } = "Run";
+    public string? Type { get; set; } = "Run"; // written as null (absent) for a run
 
     // Run
     public string? Text { get; set; }
-    public bool Bold { get; set; }
-    public bool Italic { get; set; }
-    public double FontSize { get; set; } = 10; // pt; body default
+    public bool? Bold { get; set; }
+    public bool? Italic { get; set; }
+    public double? FontSize { get; set; } // pt; absent = the 10 pt body default
     public string? Foreground { get; set; }
     public string? Background { get; set; }
     public string? FontFamily { get; set; }
     public string? NavigateUri { get; set; }
-    public bool Underline { get; set; }
-    public bool Strikethrough { get; set; }
+    public bool? Underline { get; set; }
+    public bool? Strikethrough { get; set; }
 
     // Inline image
     public string? ImageRef { get; set; }
