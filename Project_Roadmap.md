@@ -81,7 +81,7 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 화면 패스를 픽셀 단위로(`UseExactPixelOrigin`·`SessionToControlDips`). 상세는 CHANGELOG. 반증: 렌더 진입부를 옛 두 줄로 되돌리면
 `TheScreenDrawPass_DrawsInPixelUnits` 빨강. 측정(150 %, PrintWindow 50 ms × 40, 같은 바이너리 대조군): View 1400·1800 px 옛 10,538 → 0,
 View 1300·컨트롤·툴바 1300/1400/1800 — 깜빡임 주기 변화 0(컨트롤 1300에서 시작 직후 한 프레임 54~73 px가 옛/새 모두 간헐적 — 별개).
-`fault-sweep`(AOT)은 포그라운드가 필요해 미실행 — 다음 게시 전에 돌릴 것.
+사용자 실기 확인 완료(View 넓은 창). `fault-sweep`(AOT)은 포그라운드가 필요해 미실행 — 다음 게시 전에 돌릴 것.
 
 ### 경량 JSON 작성기 (2026-10-01) — 상류 PR #62와 같은 변경, 테스트 +14, 반증 8/8
 기본값 생략·한글 비이스케이프·들여쓰기 없음·메이저 버전 거부·모르는 `Type` 보고. 스키마는 `"1.0"` 그대로. 상세는 CHANGELOG.
