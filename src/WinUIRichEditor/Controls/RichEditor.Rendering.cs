@@ -35,8 +35,8 @@ public partial class RichEditor
                 using var ds = sender.CreateDrawingSession(region);
                 // Engine zoom: scale the whole render. Content draws at logical coords, so glyphs re-rasterize
                 // crisply at this scale. The paged page transform composes with this base (see DrawPagedDocument).
-                double z = EffectiveZoom;
-                if (z != 1.0) ds.Transform = System.Numerics.Matrix3x2.CreateScale((float)z);
+                UseExactPixelOrigin(ds, EffectiveZoom);
+                LastDrawUnits = ds.Units;
                 DrawDocument(ds, region);
             }
             catch (Exception ex) when (ex.HResult == unchecked((int)0x80070057)) // E_INVALIDARG
@@ -58,6 +58,41 @@ public partial class RichEditor
     }
 
     internal int DrawPasses; // test hook: lets a test wait for a real draw pass
+    internal CanvasUnits LastDrawUnits; // test hook: the units the last screen draw pass ran in
+
+    // Puts the session in PIXEL units with the DIP scale (and the zoom) in its transform, so the content still
+    // draws in logical DIPs but the session's origin is an exact whole pixel.
+    //
+    // Why (measured 2026-10-02, 150 %): a CanvasVirtualControl session draws into a slot of XAML's shared atlas
+    // surface, and Win2D hides the slot's pixel offset in the device context's transform — in DIP units that
+    // offset is converted to DIPs as a float. The two slots a full redraw alternated between sat at y = 2 px and
+    // y = 288 px, i.e. 1.3333334 DIP (not exact) and 192 DIP (exact). Direct2D snaps each text baseline to a
+    // device pixel, and through the inexact offset the two slots rasterized the same text differently — fitted,
+    // the body lines a quarter pixel up, the heading three quarters down. So every full redraw drew all the text
+    // a fraction of a pixel off the last one, alternating (10,538 pixels of a short document's text, on every
+    // caret blink). Pixel snapping is what turns the float error into a visible step: with NoPixelSnap the two
+    // slots drew identical text — but giving up the snap that keeps text crisp is no fix. In pixel units Win2D
+    // keeps the offset in pixels, (1, 2) / (1, 288) — exact — and the two slots draw the same pixels.
+    // Which slots XAML picks depends on the surface size, which is why it showed only from a certain window
+    // width on (the slots stacked vertically once two no longer fit side by side) and never in a long document.
+    // Side by side (x = 1 / 1281) there is no vertical difference; one glyph at a horizontal subpixel boundary
+    // can still differ there (6 px measured, before and after this) — Direct2D's own float math, not the offset.
+    //
+    // Everything below draws through the transform, so nothing else changes — except what reads the session's
+    // scale: see SessionToControlDips.
+    internal static void UseExactPixelOrigin(CanvasDrawingSession ds, double zoom)
+    {
+        float dipScale = ds.Dpi / 96f; // read before the switch: in pixel units the DPI is no longer applied
+        ds.Units = CanvasUnits.Pixels;
+        ds.Transform = System.Numerics.Matrix3x2.CreateScale((float)(zoom * dipScale));
+    }
+
+    // The session's transform as a map to the CONTROL's DIPs, whichever units it draws in: a screen pass draws in
+    // pixel units (UseExactPixelOrigin) and carries the DIP scale in its transform; a print session is in DIPs.
+    internal static System.Numerics.Matrix3x2 SessionToControlDips(CanvasDrawingSession ds)
+        => ds.Units == CanvasUnits.Pixels
+            ? ds.Transform * System.Numerics.Matrix3x2.CreateScale(96f / ds.Dpi)
+            : ds.Transform;
 
     // The cell-block selection, computed ONCE per draw pass. CellBlockSelection() walks the whole
     // document twice (FindCell per endpoint); calling it per drawn paragraph made selection rendering
