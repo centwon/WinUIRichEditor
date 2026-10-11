@@ -236,14 +236,14 @@ public class ControlHostSurfaceTests
         Windows.UI.Color Get(string name) => (Windows.UI.Color)ED.GetProperty(name, NP)!.GetValue(ed)!;
         var red = Windows.UI.Color.FromArgb(255, 200, 0, 0);
 
-        ed.TextForeground = new SolidColorBrush(red);
+        ed.DefaultForeground = new SolidColorBrush(red);
         ed.CaretBrush = new SolidColorBrush(red);
         ed.SelectionBrush = new SolidColorBrush(red);
         Assert.Equal(red, Get("EffectiveTextColor"));
         Assert.Equal(red, Get("CaretColor"));
         Assert.Equal(red, Get("SelectionFill"));
 
-        ed.TextForeground = new LinearGradientBrush();
+        ed.DefaultForeground = new LinearGradientBrush();
         Assert.Equal(Colors.Black, Get("EffectiveTextColor"));
 
         var canvas = ED.GetField("_canvas", NP)!.GetValue(ed)!;

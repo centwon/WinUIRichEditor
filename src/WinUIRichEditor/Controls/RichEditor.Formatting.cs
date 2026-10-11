@@ -139,7 +139,7 @@ public partial class RichEditor
         SetFontSize(target);
     }
     /// <summary>Sets the foreground color; pass <see langword="null"/> to clear back to the automatic
-    /// default (<see cref="TextForeground"/> — matters for dark-theme hosts, where a stamped explicit
+    /// default (<see cref="DefaultForeground"/> — matters for dark-theme hosts, where a stamped explicit
     /// black would vanish against the background).</summary>
     public void SetForeground(Color? color) => ApplyStyleToSelection(r => r.Foreground = color);
     /// <summary>Sets the font family.</summary>

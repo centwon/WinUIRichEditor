@@ -6,6 +6,12 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — ⚠ `TextForeground` → `DefaultForeground` (호환 깨짐, 2026-10-12)
+
+색 없는 글자(와 목록 기호)의 기본 색 속성 이름을 상류(AvaloniaRichEditor PR #65)와 맞췄다. 같은 뜻의 `DefaultFontFamily`/
+`DefaultFontSize`와 한 묶음이 되도록 상류가 `DefaultForeground`로 정했고, 이 포트는 별칭 없이 개명한다(사용자 결정 — 포트 사용자층이 적다).
+동작은 그대로다. 호스트는 `TextForeground`/`TextForegroundProperty`를 `DefaultForeground`/`DefaultForegroundProperty`로 바꾸면 된다.
+
 ### Fixed — 전체 다시 그리기마다 글자가 반 픽셀 오르내림 (2026-10-03)
 
 1.0.0부터 있던 표시 결함. 150 %, 뷰포트보다 짧은 문서, 넓은 창(약 1350 px 이상)에서 캔버스 전체 무효화(커서 깜빡임·클릭·편집)마다

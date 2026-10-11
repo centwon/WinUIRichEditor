@@ -70,15 +70,15 @@ public partial class RichEditor
 
     /// <summary>Default text color for runs without an explicit foreground (and list markers). Defaults
     /// to black; a dark-theme host assigns a light brush. Runs with their own Foreground are unaffected.</summary>
-    public static readonly DependencyProperty TextForegroundProperty = DependencyProperty.Register(
-        nameof(TextForeground), typeof(Brush), typeof(RichEditor),
+    public static readonly DependencyProperty DefaultForegroundProperty = DependencyProperty.Register(
+        nameof(DefaultForeground), typeof(Brush), typeof(RichEditor),
         PropertyMetadata.Create(() => new SolidColorBrush(Colors.Black), OnAppearanceBrushChanged));
 
     /// <summary>Default text color for runs without an explicit foreground.</summary>
-    public Brush TextForeground
+    public Brush DefaultForeground
     {
-        get => (Brush)GetValue(TextForegroundProperty);
-        set => SetValue(TextForegroundProperty, value);
+        get => (Brush)GetValue(DefaultForegroundProperty);
+        set => SetValue(DefaultForegroundProperty, value);
     }
 
     /// <summary>Background of the editing canvas in continuous mode. Default null = transparent (the
@@ -105,7 +105,7 @@ public partial class RichEditor
         => ((RichEditor)d).InvalidateCanvas();
 
     // The effective default text color (Win2D draws take a Color, not a Brush).
-    internal Color EffectiveTextColor => BrushColor(TextForeground, Colors.Black);
+    internal Color EffectiveTextColor => BrushColor(DefaultForeground, Colors.Black);
 
     // The selection-highlight color, resolved from SelectionBrush (Win2D fills take a Color).
     private Color SelectionFill => BrushColor(SelectionBrush, Color.FromArgb(80, 0, 120, 215));
