@@ -78,7 +78,8 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 5. 아래 "알려진 한계"의 미수정 항목.
 6. **`TextForeground` → `DefaultForeground` 개명(2026-10-12, 호환 깨짐)** — 상류 PR #65가 포크(olivierjc) 기여를 받으며
    `DefaultFontFamily`/`DefaultFontSize`와 같은 줄의 이름으로 정했고, 사용자 결정으로 포트를 별칭 없이 맞췄다. 1.2.0(NuGet)에 이미
-   나간 이름이라 ⚠ **API 동결(1.0) 이후 첫 제거** — 다음 NuGet 게시는 SemVer상 메이저(2.0.0)이거나, 그 전에 `[Obsolete]` 별칭을 되살릴 것.
+   나간 이름이라 ⚠ **API 동결(1.0) 이후 첫 제거**. 별칭은 두지 않기로 했다(사용자 결정 10-12). 게시할 때 정할 것은 하나 —
+   2.0.0으로 올릴지, 1.x로 내고 CHANGELOG에 SemVer 예외로 적을지.
 
 ### 반 픽셀 오르내림 백포트 (2026-10-03) — KanuDoc `42f944d`, 테스트 1001, 반증 완료
 화면 패스를 픽셀 단위로(`UseExactPixelOrigin`·`SessionToControlDips`). 상세는 CHANGELOG. 반증: 렌더 진입부를 옛 두 줄로 되돌리면
