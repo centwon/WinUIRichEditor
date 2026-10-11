@@ -16,7 +16,7 @@ namespace WinUIRichEditor.Controls;
 // in continuous coordinates and draws each block. Caret/selection/tables grow on this in later phases.
 public partial class RichEditor
 {
-    // The fixed fallback; actual drawing uses EffectiveTextColor (TextForeground DP, themeable).
+    // The fixed fallback; actual drawing uses EffectiveTextColor (DefaultForeground DP, themeable).
     private static readonly Color DefaultTextColor = Color.FromArgb(255, 0, 0, 0);
     private static readonly Color GrayBorderColor = Color.FromArgb(255, 128, 128, 128);
     private static readonly Color QuoteBarColor = Colors.Silver;

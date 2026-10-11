@@ -60,12 +60,12 @@ public class ControlThreadAffinityTests
 
         Assert.Empty(shared);
         // The premise: the editor has brush properties with defaults for this to compare.
-        Assert.NotNull(new RichEditor().TextForeground);
+        Assert.NotNull(new RichEditor().DefaultForeground);
     });
 
     // The real thing: a second XAML thread — a window of its own — builds an editor and a toolbar after the first
     // thread already made one of each, reads the editor's brushes and syncs the toolbar. It threw RPC_E_WRONG_THREAD
-    // at "read TextForeground" (editor) and "build a toolbar" (toolbar) before the fix.
+    // at "read DefaultForeground" (editor) and "build a toolbar" (toolbar) before the fix.
     [Fact]
     public void AnEditorAndAToolbar_OnASecondUiThread_UseTheirOwnBrushes()
     {
@@ -87,7 +87,7 @@ public class ControlThreadAffinityTests
                 step = "construct";
                 var ed = new RichEditor();
                 step = "read the brushes";
-                _ = ((SolidColorBrush)ed.TextForeground).Color;
+                _ = ((SolidColorBrush)ed.DefaultForeground).Color;
                 _ = ((SolidColorBrush)ed.CaretBrush).Color;
                 _ = ((SolidColorBrush)ed.SelectionBrush).Color;
                 step = "build a toolbar";
@@ -111,7 +111,7 @@ public class ControlThreadAffinityTests
     public void AHostBrush_StillWins() => UiThread.Run(() =>
     {
         var mine = new SolidColorBrush(Microsoft.UI.Colors.White);
-        var ed = new RichEditor { TextForeground = mine };
-        Assert.Same(mine, ed.TextForeground);
+        var ed = new RichEditor { DefaultForeground = mine };
+        Assert.Same(mine, ed.DefaultForeground);
     });
 }
