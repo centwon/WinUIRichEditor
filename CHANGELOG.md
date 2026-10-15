@@ -6,6 +6,21 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — 데이터 손실과 저장이 늘 실패하는 문서 (2026-10-15)
+
+- **JSON 문서의 double 범위를 넘는 수(`1e400`)가 무한대로 읽혔다** — JSON으로 쓸 수 없는 값이라 문서는 열리고 그 뒤 모든 저장이
+  실패했다. 이제 타입이 맞지 않는 다른 값처럼 열 때 거부한다(`JsonException`).
+- **HTML: 인라인 표를 담은 제목·서식 문단이 왕복할 때마다 서식을 잃었다.** 읽기가 인라인 표(와 그 셀의 `<p>`)를 블록으로 세어
+  `<h1>`/`<p>`를 그냥 컨테이너로 읽고 제목 수준·정렬·여백을 버렸다. 쓰기는 빈 런 뒤의 표를 문단의 시작으로 표시하지 않아,
+  읽을 때 표가 위 문단으로 합쳐졌다.
+- **앱 사이 그림 붙여넣기가 크기와 인라인 여부를 잃었다.** 데이터가 복사한 앱을 떠나면(다른 프로세스, `Clipboard.Flush` 뒤)
+  Windows는 사설 형식을 UTF-16 스트림으로 돌려주는데 같은 프로세스의 문자열 형태만 읽어, 붙여넣기가 다시 인코딩한 비트맵으로
+  떨어졌다. 두 형태를 다 읽는다.
+- **한 셀 안 여러 문단을 복사하면 문단 서식을 잃었다** — 글머리표 목록이 평범한 줄로 붙었다. 인라인 표 셀의 두 문단에 걸친
+  선택은 첫 문단에서 잘렸다. 이제 문단마다 서식째 복사한다.
+- 테스트: `DataLossFixesTests`(JSON·HTML), `DataLossFixesClipboardTests`(클립보드), `DataLossFixesEditorTests`(복사) — 모두 수정 전 빨강 확인.
+  문서 퍼즈 2,000시드 통과.
+
 ### Changed — ⚠ `TextForeground` → `DefaultForeground` (호환 깨짐, 2026-10-12)
 
 색 없는 글자(와 목록 기호)의 기본 색 속성 이름을 상류(AvaloniaRichEditor PR #65)와 맞췄다. 같은 뜻의 `DefaultFontFamily`/

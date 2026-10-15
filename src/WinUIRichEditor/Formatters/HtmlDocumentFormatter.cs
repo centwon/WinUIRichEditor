@@ -528,11 +528,19 @@ public static class HtmlDocumentFormatter
     // Block-level content only — BlockOrMedia without <img>. The distinction is what separates "this
     // element is a container of paragraphs" from "this element IS a paragraph that happens to hold a
     // picture", and only the second can carry its formatting onto what the walk produces.
+    // Our own INLINE table is not block content either: it sits on its paragraph's text line, and the <p>s in its
+    // cells belong to the table, not to the element holding it. Counted as a block (and descended into), it made an
+    // <h1> or a styled <p> holding an inline table a mere container, so the heading level, style and alignment were
+    // dropped and the next cycle wrote a plain <p> (fuzz seeds 1008 and 4857).
     private static bool HasBlockChild(HtmlNode n)
     {
         foreach (var c in n.ChildNodes)
+        {
+            if (c.Name.Equals("table", StringComparison.OrdinalIgnoreCase) && c.GetAttributeValue("data-are-inline", "") == "1")
+                continue;
             if ((BlockOrMedia.Contains(c.Name) && !c.Name.Equals("img", StringComparison.OrdinalIgnoreCase))
                 || HasBlockChild(c)) return true;
+        }
         return false;
     }
 
@@ -1192,8 +1200,14 @@ public static class HtmlDocumentFormatter
         // `first` tells an inline table it OPENS this paragraph: an HTML parser closes the <p>
         // when the <table> starts, so on import there is no pending paragraph and the marker's
         // reattachment would otherwise grab whatever paragraph precedes it.
+        // "First" means the first inline that writes anything: an empty run before the table writes nothing, and
+        // counting it left the table unmarked, so the reader merged it into the paragraph above.
+        bool opens = true;
         for (int i = 0; i < p.Inlines.Count; i++)
-            EmitInline(sb, p.Inlines[i], i == 0, i == p.Inlines.Count - 1, tag[0] == 'h' ? p.HeadingLevel : 0);
+        {
+            EmitInline(sb, p.Inlines[i], opens, i == p.Inlines.Count - 1, tag[0] == 'h' ? p.HeadingLevel : 0);
+            if (!EmitsNothing(p.Inlines[i])) opens = false;
+        }
         // The marker tells only THIS reader about the blank line. An element with no content has zero height, so
         // in a browser the author's blank line (or blank list item) was invisible — upstream measured the gap
         // across it as the same 16px as between any two paragraphs (round 9; ported 2026-09-24). The <br> gives it
@@ -1203,6 +1217,10 @@ public static class HtmlDocumentFormatter
         sb.Append($"</{tag}>");
         if (newlineAfter) sb.Append('\n');
     }
+
+    // An inline the reader gets nothing back from: an empty run (at most an empty <b></b>), or a picture with no image.
+    private static bool EmitsNothing(Inline inline)
+        => inline is Run { Text: null or "" } || (inline is InlineImage im && im.RawBytes == null && im.Image == null);
 
     // Whether a cell paragraph has to go out as its own element. The bare-inline form is kept for plain
     // cell text — it is what makes a one-line cell come back as one line, and its whitespace rules were
@@ -1299,8 +1317,12 @@ public static class HtmlDocumentFormatter
                         cellLists.CloseAll();
                         // Same boundary rule as a top-level paragraph: a <td>'s content is parsed as
                         // inline, so a space at either end of it is dropped unless it goes out non-breaking.
+                        bool opens = true; // as for a top-level paragraph
                         for (int i = 0; i < plain.Inlines.Count; i++)
-                            EmitInline(sb, plain.Inlines[i], i == 0, i == plain.Inlines.Count - 1);
+                        {
+                            EmitInline(sb, plain.Inlines[i], opens, i == plain.Inlines.Count - 1);
+                            if (!EmitsNothing(plain.Inlines[i])) opens = false;
+                        }
                     }
                     else if (cblk is ImageBlock cib && (cib.RawBytes != null || cib.Image != null))
                     { cellLists.CloseAll(); AppendImgTag(sb, cib.RawBytes, cib.MimeType, cib.RawBytes == null ? cib.Image : null, cib.Width, cib.Height, cib.AltText); }
