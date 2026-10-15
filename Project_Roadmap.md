@@ -89,7 +89,7 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
   이동·측정이 예외 없이 지나가 크래시가 아니므로 넣지 않음.
 - **남은 것**: AOT 동등성 스윕(GUI를 앞으로 가져와 입력을 보냄 — 게시 전에).
 
-### 반 픽셀 오르내림 백포트 (2026-10-03) — KanuDoc `42f944d`, 테스트 1001, 반증 완료
+### 반 픽셀 오르내림 수정 (2026-10-03) — 테스트 1001, 반증 완료
 화면 패스를 픽셀 단위로(`UseExactPixelOrigin`·`SessionToControlDips`). 상세는 CHANGELOG. 반증: 렌더 진입부를 옛 두 줄로 되돌리면
 `TheScreenDrawPass_DrawsInPixelUnits` 빨강. 측정(150 %, PrintWindow 50 ms × 40, 같은 바이너리 대조군): View 1400·1800 px 옛 10,538 → 0,
 View 1300·컨트롤·툴바 1300/1400/1800 — 깜빡임 주기 변화 0(컨트롤 1300에서 시작 직후 한 프레임 54~73 px가 옛/새 모두 간헐적 — 별개).
