@@ -415,7 +415,7 @@ public partial class RichEditor
         if (!view.Contains(ImageBytesFormat)) return null;
         try
         {
-            if (await RetryWhileClipboardBusyAsync(() => view.GetDataAsync(ImageBytesFormat).AsTask()) is string b64 && b64.Length > 0)
+            if (await ReadClipboardStringAsync(view, ImageBytesFormat) is { Length: > 0 } b64)
                 return Convert.FromBase64String(b64);
         }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); }
@@ -427,7 +427,7 @@ public partial class RichEditor
     {
         if (!view.Contains(ImageMetaFormat)) return null;
         string? meta;
-        try { meta = await RetryWhileClipboardBusyAsync(() => view.GetDataAsync(ImageMetaFormat).AsTask()) as string; }
+        try { meta = await ReadClipboardStringAsync(view, ImageMetaFormat); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return null; }
         if (string.IsNullOrEmpty(meta)) return null;
         var parts = meta.Split(';');
@@ -438,6 +438,29 @@ public partial class RichEditor
             || !double.TryParse(parts[2], System.Globalization.NumberStyles.Float, inv, out double h))
             return null;
         return (inl == 1, w, h);
+    }
+
+    // A string we put on the clipboard under a private format. Only while the DataPackage is still ours and
+    // unflushed does it come back as that string; once Windows holds it — a copy in ANOTHER app, or after
+    // Clipboard.Flush() — it is a stream of UTF-16LE with a terminating NUL. Reading only the string form made
+    // the private image formats work inside one process and never between apps (2026-10-15).
+    private static async Task<string?> ReadClipboardStringAsync(DataPackageView view, string format)
+    {
+        object data = await RetryWhileClipboardBusyAsync(() => view.GetDataAsync(format).AsTask());
+        if (data is string s) return s;
+        Windows.Storage.Streams.IRandomAccessStream stream;
+        try { stream = WinRT.CastExtensions.As<Windows.Storage.Streams.IRandomAccessStream>(data); }
+        catch (Exception) { return null; } // null, or neither form: not something we wrote
+        using (stream)
+        {
+            uint size = (uint)stream.Size;
+            if (size == 0) return null;
+            var bytes = new byte[size];
+            using var reader = new Windows.Storage.Streams.DataReader(stream);
+            await reader.LoadAsync(size);
+            reader.ReadBytes(bytes);
+            return System.Text.Encoding.Unicode.GetString(bytes).TrimEnd('\0');
+        }
     }
 
     private static async Task<byte[]?> ReadClipboardBitmapBytesAsync(DataPackageView view)
@@ -607,9 +630,8 @@ public partial class RichEditor
     // A trimmed FlowDocument for the current selection that preserves each paragraph's
     // list/heading/alignment/indent/background AND inline images, and keeps whole tables / block images /
     // dividers the selection spans — so internal copy/paste (and copied-out HTML) round-trips structure,
-    // not just runs. Mirrors the Avalonia original's CaptureBlockStructure + CloneParagraphRange. Falls back
-    // to the inline-only builder for intra-cell selections and anything whose top-level block we can't
-    // resolve (e.g. inside an inline table).
+    // not just runs. Mirrors the Avalonia original's CaptureBlockStructure + CloneParagraphRange. A selection
+    // inside one cell or one inline table is taken paragraph by paragraph (FlattenSelection).
     private FlowDocument BuildSelectionDocument(TextRange range)
     {
         var doc = new FlowDocument();
@@ -629,14 +651,15 @@ public partial class RichEditor
             var b = Document.Blocks[si];
             if (b is Paragraph)
             {
-                int to = ReferenceEquals(sp, ep) ? range.End.Offset : GetParagraphLength(sp);
-                doc.Blocks.Add(CloneParagraphRange(sp, range.Start.Offset, to));
+                // An endpoint inside the paragraph's inline table: its cell paragraphs, each with its format.
+                if (!ReferenceEquals(b, sp) || !ReferenceEquals(b, ep)) return FlattenSelection(range);
+                doc.Blocks.Add(CloneParagraphRange(sp, range.Start.Offset, range.End.Offset));
                 return doc;
             }
             // A selection confined to a single table cell is intra-cell text, not a table copy.
             if (b is TableBlock && FindCell(sp) is { } sc && FindCell(ep) is { } ec
                 && ReferenceEquals(sc.tb, ec.tb) && sc.r == ec.r && sc.c == ec.c)
-                return BuildInlineSelectionDocument(range);
+                return FlattenSelection(range);
             // Whole non-paragraph block (table across cells, block image, divider).
             if (b.Clone() is Block whole) doc.Blocks.Add(whole);
             return doc;
@@ -649,11 +672,31 @@ public partial class RichEditor
             var b = Document.Blocks[k];
             if (b is Paragraph para)
             {
-                int from = k == si ? range.Start.Offset : 0;
-                int to = k == ei ? range.End.Offset : GetParagraphLength(para);
+                // An endpoint inside this paragraph's inline table takes the paragraph from its start / to its end.
+                int from = k == si && ReferenceEquals(para, sp) ? range.Start.Offset : 0;
+                int to = k == ei && ReferenceEquals(para, ep) ? range.End.Offset : GetParagraphLength(para);
                 doc.Blocks.Add(CloneParagraphRange(para, from, to));
             }
             else if (b.Clone() is Block whole) doc.Blocks.Add(whole);
+        }
+        return doc;
+    }
+
+    // The paragraphs from the selection's start to its end in document order, each trimmed to the selection with its
+    // paragraph format — the structure between them (cells, tables) is not kept. For a selection inside one table cell
+    // or one paragraph's inline table: taken as bare runs, a bulleted list copied out of a cell pasted as plain lines,
+    // and a selection across an inline table cell's two paragraphs was cut at the first (2026-10-15).
+    private FlowDocument FlattenSelection(TextRange range)
+    {
+        var all = AllParagraphs();
+        int si = range.Start.Paragraph != null ? all.IndexOf(range.Start.Paragraph) : -1;
+        int ei = range.End.Paragraph != null ? all.IndexOf(range.End.Paragraph) : -1;
+        if (si < 0 || ei < 0 || si > ei) return BuildInlineSelectionDocument(range);
+        var doc = new FlowDocument();
+        for (int i = si; i <= ei; i++)
+        {
+            var p = all[i];
+            doc.Blocks.Add(CloneParagraphRange(p, i == si ? range.Start.Offset : 0, i == ei ? range.End.Offset : GetParagraphLength(p)));
         }
         return doc;
     }
