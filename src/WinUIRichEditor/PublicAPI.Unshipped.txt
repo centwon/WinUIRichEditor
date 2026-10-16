@@ -4,3 +4,4 @@
 WinUIRichEditor.Controls.RichEditor.DefaultForeground.get -> Microsoft.UI.Xaml.Media.Brush!
 WinUIRichEditor.Controls.RichEditor.DefaultForeground.set -> void
 static readonly WinUIRichEditor.Controls.RichEditor.DefaultForegroundProperty -> Microsoft.UI.Xaml.DependencyProperty!
+WinUIRichEditor.Controls.RichEditor.NotifyDocumentChanged() -> void

@@ -379,7 +379,7 @@ public partial class RichEditor : ContentControl
             : (_scroll.ViewportWidth is var vw && vw > 1 ? vw / z : A4ContentWidth);
         _layoutWidth = Math.Max(50, width);
 
-        _measuredHeight = MeasureContentHeight(_layoutWidth);
+        _measuredHeight = FiniteExtent(MeasureContentHeight(_layoutWidth));
         _pageBreaks = null; // recompute lazily at the new width
         ClearRecordedGeometry(); // positions may have moved; the next draw re-records what's visible
         _paraIndexMap = null;    // belt-and-braces alongside MarkTextChanged (see ComparePositions)
@@ -389,16 +389,31 @@ public partial class RichEditor : ContentControl
         {
             int pages = EnsurePageBreaks().Count;
             // Canvas at least as wide as the viewport so the page centers on a grey desk (with side margins).
-            _canvas.Width = Math.Max(PaperWidth * z, _scroll.ViewportWidth);
-            _canvas.Height = (pages * (PaperHeight + PageGap) + PageGap) * z;
+            _canvas.Width = CanvasExtent(Math.Max(PaperWidth * z, _scroll.ViewportWidth));
+            _canvas.Height = CanvasExtent((pages * (PaperHeight + PageGap) + PageGap) * z);
         }
         else
         {
-            _canvas.Width = _layoutWidth * z;
-            _canvas.Height = _measuredHeight * z;
+            _canvas.Width = CanvasExtent(_layoutWidth * z);
+            _canvas.Height = CanvasExtent(_measuredHeight * z);
         }
         _canvas.Invalidate();
     }
+
+    // Every size and margin a document states is finite — the JSON reader refuses 1e400 — but two of them can add
+    // up past double's range, and a font size times its line spacing can on its own. An infinite or NaN canvas height
+    // is an ArgumentException out of the layout pass, so a file with two 1e308-high pictures failed to open
+    // (upstream 1.3.0 audit, AvaloniaRichEditor PR #70; measured here too).
+    private static double FiniteExtent(double h) => double.IsNaN(h) ? 0 : Math.Min(h, double.MaxValue);
+
+    // The largest canvas the framework draws. Measured 2026-10-17 (150 %, one paragraph with a stated top margin): a
+    // canvas 16,700,000 DIP tall draws, one of 16,800,000 takes the process down with a stowed exception at the first
+    // frame — 2^24 = 16,777,216, the last integer a float holds exactly, so presumably the compositor's float
+    // coordinates. A Height of 1e39 is refused outright (ArgumentException), and so is infinity. A document taller
+    // than this — about 14,000 A4 pages of text, or one picture or margin a file states as 1e8 — shows only its
+    // first 16 million DIP instead of crashing. Below the limit for margin, as a zoom can land the product anywhere.
+    private const double MaxCanvasExtent = 16_000_000;
+    private static double CanvasExtent(double v) => double.IsNaN(v) ? 0 : Math.Min(v, MaxCanvasExtent);
 
     private void ClearLayoutCache()
     {
@@ -665,12 +680,19 @@ public partial class RichEditor : ContentControl
         if (!double.IsNaN(lh) && lh > 0 && (fixedHeight || maxObjectH <= lh))
         {
             layout.LineSpacingMode = CanvasLineSpacingMode.Uniform;
-            layout.LineSpacing = (float)lh;
-            layout.LineSpacingBaseline = (float)(lh * BaselineFraction);
+            layout.LineSpacing = LayoutDip(lh);
+            layout.LineSpacingBaseline = LayoutDip(lh) * (float)BaselineFraction;
         }
 
         return layout;
     }
+
+    // DirectWrite is handed a float: a line height of 1e308 (a font size a file states as 1e308 × the spacing ratio,
+    // or "line-height:Infinity" in HTML) became infinity on the way, and a layout with infinite uniform line spacing
+    // never came back — the UI thread hung (upstream 1.3.0 audit's sizes, measured here). Bounded where the layout
+    // is built; the model keeps the stated value. An infinite font size or inline-object size alone was measured
+    // harmless (guarded by the same tests), so only the spacing is bounded.
+    private static float LayoutDip(double v) => (float)(double.IsNaN(v) ? 0 : Math.Clamp(v, 0, MaxCanvasExtent));
 
     // The resolved line height in DIPs. LineSpacing (HWP ratio of the largest font size) takes priority
     // over LineHeight (absolute DIPs); with neither set, the HWP default 160%.

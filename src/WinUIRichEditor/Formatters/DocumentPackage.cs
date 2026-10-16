@@ -18,6 +18,11 @@ public static class DocumentPackage
     // The largest picture entry read back. Well past any photograph's encoded size.
     internal const long MaxPictureBytes = 256L * 1024 * 1024;
 
+    // The largest document.json read back — the same bound (upstream user decision, 2026-10-17). Without pictures,
+    // which are entries of their own, a document's JSON is a few MB; inflated without a bound, a 379 KB package came
+    // out at 1.9 GB (upstream 1.3.0 audit, AvaloniaRichEditor PR #70).
+    internal const long MaxDocumentBytes = 256L * 1024 * 1024;
+
     /// <summary>Writes <paramref name="document"/> to <paramref name="destination"/> as a .flow
     /// package. The stream is left open.</summary>
     public static void Save(FlowDocument document, Stream destination)
@@ -83,8 +88,21 @@ public static class DocumentPackage
             // blank over the original (decided 2026-09-12). Reported like any other unreadable package.
             if (docEntry == null) throw new InvalidDataException("The zip has no document.json.");
             FlowDocumentDto? dto;
-            using (var s = docEntry.Open())
-                dto = JsonSerializer.Deserialize(s, DocumentJsonContext.Default.FlowDocumentDto);
+            using (var json = new MemoryStream())
+            {
+                using (var s = docEntry.Open())
+                {
+                    var chunk = new byte[81920];
+                    int n;
+                    while ((n = s.Read(chunk, 0, chunk.Length)) > 0)
+                    {
+                        json.Write(chunk, 0, n);
+                        if (json.Length > MaxDocumentBytes) throw new InvalidDataException("The package's document.json is too large.");
+                    }
+                }
+                json.Position = 0;
+                dto = JsonSerializer.Deserialize(json, DocumentJsonContext.Default.FlowDocumentDto);
+            }
 
             // Only the pictures the document USES are read, each up to MaxPictureBytes: every images/ entry used to be
             // inflated whole, so a 63 KB package held 64 MB of zeros nothing referred to (upstream round 35; measured
