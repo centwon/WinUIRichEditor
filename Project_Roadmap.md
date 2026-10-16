@@ -99,7 +99,7 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
   여백 상자는 두 모드에서 같다) — `ViewModeTests.PageView_PutsTheDocumentOnAPage_ContinuousDoesNot`이 처음으로 쪽 배치를 본다.
 - **AOT 동등성 스윕**(브랜치 `fix/upstream-1.3.0-audit-backport`, ViewMode 포함, 2026-10-17): `control`·`toolbar` 모두 되읽은 문서(711자)와
   여백/글꼴 프로브가 JIT와 바이트 동일, AOT 전용 fault는 기존 `LineMetricsOf` 하나뿐(1.2.0·10-03 스윕과 같음).
-- **남은 것**: 실기 확인(데모 View 페이지 = 쪽, Toolbar/Control 페이지 = 연속에 용지 칸 없음).
+- **사용자 실기 확인 완료**(2026-10-17): 데모 View 페이지 = 쪽(용지·방향·여백 칸, 연속으로 바꾸면 흐름 배치), Toolbar/Control 페이지 = 연속에 용지 칸 없음.
 
 ### 데이터 손실 수정 (2026-10-15) — 테스트 1007 → 1010(+클래스 셋), 반증 완료
 사용자 결정으로 게시할 1.3 판에 넣는다: 범위 밖 숫자(`1e400`) 읽기 거부, 인라인 표를 담은 제목·문단의 HTML 서식 손실, 앱 사이 그림
