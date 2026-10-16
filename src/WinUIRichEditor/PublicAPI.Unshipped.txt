@@ -5,3 +5,9 @@ WinUIRichEditor.Controls.RichEditor.DefaultForeground.get -> Microsoft.UI.Xaml.M
 WinUIRichEditor.Controls.RichEditor.DefaultForeground.set -> void
 static readonly WinUIRichEditor.Controls.RichEditor.DefaultForegroundProperty -> Microsoft.UI.Xaml.DependencyProperty!
 WinUIRichEditor.Controls.RichEditor.NotifyDocumentChanged() -> void
+WinUIRichEditor.Controls.RichEditor.ViewMode.get -> WinUIRichEditor.Controls.RichEditorViewMode
+WinUIRichEditor.Controls.RichEditor.ViewMode.set -> void
+static readonly WinUIRichEditor.Controls.RichEditor.ViewModeProperty -> Microsoft.UI.Xaml.DependencyProperty!
+WinUIRichEditor.Controls.RichEditorViewMode
+WinUIRichEditor.Controls.RichEditorViewMode.Continuous = 0 -> WinUIRichEditor.Controls.RichEditorViewMode
+WinUIRichEditor.Controls.RichEditorViewMode.Page = 1 -> WinUIRichEditor.Controls.RichEditorViewMode

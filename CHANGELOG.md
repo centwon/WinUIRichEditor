@@ -6,6 +6,18 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — ⚠ 맨 컨트롤은 늘 연속 보기, 쪽은 `ViewMode = Page`에서 (2026-10-17)
+
+상류(AvaloniaRichEditor PR #68)와 같은 변경. 새 공개 `RichEditor.ViewMode`(`RichEditorViewMode { Continuous, Page }`, 기본
+`Continuous`). **쪽으로 그리는 것은 `ViewMode == Page`이고 용지가 연속이 아닐 때만이다** — 작은 편집 상자에 A4로 저장된 문서를
+열면 책상 위 A4 쪽이 그려지던 것. 용지 설정(`PageSize`·방향·여백·머리글·바닥글)은 문서 것으로 그대로 읽고 저장하고 인쇄한다.
+- `RichEditorView`는 쪽 보기로 연다(전과 같게 보인다).
+- 툴바의 용지·방향·여백 칸은 대상이 쪽 보기일 때만 있다(보기 모드가 바뀌면 툴바를 다시 만든다). 줌·화면 맞춤은 그대로.
+- ⚠ **맨 컨트롤에 `PageSize`로 쪽을 보이던 호스트는 `ViewMode = RichEditorViewMode.Page`를 더한다.**
+- 테스트: `ViewModeTests` 6 — 수정 전 빨강 3(나머지는 가드), 네 변경을 각각 되돌리면 빨강. 쪽 보기를 전제한 기존 테스트 일곱 군데에
+  `ViewMode = Page`를 넣었다. 그중 `ControlZoomTests`의 쪽 모드 왕복은 넣지 않아도 초록이었다 — 쪽을 전혀 그리지 않게 해도 쪽 보기
+  전제 테스트가 모두 초록이라, 실제 쪽 배치(책상 간격·위 여백만큼 내려감)를 보는 테스트를 새로 넣었다.
+
 ### Added — `NotifyDocumentChanged()`, `InsertText`는 undo 단계 하나 (2026-10-17)
 
 상류(AvaloniaRichEditor PR #67)와 같은 공개 메서드. 모델은 변경 알림이 없어서(`Inlines`·셀 `Blocks`는 `List`) 호스트가

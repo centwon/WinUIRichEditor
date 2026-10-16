@@ -89,6 +89,9 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
 - `PageSize` / `PageOrientation` / **`PageMargin`** (millimetres, saved with the document and read/written by
   RTF with the paper size) / `ShowPageBoundaries`, stacked page view with **line-aware page breaks**,
   headers / footers / page numbers
+- **`ViewMode`**: a bare `RichEditor` always reflows (`Continuous`, the default) whatever paper the document names;
+  pages are drawn with `ViewMode = RichEditorViewMode.Page`, which `RichEditorView` opens in. The page setup is the
+  document's and is saved and printed either way
 - **Vector printing** (`CanvasPrintDocument`, printer resolution, real text — the dialog opens under Native
   AOT too) and **`SavePdf(stream)` → a text PDF** via "Microsoft Print to PDF", no dialog; plus
   `RenderPrintPage(i, dpi)` for an offscreen bitmap

@@ -139,11 +139,12 @@ public class Release13BackportTests(ITestOutputHelper output)
             {
                 ed.LoadJson(json);
                 ed.PageSize = RichEditorPageSize.A4;
+                ed.ViewMode = RichEditorViewMode.Page;
                 T.GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
             });
             WaitForDraw(ed);
         }
-        finally { UiThread.Run(() => { ed.PageSize = RichEditorPageSize.Continuous; ed.Document = new FlowDocument(); }); }
+        finally { UiThread.Run(() => { ed.ViewMode = RichEditorViewMode.Continuous; ed.PageSize = RichEditorPageSize.Continuous; ed.Document = new FlowDocument(); }); }
     }
 
     // Pasted HTML reaches the same sizes without any file: double.TryParse reads "Infinity" and "1e308".

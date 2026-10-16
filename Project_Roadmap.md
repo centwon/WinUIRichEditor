@@ -94,8 +94,10 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
   전체 1041 초록, 문서·명령 퍼즈 20,000시드 통과.
   ⚠ 반증 스크립트가 `dotnet test` 출력을 파이썬에서 읽을 때 한글 로캘이면 cp949라 판정이 깨진다 —
   `DOTNET_CLI_UI_LANGUAGE=en`으로 돌릴 것.
-- **남은 것**: 상류 #68 `ViewMode`(맨 컨트롤은 늘 연속, 쪽은 `ViewMode = Page`) — 기본 동작이 바뀌는 변경이라 들일지 사용자 결정 대기.
-  게시 전 AOT 동등성 스윕.
+- **#68 `ViewMode`**(사용자 결정 2026-10-17: 들임) — 맨 컨트롤은 늘 연속, 쪽은 `ViewMode = Page`, `RichEditorView`는 쪽으로 연다.
+  툴바 용지 칸은 쪽 보기에서만. ⚠ 발견: 쪽 보기를 전제한 기존 테스트가 **쪽을 아예 안 그려도 모두 초록**이었다(왕복·맞춤 배율·
+  여백 상자는 두 모드에서 같다) — `ViewModeTests.PageView_PutsTheDocumentOnAPage_ContinuousDoesNot`이 처음으로 쪽 배치를 본다.
+- **남은 것**: 게시 전 AOT 동등성 스윕, 실기 확인(데모 View 페이지 = 쪽, Toolbar/Control 페이지 = 연속에 용지 칸 없음).
 
 ### 데이터 손실 수정 (2026-10-15) — 테스트 1007 → 1010(+클래스 셋), 반증 완료
 사용자 결정으로 게시할 1.3 판에 넣는다: 범위 밖 숫자(`1e400`) 읽기 거부, 인라인 표를 담은 제목·문단의 HTML 서식 손실, 앱 사이 그림

@@ -61,7 +61,7 @@ public class BindablePropertyTests
     {
         UiThread.Run(() =>
         {
-            var tb = new RichEditorToolbar { Target = new RichEditor() };
+            var tb = new RichEditorToolbar { Target = new RichEditor { ViewMode = RichEditorViewMode.Page } }; // the paper fields need page view
             Bind(tb, RichEditorToolbar.ToolbarLevelProperty, ToolbarLevel.Maximum);
             Assert.NotNull(Field<ComboBox>(tb, "_paper")); // Maximum shows the page controls
             Bind(tb, RichEditorToolbar.ShowPageControlsProperty, false);
