@@ -277,6 +277,11 @@ public partial class RichEditor
             else if (right > viewRight - margin) newH = right - _scroll.ViewportWidth + margin;
         }
 
+        // A caret past a picture or margin a file states as 1e308 (or "Infinity" in pasted HTML) sits at a non-finite
+        // offset, and ChangeView throws ArgumentException on one — out of the paste (upstream 1.3.0 audit's sizes,
+        // measured here). The canvas stops at MaxCanvasExtent anyway.
+        if (newV is double nv && !double.IsFinite(nv)) newV = double.IsNaN(nv) ? null : MaxCanvasExtent;
+        if (newH is double nh && !double.IsFinite(nh)) newH = double.IsNaN(nh) ? null : MaxCanvasExtent;
         if (newV != null || newH != null) _scroll.ChangeView(newH, newV, null);
     }
 }

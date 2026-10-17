@@ -167,6 +167,49 @@ public partial class RichEditor
         AfterEdit();
     }
 
+    /// <summary>Tells the editor that the host changed <see cref="Document"/> in place — added, removed or edited
+    /// blocks, inlines or run text — rather than through the editor's own commands. The model raises no change
+    /// notifications, so call this after such an edit and before the user goes on editing. Without it the caret can
+    /// keep pointing at a removed paragraph (what the user types next is lost), Enter in an added paragraph becomes a
+    /// line break, and a table added at the end has no paragraph after it to type into.
+    /// <para>The caret and selection stay where they were if their paragraph is still in the document, and go to the
+    /// end of the document otherwise. Undo history is kept, but the host's edit is not an undo step of its own:
+    /// undoing an edit made before it restores the document as it was then, without the host's edit.</para></summary>
+    public void NotifyDocumentChanged()
+    {
+        if (Document == null) return;
+        // What assigning a document runs (OnDocumentAssigned), minus what only a new document needs: the caret
+        // reset, the heading-format conversion of older files, and the undo reset.
+        ResetInteractionState(); // a selected object, a drag, a pending style: any may refer to what was removed
+        NormalizeTableSpans(Document.Blocks);
+        UpdateParents(Document);  // wires parents and normalizes the block lists (a paragraph after a final table)
+        ClearLayoutCache();
+
+        var paras = AllParagraphs();
+        var live = new HashSet<Paragraph>(paras);
+        TextPointer? Keep(TextPointer tp) => tp.Paragraph != null && live.Contains(tp.Paragraph)
+            ? new TextPointer(tp.Paragraph, Math.Clamp(tp.Offset, 0, GetParagraphLength(tp.Paragraph)))
+            : null;
+        var caret = Keep(_caret);
+        TextPointer? start = Keep(_selStart), end = Keep(_selEnd);
+        if (caret == null)
+        {
+            var last = paras.LastOrDefault();
+            caret = new TextPointer(last, last != null ? GetParagraphLength(last) : 0);
+        }
+        _caret = caret;
+        if (start == null || end == null) CollapseSelectionToCaret();
+        else { _selStart = start; _selEnd = end; }
+
+        // End a coalescing run, so the next keystroke checkpoints a document that has the host's edit in it.
+        _coalesceKey = null;
+        MarkTextChanged();
+        RelayoutToViewport();
+        RestartBlink();
+        SyncIme();
+        RaiseStatusChanged();
+    }
+
     // Swaps in a new document and resets caret/selection/undo to a clean state. Shared by Load*/Clear.
     // Setting the Document DP fires OnDocumentChanged → OnDocumentAssigned (wires parents, normalizes
     // blocks, resets caret to the first paragraph) and RelayoutToViewport.

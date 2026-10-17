@@ -81,6 +81,26 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
    나간 이름이라 ⚠ **API 동결(1.0) 이후 첫 제거**. 별칭은 두지 않기로 했다(사용자 결정 10-12). 게시할 때 정할 것은 하나 —
    2.0.0으로 올릴지, 1.x로 내고 CHANGELOG에 SemVer 예외로 적을지.
 
+### 상류 1.3.0 백포트 (2026-10-17) — 상류 PR #67·#70, 테스트 +31, 반증 완료
+상류가 1.3.0을 게시(PR #72)하며 넣은 변경을 대조했다. 상세는 CHANGELOG `[Unreleased]`.
+- **#70 마지막 감사**: 7건 중 5건이 여기도 있었다(크기 합의 무한대, BMP `int.MinValue`, 줄→자기 인라인 표 셀 선택 삭제,
+  `.flow` document.json 무제한, 중첩 표 ←/→). 20,000셀 표 멈춤은 없음(1 s), TSV 상한은 해당 없음.
+- **포트 고유 크래시 발견**: 캔버스 높이 2²⁴ DIP(16,777,216) 초과 → 첫 프레임에 stowed exception으로 프로세스 종료.
+  `MaxCanvasExtent` = 1,600만 DIP로 묶음. 측정 방법: 그림 하나의 `Height`/문단 `MarginTop`을 값별 **프로세스 하나씩** 돌린다
+  (크래시가 테스트 호스트를 통째로 죽이므로 theory로 묶으면 어느 값인지 모른다).
+- **#67**: `NotifyDocumentChanged()` 추가, 공개 `InsertText`는 호출마다 undo 단계(키 입력은 내부 `TypeText`로 전처럼 묶임).
+  기존 `ControlUndoTests` 둘은 `InsertText`를 타이핑 대용으로 쓰고 있어 `TypeText`로 바꿨다.
+- 반증: 남긴 수정 11개를 하나씩 되돌리면 각각 빨강. 글자 크기·인라인 그림 크기 상한은 되돌려도 초록이라 넣지 않았다.
+  전체 1041 초록, 문서·명령 퍼즈 20,000시드 통과.
+  ⚠ 반증 스크립트가 `dotnet test` 출력을 파이썬에서 읽을 때 한글 로캘이면 cp949라 판정이 깨진다 —
+  `DOTNET_CLI_UI_LANGUAGE=en`으로 돌릴 것.
+- **#68 `ViewMode`**(사용자 결정 2026-10-17: 들임) — 맨 컨트롤은 늘 연속, 쪽은 `ViewMode = Page`, `RichEditorView`는 쪽으로 연다.
+  툴바 용지 칸은 쪽 보기에서만. ⚠ 발견: 쪽 보기를 전제한 기존 테스트가 **쪽을 아예 안 그려도 모두 초록**이었다(왕복·맞춤 배율·
+  여백 상자는 두 모드에서 같다) — `ViewModeTests.PageView_PutsTheDocumentOnAPage_ContinuousDoesNot`이 처음으로 쪽 배치를 본다.
+- **AOT 동등성 스윕**(브랜치 `fix/upstream-1.3.0-audit-backport`, ViewMode 포함, 2026-10-17): `control`·`toolbar` 모두 되읽은 문서(711자)와
+  여백/글꼴 프로브가 JIT와 바이트 동일, AOT 전용 fault는 기존 `LineMetricsOf` 하나뿐(1.2.0·10-03 스윕과 같음).
+- **사용자 실기 확인 완료**(2026-10-17): 데모 View 페이지 = 쪽(용지·방향·여백 칸, 연속으로 바꾸면 흐름 배치), Toolbar/Control 페이지 = 연속에 용지 칸 없음.
+
 ### 데이터 손실 수정 (2026-10-15) — 테스트 1007 → 1010(+클래스 셋), 반증 완료
 사용자 결정으로 게시할 1.3 판에 넣는다: 범위 밖 숫자(`1e400`) 읽기 거부, 인라인 표를 담은 제목·문단의 HTML 서식 손실, 앱 사이 그림
 붙여넣기(사설 형식을 UTF-16 스트림으로도 읽기), 한 셀·인라인 표 셀 안 여러 문단 복사의 문단 서식(`FlattenSelection`). 상세는 CHANGELOG.

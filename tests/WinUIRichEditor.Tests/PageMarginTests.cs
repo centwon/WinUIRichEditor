@@ -259,7 +259,7 @@ public class ToolbarMarginPickerTests
     [InlineData(30.0, "MarginWidest")]
     public void TheBoxNamesTheStepInForce(double mm, string key) => UiThread.Run(() =>
     {
-        var ed = new RichEditor { Document = new FlowDocument(), PageSize = RichEditorPageSize.A4, PageMargin = new PageMargins(mm) };
+        var ed = new RichEditor { Document = new FlowDocument(), PageSize = RichEditorPageSize.A4, ViewMode = RichEditorViewMode.Page, PageMargin = new PageMargins(mm) };
         var tb = new RichEditorToolbar { Target = ed, ToolbarLevel = ToolbarLevel.Maximum };
 
         Assert.Equal(RichEditorLocalization.GetString(key), LabelAfterSync(tb));
@@ -268,7 +268,7 @@ public class ToolbarMarginPickerTests
     [Fact]
     public void AMarginThatIsNoStep_IsStatedInMillimetres() => UiThread.Run(() =>
     {
-        var ed = new RichEditor { Document = new FlowDocument(), PageSize = RichEditorPageSize.A4, PageMargin = PageMargins.Symmetric(25.4, 12.7) };
+        var ed = new RichEditor { Document = new FlowDocument(), PageSize = RichEditorPageSize.A4, ViewMode = RichEditorViewMode.Page, PageMargin = PageMargins.Symmetric(25.4, 12.7) };
         var tb = new RichEditorToolbar { Target = ed, ToolbarLevel = ToolbarLevel.Maximum };
 
         Assert.Equal("25.4 / 12.7mm", LabelAfterSync(tb));

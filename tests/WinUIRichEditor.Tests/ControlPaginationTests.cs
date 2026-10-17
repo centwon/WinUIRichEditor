@@ -28,6 +28,7 @@ public class ControlPaginationTests
         {
             Document = new FlowDocument(),
             PageSize = RichEditorPageSize.A4,
+            ViewMode = RichEditorViewMode.Page, // the page view whose breaks the printout must share
         });
         UiThread.Host(ed);
         return ed;

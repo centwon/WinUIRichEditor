@@ -108,6 +108,12 @@ public partial class RichEditorToolbar
         // its tooltip says zoom. (The original toolbar has no icon here either.)
         strip.Children.Add(_zoom);
 
+        // Paper, orientation and margins only in page view: a continuous editor draws no pages, so changing them would
+        // change nothing on screen. A host that wants them turns page view on (RichEditor.ViewMode; upstream PR #68).
+        _paper = _orient = null;
+        _marginLabel = null; _marginBox = null;
+        if (Target?.ViewMode != RichEditorViewMode.Page) return;
+
         _paper = MakeCombo(120, Loc("PaperTip"));
         foreach (var (label, _) in PaperSizes) _paper.Items.Add(new ComboBoxItem { Content = label == "PaperContinuous" ? Loc(label) : label });
         _paper.SelectionChanged += (_, _) => OnPaperChanged();
@@ -211,7 +217,7 @@ public partial class RichEditorToolbar
     private void SyncPage()
     {
         if (_zoom == null || Target == null) return;
-        bool paged = Target.PageSize != RichEditorPageSize.Continuous;
+        bool paged = Target.IsPaged;
         if (_zoomFit != null) _zoomFit.IsEnabled = paged;
         if (paged && Target.IsFitWidth) SelectByTag(_zoom, FitWidthTag);
         else

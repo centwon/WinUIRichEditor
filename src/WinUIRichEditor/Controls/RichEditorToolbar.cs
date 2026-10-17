@@ -130,6 +130,7 @@ public partial class RichEditorToolbar : UserControl
     private Button? _tableBtn, _imageBtn, _dividerBtn, _findBtn;
     private bool _suppress; // guards combo SelectionChanged while syncing toolbar <- caret state
     private bool _builtReadOnly; // read-only state captured at the last Build (to rebuild the view toolbar on toggle)
+    private RichEditorViewMode _builtViewMode; // view mode captured at the last Build (the paper fields follow it)
     private string? _fontReflected; // family last reflected into the font combo — skips the O(installed fonts) item scan per keystroke
 
     private static double[] _fontSizes = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72 };
@@ -342,11 +343,12 @@ public partial class RichEditorToolbar : UserControl
         _bulletPreview = _numberPreview = null;
         _font = _size = _heading = _align = null; _fontReflected = null;
         _spacingBox = null; _colorSwatch = _highlightSwatch = null;
-        _zoom = _paper = _orient = null; _zoomFit = null;
+        _zoom = _paper = _orient = null; _zoomFit = null; _marginLabel = null; _marginBox = null;
         _exportBtn = _importBtn = _printBtn = null;
 
         bool ro = Target?.IsReadOnly == true;
         _builtReadOnly = ro;
+        _builtViewMode = Target?.ViewMode ?? RichEditorViewMode.Continuous;
         var lvl = EffectiveLevel();
         bool normal = lvl >= ToolbarLevel.Normal;
         bool maximum = lvl >= ToolbarLevel.Maximum;
@@ -740,6 +742,8 @@ public partial class RichEditorToolbar : UserControl
         var rt = Target;
         // Read-only toggled since the last Build → rebuild (edit toolbar ⇄ view toolbar).
         if (rt != null && rt.IsReadOnly != _builtReadOnly) Content = Build();
+        // Page view toggled → rebuild: the paper, orientation and margin fields exist only in page view.
+        else if (rt != null && rt.ViewMode != _builtViewMode) Content = Build();
         if (rt == null) return;
 
         _suppress = true;

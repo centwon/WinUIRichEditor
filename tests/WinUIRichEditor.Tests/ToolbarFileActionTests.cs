@@ -154,7 +154,7 @@ public class ToolbarFileActionTests
     {
         UiThread.Run(() =>
         {
-            var ed = new RichEditor { PageSize = RichEditorPageSize.A4 };
+            var ed = new RichEditor { PageSize = RichEditorPageSize.A4, ViewMode = RichEditorViewMode.Page };
             var tb = new RichEditorToolbar { Target = ed, ToolbarLevel = ToolbarLevel.Maximum };
             ed.FitToWidth();
             Assert.True(ed.IsFitWidth);

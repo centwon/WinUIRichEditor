@@ -78,6 +78,9 @@ public class ControlZoomTests
             try
             {
                 editor.PageSize = size;
+                // Pages are drawn only in page view (upstream PR #68): a paper size alone now reflows, and the paged
+                // cases here silently measured the continuous layout.
+                editor.ViewMode = size == RichEditorPageSize.Continuous ? RichEditorViewMode.Continuous : RichEditorViewMode.Page;
                 editor.Document = doc;
                 editor.SetZoom(zoom);
                 Relayout.Invoke(editor, null);
@@ -87,6 +90,7 @@ public class ControlZoomTests
             {
                 editor.SetZoom(1.0);
                 editor.PageSize = RichEditorPageSize.Continuous;
+                editor.ViewMode = RichEditorViewMode.Continuous;
             }
         });
     }

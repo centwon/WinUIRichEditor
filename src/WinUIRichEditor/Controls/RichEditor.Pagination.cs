@@ -315,8 +315,36 @@ public partial class RichEditor
         OnLayoutAffectingChanged(d, e);
     }
 
-    /// <summary>True when a concrete (non-Continuous) paper size is set.</summary>
-    internal bool IsPaged => PageSize != RichEditorPageSize.Continuous;
+    /// <summary>Identifies the <see cref="ViewMode"/> dependency property.</summary>
+    public static readonly DependencyProperty ViewModeProperty = DependencyProperty.Register(
+        nameof(ViewMode), typeof(RichEditorViewMode), typeof(RichEditor),
+        new PropertyMetadata(RichEditorViewMode.Continuous, OnViewModeChanged));
+
+    /// <summary>How the document shows on screen: <see cref="RichEditorViewMode.Continuous"/> (the default) reflows the
+    /// text to the control's width whatever paper the document names; <see cref="RichEditorViewMode.Page"/> draws pages at
+    /// <see cref="PageSize"/> (<see cref="RichEditorView"/> opens in it). Not part of the document: the page setup is kept,
+    /// saved and printed either way.</summary>
+    public RichEditorViewMode ViewMode
+    {
+        get => (RichEditorViewMode)GetValue(ViewModeProperty);
+        set => SetValue(ViewModeProperty, value);
+    }
+
+    // A view change, not a page-setup change: nothing is recorded into the document or taken as the host's default
+    // (OnLayoutAffectingChanged does both, so it is not the callback here).
+    private static void OnViewModeChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        var ed = (RichEditor)d;
+        ed._pageBreaks = null;
+        ed.ClearLayoutCache(); // shaped at the other mode's width
+        if (ed._fitWidth) ed.FitToWidth(); // the fitted zoom differs between a page and a reflowed column
+        else ed.RelayoutToViewport();
+        ed.RaiseStatusChanged(); // the toolbar rebuilds its paper fields from this (see RichEditorToolbar.Sync)
+    }
+
+    /// <summary>True when pages are drawn: page view at a concrete (non-Continuous) paper size. Otherwise the text
+    /// reflows to the control width.</summary>
+    internal bool IsPaged => ViewMode == RichEditorViewMode.Page && PageSize != RichEditorPageSize.Continuous;
 
     // The paper's pixel size at 96 DPI, accounting for orientation. Continuous reports its A4 fallback.
     // The table itself lives in Documents.PageSetup so the RTF writer uses the very same numbers.

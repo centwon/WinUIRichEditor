@@ -85,7 +85,7 @@ public partial class RichEditorView : UserControl
 
     public RichEditorView()
     {
-        Editor = new RichEditor();
+        Editor = new RichEditor { ViewMode = RichEditorViewMode.Page }; // the view shows pages; a bare editor reflows
         // The View is the full host, so its toolbar carries everything: page/zoom + file actions.
         Toolbar = new RichEditorToolbar { ToolbarLevel = ToolbarLevel.Maximum, Target = Editor };
 
@@ -148,7 +148,7 @@ public partial class RichEditorView : UserControl
     {
         var (chars, words, line, col) = Editor.GetStatus();
         string text = string.Format(RichEditorLocalization.GetString("StatusFormat"), chars, words, line, col);
-        if (Editor.PageSize != RichEditorPageSize.Continuous)
+        if (Editor.IsPaged)
             text += "   " + string.Format(RichEditorLocalization.GetString("PageCountFormat"), Editor.GetPrintPageCount());
         _status.Text = text;
     }

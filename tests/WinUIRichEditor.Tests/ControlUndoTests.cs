@@ -20,6 +20,9 @@ public class ControlUndoTests
     private const BindingFlags NP = BindingFlags.NonPublic | BindingFlags.Instance;
     private static readonly Type T = typeof(RichEditor);
 
+    // A keystroke: the typing path, whose consecutive characters coalesce (public InsertText is a step of its own).
+    private static void TypeText(RichEditor ed, string ch) => T.GetMethod("TypeText", NP)!.Invoke(ed, new object[] { ch });
+
     private static Paragraph P(string text)
     {
         var p = new Paragraph();
@@ -64,9 +67,9 @@ public class ControlUndoTests
             var ed = NewEditor("start");
             SetCaret(ed, ed.Document!.Blocks.OfType<Paragraph>().First(), 5);
 
-            ed.InsertText("a");
-            ed.InsertText("b");
-            ed.InsertText("c");
+            TypeText(ed, "a");
+            TypeText(ed, "b");
+            TypeText(ed, "c");
             Assert.Equal("startabc", ed.GetPlainText());
 
             ed.Undo();
@@ -86,8 +89,8 @@ public class ControlUndoTests
             var ed = NewEditor("start");
             SetCaret(ed, ed.Document!.Blocks.OfType<Paragraph>().First(), 5);
 
-            ed.InsertText("a");
-            ed.InsertText("b");
+            TypeText(ed, "a");
+            TypeText(ed, "b");
             ed.InsertText("XY");
             Assert.Equal("startabXY", ed.GetPlainText());
 

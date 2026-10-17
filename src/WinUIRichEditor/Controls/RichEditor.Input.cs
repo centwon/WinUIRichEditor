@@ -163,6 +163,31 @@ public partial class RichEditor
     // ---- parent wiring + initial caret (called when Document changes) ------
     private void OnDocumentAssigned()
     {
+        ResetInteractionState();
+        if (Document != null)
+        {
+            // A document from before heading formats lived on their runs (an older file, upstream's, a host's
+            // own model) gets them now, once — the flag rides along in undo snapshots and saved files, so text
+            // the user un-bolded is never re-bolded. See HeadingStyle.Materialize.
+            HeadingStyle.Materialize(Document);
+            // A host's own model is trusted no more than a file: spans describing no grid took the editor down on
+            // its first layout, or hid cells (see TableBlock.EnsureSpanConsistency). Undo swaps in clones, which are
+            // consistent already, so this is a no-op there.
+            NormalizeTableSpans(Document.Blocks);
+            UpdateParents(Document);
+            var first = FirstParagraph();
+            _caret = new TextPointer(first, 0);
+            _selStart = new TextPointer(first, 0);
+            _selEnd = new TextPointer(first, 0);
+        }
+        else { _caret = _selStart = _selEnd = new TextPointer(null, 0); }
+    }
+
+    // Interaction state that belongs to the document as it was: a selected object, an armed drag of any kind, the
+    // format painter, a pending caret style. Dropped when a document is assigned and when the host says it changed
+    // the one in place (NotifyDocumentChanged) — any of them may refer to what the host removed.
+    private void ResetInteractionState()
+    {
         ClearObjectSelection();
         _resizingImage = null;
         _resizingInline = null;
@@ -185,23 +210,6 @@ public partial class RichEditor
         // new document's first typed text (upstream's ResetInteractionState drops the latter the same way).
         _painterFmt = null;
         _pendingCaretStyles = null;
-        if (Document != null)
-        {
-            // A document from before heading formats lived on their runs (an older file, upstream's, a host's
-            // own model) gets them now, once — the flag rides along in undo snapshots and saved files, so text
-            // the user un-bolded is never re-bolded. See HeadingStyle.Materialize.
-            HeadingStyle.Materialize(Document);
-            // A host's own model is trusted no more than a file: spans describing no grid took the editor down on
-            // its first layout, or hid cells (see TableBlock.EnsureSpanConsistency). Undo swaps in clones, which are
-            // consistent already, so this is a no-op there.
-            NormalizeTableSpans(Document.Blocks);
-            UpdateParents(Document);
-            var first = FirstParagraph();
-            _caret = new TextPointer(first, 0);
-            _selStart = new TextPointer(first, 0);
-            _selEnd = new TextPointer(first, 0);
-        }
-        else { _caret = _selStart = _selEnd = new TextPointer(null, 0); }
     }
 
     // Every table in the blocks — in cells (covered ones too) and inside inline tables — made consistent. Its own
@@ -784,7 +792,7 @@ public partial class RichEditor
         char ch = e.Character;
         if (ch < ' ' && ch != '\t') return; // control chars handled in KeyDown
         ClearObjectSelection(); // typing dismisses an image selection
-        InsertText(ch.ToString());
+        TypeText(ch.ToString());
         e.Handled = true;
     }
 
@@ -986,12 +994,19 @@ public partial class RichEditor
     }
 
     // ---- editing core -----------------------------------------------------
-    /// <summary>Inserts plain text at the caret, replacing any selection.</summary>
-    public void InsertText(string text)
+    /// <summary>Inserts plain text at the caret, replacing any selection. Each call is its own undo step.</summary>
+    public void InsertText(string text) => InsertTextCore(text, typed: false);
+
+    // The keystroke path: consecutive typed characters coalesce into one undo step. A one-character InsertText used
+    // to take the same coalescing key, so a host's insert joined the user's typing run and one Ctrl+Z took both
+    // (measured 2026-10-17, porting upstream PR #67, where InsertText pushed no step at all).
+    private void TypeText(string text) => InsertTextCore(text, typed: true);
+
+    private void InsertTextCore(string text, bool typed)
     {
         if (Document == null || IsReadOnly || _caret.Paragraph == null) return;
         if (text.Contains('\r')) text = text.Replace("\r\n", "\n").Replace('\r', '\n');
-        PushUndo(text.Length == 1 && !HasSelection && text != "\n" ? "type" : null);
+        PushUndo(typed && text.Length == 1 && !HasSelection && text != "\n" ? "type" : null);
         if (HasSelection) DeleteSelection();
         int preCaret = _caret.Offset;
         var para = _caret.Paragraph!;
@@ -1457,23 +1472,31 @@ public partial class RichEditor
         return null;
     }
 
-    // If p is a paragraph inside an inline-table cell, returns the table, its host paragraph, and the
-    // host offset of the table's U+FFFC. Else null.
+    // The nearest inline table p lies in — directly in one of its cells, or in a block table nested in one — as the
+    // table, its host paragraph and the host offset of the table's U+FFFC; null outside every inline table, where
+    // the document's caret order applies. Only the DIRECT case was recognised, and a paragraph of a table nested in
+    // an inline table's cell is in neither order (CaretParagraphsIn leaves inline tables out), so ←/→ stopped dead
+    // at its edge (upstream 1.3.0 audit, AvaloniaRichEditor PR #70; measured here too).
     private (InlineTable it, Paragraph host, int objOffset)? FindInlineTableHost(Paragraph p)
     {
-        if (FindCell(p) is not { } loc || loc.tb.Parent is not InlineTable it || it.Parent is not Paragraph host) return null;
-        int pos = 0;
-        foreach (var inl in host.Inlines) { if (ReferenceEquals(inl, it)) return (it, host, pos); pos += InlineLen(inl); }
+        for (object? cur = p.Parent; cur is TextElement te; cur = te.Parent)
+            if (te is InlineTable it)
+            {
+                if (it.Parent is not Paragraph host) return null;
+                int pos = 0;
+                foreach (var inl in host.Inlines) { if (ReferenceEquals(inl, it)) return (it, host, pos); pos += InlineLen(inl); }
+                return null;
+            }
         return null;
     }
 
-    // Caret-navigable paragraphs inside a table's cells, in logical order.
+    // Caret-navigable paragraphs inside a table's cells, in logical order — including those of block tables nested
+    // in its cells (the same walk as the document's caret order), so FindInlineTableHost's paragraphs are all in it.
     private static List<Paragraph> TableCaretParas(TableBlock tb)
     {
         var list = new List<Paragraph>();
         foreach (var (_, _, cell) in tb.LogicalCells())
-            foreach (var b in cell.Blocks)
-                if (b is Paragraph cp) list.Add(cp);
+            list.AddRange(CaretParagraphsIn(cell.Blocks));
         return list;
     }
 

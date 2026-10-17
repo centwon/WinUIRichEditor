@@ -349,7 +349,7 @@ public class ControlDocumentApiTests
     [Fact]
     public void TheToolbarsPaperPicker_EditsTheDocument_NotTheHostDefault() => UiThread.Run(() =>
     {
-        var ed = new RichEditor { Document = new FlowDocument() };
+        var ed = new RichEditor { Document = new FlowDocument(), ViewMode = RichEditorViewMode.Page }; // the picker needs page view
         ed.PageSize = RichEditorPageSize.A4; // host
         var toolbar = new RichEditorToolbar { Target = ed, ToolbarLevel = ToolbarLevel.Maximum };
         var paper = (ComboBox?)typeof(RichEditorToolbar).GetField("_paper", NP)!.GetValue(toolbar);
