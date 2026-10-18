@@ -15,10 +15,11 @@ dotnet add package WinUIRichEditor
 
 **Requirements:** .NET 10 · Windows 10 build 26100+ · **Windows App SDK 2.2.1 or later**.
 
-> **Status: 1.3 in this repository — the public API follows SemVer and is tracked in `PublicAPI.Shipped.txt`,**
-> so it cannot change unnoticed. **1.3.0 is not published to NuGet; the package's latest is 1.2.0.** Build from
-> source to use it. 1.3 **only adds API** (page margins, table row/column commands, the shortcut table), so
-> upgrading needs no code edits — but a few behaviours changed: pages default to 15 mm margins, and new
+> **Status: 1.3.0 — the public API follows SemVer and is tracked in `PublicAPI.Shipped.txt`,** so it cannot change
+> unnoticed. 1.3 adds API (page margins, table row/column commands, the shortcut table, `ViewMode`,
+> `NotifyDocumentChanged`) with **one documented exception: `TextForeground` was renamed `DefaultForeground`**
+> (a rename only, released in 1.x on purpose). Behaviours that changed: a bare `RichEditor` always reflows — set
+> `ViewMode = RichEditorViewMode.Page` for pages (`RichEditorView` does) — pages default to 15 mm margins, and new
 > tables/pictures/dividers sit one line below the text above (`Block.MarginTop` defaults to NaN).
 > Read the upgrade notes at the top of [`CHANGELOG.md`](https://github.com/centwon/WinUIRichEditor/blob/main/CHANGELOG.md).
 > [`Project_Roadmap.md`](https://github.com/centwon/WinUIRichEditor/blob/main/Project_Roadmap.md) is the engineering log.
@@ -126,7 +127,7 @@ view.Document = HtmlDocumentFormatter.ParseHtml("<h1>Title</h1><p>Hello <b>world
 // the toolbar's image button needs a host file picker (window handle required, unpackaged):
 view.ImagePicker = async () => /* return image bytes, or null */;
 
-// page view + export
+// page view + export (RichEditorView opens in page view; a bare RichEditor needs ViewMode = RichEditorViewMode.Page)
 view.Editor.PageSize = RichEditorPageSize.A4;
 using var pdf = new MemoryStream();
 view.Editor.SavePdf(pdf);
