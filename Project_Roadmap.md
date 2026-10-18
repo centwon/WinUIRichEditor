@@ -12,13 +12,13 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 
 ---
 
-## ✅ 현재 상태 (2026-10-17 · `1.3.0` 게시 준비 — NuGet 최신은 아직 `1.2.0`)
+## ✅ 현재 상태 (2026-10-18 · **`1.3.0` 게시** — NuGet 최신 `1.3.0`)
 
 | | |
 |---|---|
-| 릴리스 | 1.0.0(07-31, **API 동결**) → 1.1.0(08-07) → 1.1.1(09-06, AOT 결함 수정) → 1.2.0(09-20 게시) → **1.3.0(10-17, 게시 준비 — 09-30 리포 전용 정리분에 이후 변경을 합침)** |
+| 릴리스 | 1.0.0(07-31, **API 동결**) → 1.1.0(08-07) → 1.1.1(09-06, AOT 결함 수정) → 1.2.0(09-20 게시) → **1.3.0(10-18 게시 — 09-30 리포 전용 정리분에 이후 변경을 합침)** |
 | 빌드 | 라이브러리 0 warn / 0 err (테스트 프로젝트에 xUnit1031 1건 — 블로킹 대기, 기존) |
-| 테스트 | **1046**(2026-10-17, 1.2.0 게시 시 815, 1.0 시점 106). OS 클립보드 테스트는 경합으로 간헐적 빨강 — 단독 재실행으로 확인 |
+| 테스트 | **1057**(2026-10-18 게시 시, 1.2.0 게시 시 815, 1.0 시점 106). OS 클립보드 테스트는 경합으로 간헐적 빨강 — 단독 재실행으로 확인 |
 | AOT | self-contained 게시 성공(2026-09-29): 네이티브 exe **15.2MB**, 게시 **74.7MB**(pdb 제외), CoreCLR·관리 dll 없음 |
 | 공개 표면 | **670**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 추가 + **개명 하나**(`TextForeground`→`DefaultForeground`, SemVer 예외로 CHANGELOG에 기록), Unshipped 비어 있음 |
 
@@ -31,7 +31,9 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
       `PackageReference`로 빌드·실행 — `RichEditorView`(쪽 보기)·맨 에디터(연속)·HTML 적재·`NotifyDocumentChanged`·`DefaultForeground`·
       HTML/JSON 출력·4초 생존, 종료 코드 0. ⚠ 스캐폴드 함정: `XamlControlsResources`를 `OnLaunched`에서 코드로 넣으면 실패하고
       첫 프레임에 죽는다(라이브러리 무관) — 데모처럼 App.xaml에 둘 것. 패키지 폴더를 프로젝트 안에 두면 그 XAML이 페이지로 잡힌다.
-- [ ] 릴리스 PR 머지 → **`v1.3.0` 태그 푸시는 사용자가 명시적으로 요청할 때만**(publish 워크플로가 nuget.org에 올린다, 되돌릴 수 없음) → GitHub Release
+- [x] 릴리스 PR #69 머지 → 게시 전 감사 PR #70 머지(`e46034f`) → **`v1.3.0` 태그 푸시**(2026-10-18, 사용자 요청) → publish 워크플로 success
+      (`.nupkg`·`.snupkg` push, Trusted Publishing) → nuget.org 인덱스 반영(약 1시간 뒤) →
+      [GitHub Release](https://github.com/centwon/WinUIRichEditor/releases/tag/v1.3.0) 작성.
 
 ### 1.3.0 정리 체크리스트 (09-30, 리포 전용 — 위 게시 체크리스트로 대체)
 - [x] `<Version>` 1.3.0 + `PackageReleaseNotes` 재작성(나중에 게시할 때 그대로 쓸 수 있게)
