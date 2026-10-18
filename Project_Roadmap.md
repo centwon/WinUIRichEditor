@@ -382,6 +382,15 @@ AOT 전용 fault는 기존 `LineMetricsOf` 하나뿐(1.2.0과 같음).
     "컨트롤이 `FindRequested` 구독자 없이 Ctrl+F를 받으면 무엇을 하나"를 정할 것(지금은 아무것도 안 함 — 툴바 버튼도
     구독자가 있을 때만 보인다, `FindUiChanged`). 현지화 문자열·포커스 반환·Esc 닫기·하이라이트 해제 규칙은 지금 뷰 것을 옮긴다.
   - **상류와 같이**: 상류도 같은 구조(`RichEditorView`의 찾기 막대)라 이름·속성을 맞춰 함께 낸다. 공개 표면 대조는 기계적으로.
+- **인쇄를 파일 액션에서 분리** — 2026-10-18 사용자 판단. 지금 인쇄 버튼은 `ShowFileActions`가 켜져 있고 **그리고**
+  호스트가 `PrintRequested`를 구독했을 때만 보인다 — 인쇄는 쓰고 내보내기·가져오기는 원치 않는 호스트(파일은 앱이 관리)를 못 받는다.
+  - **`ShowPrintAction`**(툴바 DP, `RichEditorView`가 전달)을 `ShowFileActions`와 따로 둔다.
+  - **내장 인쇄**: 처리기가 없어도 `WindowHandle`이 있으면 `RichEditorPrintHelper.ShowPrintUIAsync`로 인쇄 — 내보내기·가져오기가
+    HWND만으로 내장 피커를 쓰는 것과 같게. `PrintRequested`를 구독하면 호스트 처리기가 우선.
+  - **Ctrl+P**를 단축키 표에(`RichEditorShortcutId`에 항목 추가 — 공개 표면 추가).
+  - ⚠ 동작 변경: `ShowFileActions = false`에 `PrintRequested`를 구독해 둔 호스트는 인쇄 버튼이 새로 보인다 — CHANGELOG "올릴 때
+    확인할 것"에 적을 것.
+  - 상류도 같은 묶음(`ShowFileActions`/`PrintRequested`)이라 이름을 맞춘다. 상류의 인쇄는 플랫폼별이라 내장 인쇄는 포트 전용일 수 있다.
 - **구분선의 "여백 → 왼쪽" 메뉴가 아무 일도 안 한다**(게시 전 감사 2026-10-18) — 구분선은 `Indent`를 그리지도
   저장하지도 않는다. 메뉴에서 빼거나, 그리고 저장하거나(JSON·HTML·RTF) 둘 중 하나. 상류도 확인할 것.
 
