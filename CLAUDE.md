@@ -2,8 +2,8 @@
 
 WinUI 3 + Win2D 리치텍스트 에디터 컨트롤. `AvaloniaRichEditor`(WPF `RichTextBox`/`FlowDocument`를 순수
 C# + Avalonia `TextLayout`로 바닥부터 이식한 에디터)를 포팅해 시작했고, **2026-07-31 `1.0.0` 게시로
-공개 API가 동결**됐다(SemVer, 표면은 `PublicAPI.Shipped.txt`가 추적). 현재 **`1.2.0`**(2026-09-20,
-동결 이후 첫 기능 릴리스 — 추가만, breaking 없음).
+공개 API가 동결**됐다(SemVer, 표면은 `PublicAPI.Shipped.txt`가 추적). 현재 **`1.3.0`**(2026-10-17,
+`TextForeground`→`DefaultForeground` 개명 하나를 1.x의 SemVer 예외로 기록 — 나머지는 추가만).
 
 **상류와의 관계**: 이제 포팅-원본이 아니라 **대등한 수렴 peer**다
 (`C:\Users\centw\source\repos\AvaloniaRichEditor`). 양방향으로 개선을 주고받는다(최근 상류 PR #26~#44).

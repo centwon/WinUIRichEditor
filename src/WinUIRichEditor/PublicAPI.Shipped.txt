@@ -163,8 +163,6 @@ WinUIRichEditor.Controls.RichEditor.ShowPageNumbers.set -> void
 WinUIRichEditor.Controls.RichEditor.StartFormatPainter() -> void
 WinUIRichEditor.Controls.RichEditor.StatusChanged -> System.EventHandler?
 WinUIRichEditor.Controls.RichEditor.TextChanged -> System.EventHandler?
-WinUIRichEditor.Controls.RichEditor.TextForeground.get -> Microsoft.UI.Xaml.Media.Brush!
-WinUIRichEditor.Controls.RichEditor.TextForeground.set -> void
 WinUIRichEditor.Controls.RichEditor.ToHtml() -> string!
 WinUIRichEditor.Controls.RichEditor.ToJson() -> string!
 WinUIRichEditor.Controls.RichEditor.ToJsonAsync() -> System.Threading.Tasks.Task<string!>!
@@ -563,7 +561,6 @@ static readonly WinUIRichEditor.Controls.RichEditor.ShowCaretWhenReadOnlyPropert
 static readonly WinUIRichEditor.Controls.RichEditor.ShowFormattingMenuProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.ShowPageBoundariesProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.ShowPageNumbersProperty -> Microsoft.UI.Xaml.DependencyProperty!
-static readonly WinUIRichEditor.Controls.RichEditor.TextForegroundProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditor.ZoomProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditorToolbar.ShowFileActionsProperty -> Microsoft.UI.Xaml.DependencyProperty!
 static readonly WinUIRichEditor.Controls.RichEditorToolbar.ShowPageControlsProperty -> Microsoft.UI.Xaml.DependencyProperty!
@@ -661,3 +658,13 @@ static WinUIRichEditor.Documents.PageMargins.Symmetric(double sides, double topA
 static WinUIRichEditor.Documents.PageSetup.DefaultMargin.get -> WinUIRichEditor.Documents.PageMargins
 static WinUIRichEditor.Documents.PageSetup.PaperMillimetres(WinUIRichEditor.Controls.RichEditorPageSize size, WinUIRichEditor.Controls.RichEditorPageOrientation orientation) -> (double W, double H)
 static readonly WinUIRichEditor.Controls.RichEditor.PageMarginProperty -> Microsoft.UI.Xaml.DependencyProperty!
+WinUIRichEditor.Controls.RichEditor.DefaultForeground.get -> Microsoft.UI.Xaml.Media.Brush!
+WinUIRichEditor.Controls.RichEditor.DefaultForeground.set -> void
+static readonly WinUIRichEditor.Controls.RichEditor.DefaultForegroundProperty -> Microsoft.UI.Xaml.DependencyProperty!
+WinUIRichEditor.Controls.RichEditor.NotifyDocumentChanged() -> void
+WinUIRichEditor.Controls.RichEditor.ViewMode.get -> WinUIRichEditor.Controls.RichEditorViewMode
+WinUIRichEditor.Controls.RichEditor.ViewMode.set -> void
+static readonly WinUIRichEditor.Controls.RichEditor.ViewModeProperty -> Microsoft.UI.Xaml.DependencyProperty!
+WinUIRichEditor.Controls.RichEditorViewMode
+WinUIRichEditor.Controls.RichEditorViewMode.Continuous = 0 -> WinUIRichEditor.Controls.RichEditorViewMode
+WinUIRichEditor.Controls.RichEditorViewMode.Page = 1 -> WinUIRichEditor.Controls.RichEditorViewMode

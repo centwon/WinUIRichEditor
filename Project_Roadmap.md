@@ -12,17 +12,28 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 
 ---
 
-## ✅ 현재 상태 (2026-09-30 · 리포는 `1.3.0`, NuGet 최신은 `1.2.0`)
+## ✅ 현재 상태 (2026-10-17 · `1.3.0` 게시 준비 — NuGet 최신은 아직 `1.2.0`)
 
 | | |
 |---|---|
-| 릴리스 | 1.0.0(07-31, **API 동결**) → 1.1.0(08-07) → 1.1.1(09-06, AOT 결함 수정) → 1.2.0(09-20 게시) → **1.3.0(09-30, 리포 전용 — 태그·NuGet 없음, 사용자 결정)** |
+| 릴리스 | 1.0.0(07-31, **API 동결**) → 1.1.0(08-07) → 1.1.1(09-06, AOT 결함 수정) → 1.2.0(09-20 게시) → **1.3.0(10-17, 게시 준비 — 09-30 리포 전용 정리분에 이후 변경을 합침)** |
 | 빌드 | 라이브러리 0 warn / 0 err (테스트 프로젝트에 xUnit1031 1건 — 블로킹 대기, 기존) |
-| 테스트 | **953**(2026-09-29, 1.2.0 게시 시 815, 1.0 시점 106). OS 클립보드 테스트는 경합으로 간헐적 빨강 — 단독 재실행으로 확인 |
+| 테스트 | **1046**(2026-10-17, 1.2.0 게시 시 815, 1.0 시점 106). OS 클립보드 테스트는 경합으로 간헐적 빨강 — 단독 재실행으로 확인 |
 | AOT | self-contained 게시 성공(2026-09-29): 네이티브 exe **15.2MB**, 게시 **74.7MB**(pdb 제외), CoreCLR·관리 dll 없음 |
-| 공개 표면 | **663**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 **추가 89**(breaking 없음), Unshipped 비어 있음 |
+| 공개 표면 | **670**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 추가 + **개명 하나**(`TextForeground`→`DefaultForeground`, SemVer 예외로 CHANGELOG에 기록), Unshipped 비어 있음 |
 
-### 1.3.0 정리 체크리스트 (리포 전용)
+### 1.3.0 게시 체크리스트 (2026-10-17, 사용자 결정: 1.x로 내고 개명은 SemVer 예외로 기록, 09-30 정리분에 합쳐 1.3.0)
+- [x] `PublicAPI.Unshipped.txt` → `Shipped.txt` 이관(제거 3·추가 10 → 670줄), Unshipped 비움
+- [x] CHANGELOG `[1.3.0] - 2026-10-17` 한 절로 합침 — 맨 앞에 SemVer 예외와 "올릴 때 확인할 것"(개명·ViewMode·InsertText·경량 JSON 포함)
+- [x] `PackageReleaseNotes`·README 상태·CLAUDE.md 현재 버전
+- [x] AOT 동등성 스윕(10-17, PR #68 브랜치) · 사용자 실기 확인(ViewMode)
+- [x] NuGet 소비자 스모크(10-18): 로컬 pack(`-c Release -p:Platform=x64`, CI와 같음) → 별도 unpackaged 앱(메타패키지 **2.2.0** = 지원 하한)이
+      `PackageReference`로 빌드·실행 — `RichEditorView`(쪽 보기)·맨 에디터(연속)·HTML 적재·`NotifyDocumentChanged`·`DefaultForeground`·
+      HTML/JSON 출력·4초 생존, 종료 코드 0. ⚠ 스캐폴드 함정: `XamlControlsResources`를 `OnLaunched`에서 코드로 넣으면 실패하고
+      첫 프레임에 죽는다(라이브러리 무관) — 데모처럼 App.xaml에 둘 것. 패키지 폴더를 프로젝트 안에 두면 그 XAML이 페이지로 잡힌다.
+- [ ] 릴리스 PR 머지 → **`v1.3.0` 태그 푸시는 사용자가 명시적으로 요청할 때만**(publish 워크플로가 nuget.org에 올린다, 되돌릴 수 없음) → GitHub Release
+
+### 1.3.0 정리 체크리스트 (09-30, 리포 전용 — 위 게시 체크리스트로 대체)
 - [x] `<Version>` 1.3.0 + `PackageReleaseNotes` 재작성(나중에 게시할 때 그대로 쓸 수 있게)
 - [x] `PublicAPI.Unshipped.txt` → `Shipped.txt` 이관(89줄), Unshipped 비움
 - [x] CHANGELOG `[1.3.0]` 절(맨 앞 "올릴 때 확인할 것" 7건) · README 상태/수치 — **NuGet 최신은 1.2.0**이라고 명시
@@ -76,7 +87,7 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 4. ~~**다음 게시(1.3.0) 전에 남은 검증**~~ → 미게시 변경분 감사(09-24), #59 감사와 AOT 동등성 스윕 재실행(09-29)
    모두 끝났다. 1.3.0은 리포에서만 정리했다(NuGet 게시 안 함).
 5. 아래 "알려진 한계"의 미수정 항목.
-6. **`TextForeground` → `DefaultForeground` 개명(2026-10-12, 호환 깨짐)** — 상류 PR #65가 포크(olivierjc) 기여를 받으며
+6. ~~**`TextForeground` → `DefaultForeground` 개명(2026-10-12, 호환 깨짐)**~~ → **2026-10-17 결정: 1.x(1.3.0)로 내고 SemVer 예외로 기록.** — 상류 PR #65가 포크(olivierjc) 기여를 받으며
    `DefaultFontFamily`/`DefaultFontSize`와 같은 줄의 이름으로 정했고, 사용자 결정으로 포트를 별칭 없이 맞췄다. 1.2.0(NuGet)에 이미
    나간 이름이라 ⚠ **API 동결(1.0) 이후 첫 제거**. 별칭은 두지 않기로 했다(사용자 결정 10-12). 게시할 때 정할 것은 하나 —
    2.0.0으로 올릴지, 1.x로 내고 CHANGELOG에 SemVer 예외로 적을지.
