@@ -358,6 +358,37 @@ public class PrePublishAuditTests(ITestOutputHelper output)
         Assert.Equal("c", (inlines[2] as Run)?.Text);
     });
 
+    // An empty paragraph inside the range covers no character but is a line of it. The first PositionOrder draft kept only
+    // paragraphs with a covered character, so a blank line between two selected lines vanished from the copied text —
+    // the AOT sweep's read-back came back one line short (2026-10-18). No letter changes, so the selection fuzz could not see it.
+    [Fact]
+    public void ABlankLineInsideTheRange_StaysInTheTextAndTheCopy() => UiThread.Run(() =>
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "ab" } } });
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "" } } });
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "cd" } } });
+        var ed = new WinUIRichEditor.Controls.RichEditor { Document = doc };
+        var ps = ed.Document!.Blocks.OfType<Paragraph>().ToList();
+        var range = new TextRange(new TextPointer(ps[0], 1), new TextPointer(ps[2], 1));
+        Assert.Equal("b\n\nc", range.GetText());
+        Assert.Equal(2, range.GetRichInlines().Count(i => i is Run { Text: "\n" }));
+
+        // and inside one cell, where the copy is taken paragraph by paragraph
+        var t = new TableBlock(1, 1);
+        var cell = t.Cells[0][0];
+        cell.Blocks.Clear();
+        foreach (var s in new[] { "ab", "", "cd" }) cell.Blocks.Add(new Paragraph { Inlines = { new Run { Text = s } } });
+        var doc2 = new FlowDocument();
+        doc2.Blocks.Add(new Paragraph());
+        doc2.Blocks.Add(t);
+        doc2.Blocks.Add(new Paragraph());
+        ed.Document = doc2;
+        var cps = ((TableBlock)ed.Document!.Blocks.First(b => b is TableBlock)).Cells[0][0].Blocks.OfType<Paragraph>().ToList();
+        var copy = (FlowDocument)Ed.GetMethod("BuildSelectionDocument", NPI)!.Invoke(ed, new object[] { new TextRange(new TextPointer(cps[0], 1), new TextPointer(cps[2], 1)) })!;
+        Assert.Equal(3, copy.Blocks.Count);
+    });
+
     // The order itself, in both the model's and the editor's comparison: a cell position lies between the table's
     // offset and the next in its host.
     [Fact]
