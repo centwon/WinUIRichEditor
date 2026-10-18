@@ -313,12 +313,21 @@ public partial class RichEditor
         return null;
     }
 
-    // First and last paragraph of a cell's content in document order (nested tables' cells included).
+    // First and last paragraph of a cell's content (nested tables' cells included). The last in POSITION order: not a
+    // paragraph of an inline table in the cell, whose cells the document order lists after their host but which sit
+    // inside the host's line — the host's text after it comes later (PositionOrder, 2026-10-18).
     private static (Paragraph first, Paragraph last)? CellContentEnds(TableCell cell)
     {
         Paragraph? first = null, last = null;
-        foreach (var q in ParagraphsInBlocks(cell.Blocks)) { first ??= q; last = q; }
-        return first != null ? (first, last!) : null;
+        foreach (var q in ParagraphsInBlocks(cell.Blocks)) { first ??= q; if (!InInlineTableWithin(q, cell)) last = q; }
+        return first != null ? (first, last ?? first) : null;
+    }
+
+    private static bool InInlineTableWithin(Paragraph p, TableCell cell)
+    {
+        for (object? cur = p.Parent; cur is TextElement te && !ReferenceEquals(te, cell); cur = te.Parent)
+            if (te is InlineTable) return true;
+        return false;
     }
 
     private static (int r0, int c0, int r1, int c1) SpanRect(TableBlock tb, int r, int c)

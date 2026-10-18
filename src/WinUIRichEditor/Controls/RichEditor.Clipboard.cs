@@ -631,7 +631,12 @@ public partial class RichEditor
     // list/heading/alignment/indent/background AND inline images, and keeps whole tables / block images /
     // dividers the selection spans — so internal copy/paste (and copied-out HTML) round-trips structure,
     // not just runs. Mirrors the Avalonia original's CaptureBlockStructure + CloneParagraphRange. A selection
-    // inside one cell or one inline table is taken paragraph by paragraph (FlattenSelection).
+    // inside one paragraph's inline tables or one cell is taken paragraph by paragraph (FlattenSelection).
+    //
+    // What it holds is what Delete removes: both go by the range's covered parts (TextRange.Covered). A table an
+    // endpoint lies in is copied with only its covered text — it used to be copied whole while Delete cleared only
+    // the covered cells, and the paragraph holding an inline table an endpoint lies in was copied to its end
+    // (pre-publish audit, 2026-10-18: a cut pasted back more than it took).
     private FlowDocument BuildSelectionDocument(TextRange range)
     {
         var doc = new FlowDocument();
@@ -645,6 +650,10 @@ public partial class RichEditor
         int ei = endTop != null ? Document.Blocks.IndexOf(endTop) : -1;
         if (si < 0 || ei < 0 || si > ei) return BuildInlineSelectionDocument(range);
 
+        var parts = range.Covered();
+        var spans = new Dictionary<Paragraph, (int From, int To)>();
+        foreach (var c in parts) spans[c.Paragraph] = (c.From, c.To);
+
         // Single top-level block.
         if (si == ei)
         {
@@ -652,53 +661,115 @@ public partial class RichEditor
             if (b is Paragraph)
             {
                 // An endpoint inside the paragraph's inline table: its cell paragraphs, each with its format.
-                if (!ReferenceEquals(b, sp) || !ReferenceEquals(b, ep)) return FlattenSelection(range);
+                if (!ReferenceEquals(b, sp) || !ReferenceEquals(b, ep)) return FlattenSelection(parts, range);
                 doc.Blocks.Add(CloneParagraphRange(sp, range.Start.Offset, range.End.Offset));
                 return doc;
             }
             // A selection confined to a single table cell is intra-cell text, not a table copy.
             if (b is TableBlock && FindCell(sp) is { } sc && FindCell(ep) is { } ec
                 && ReferenceEquals(sc.tb, ec.tb) && sc.r == ec.r && sc.c == ec.c)
-                return FlattenSelection(range);
-            // Whole non-paragraph block (table across cells, block image, divider).
+                return FlattenSelection(parts, range);
+            // A table the selection runs through: its structure, with the covered text.
+            if (b is TableBlock tb) { doc.Blocks.Add(TrimTable(tb, spans)); return doc; }
             if (b.Clone() is Block whole) doc.Blocks.Add(whole);
             return doc;
         }
 
-        // Spans multiple top-level blocks: trim the first/last paragraphs to the selection, clone the rest
-        // (other paragraphs and any tables/images/dividers) whole.
+        // Spans multiple top-level blocks: the first and last trimmed to the selection, the rest (other paragraphs and
+        // any tables/images/dividers) whole.
         for (int k = si; k <= ei; k++)
         {
             var b = Document.Blocks[k];
-            if (b is Paragraph para)
+            bool between = k > si && k < ei;
+            if (!between && b is Paragraph para)
             {
-                // An endpoint inside this paragraph's inline table takes the paragraph from its start / to its end.
-                int from = k == si && ReferenceEquals(para, sp) ? range.Start.Offset : 0;
-                int to = k == ei && ReferenceEquals(para, ep) ? range.End.Offset : GetParagraphLength(para);
-                doc.Blocks.Add(CloneParagraphRange(para, from, to));
+                var (from, to) = spans.TryGetValue(para, out var sp2) ? sp2 : (0, 0);
+                doc.Blocks.Add(TrimParagraph(para, from, to, spans, embedPartialTables: true));
             }
+            else if (!between && b is TableBlock etb) doc.Blocks.Add(TrimTable(etb, spans));
             else if (b.Clone() is Block whole) doc.Blocks.Add(whole);
         }
         return doc;
     }
 
-    // The paragraphs from the selection's start to its end in document order, each trimmed to the selection with its
-    // paragraph format — the structure between them (cells, tables) is not kept. For a selection inside one table cell
-    // or one paragraph's inline table: taken as bare runs, a bulleted list copied out of a cell pasted as plain lines,
-    // and a selection across an inline table cell's two paragraphs was cut at the first (2026-10-15).
-    private FlowDocument FlattenSelection(TextRange range)
+    // The covered paragraphs in position order, each trimmed to its part with its paragraph format — the structure
+    // between them (cells, tables) is not kept. For a selection inside one table cell or one paragraph's inline
+    // tables: taken as bare runs, a bulleted list copied out of a cell pasted as plain lines, and a selection across
+    // an inline table cell's two paragraphs was cut at the first (2026-10-15). An inline table the selection takes
+    // whole comes along inside its paragraph, not cell by cell.
+    private FlowDocument FlattenSelection(List<TextRange.CoveredPart> parts, TextRange range)
     {
-        var all = AllParagraphs();
-        int si = range.Start.Paragraph != null ? all.IndexOf(range.Start.Paragraph) : -1;
-        int ei = range.End.Paragraph != null ? all.IndexOf(range.End.Paragraph) : -1;
-        if (si < 0 || ei < 0 || si > ei) return BuildInlineSelectionDocument(range);
+        var units = parts.Where(c => !c.InsideCoveredObject).ToList();
+        if (units.Count == 0) return BuildInlineSelectionDocument(range);
+        units.Sort((a, b) => ReferenceEquals(a.Paragraph, b.Paragraph) ? 0
+            : ComparePositions(new TextPointer(a.Paragraph, a.From), new TextPointer(b.Paragraph, b.From)));
         var doc = new FlowDocument();
-        for (int i = si; i <= ei; i++)
-        {
-            var p = all[i];
-            doc.Blocks.Add(CloneParagraphRange(p, i == si ? range.Start.Offset : 0, i == ei ? range.End.Offset : GetParagraphLength(p)));
-        }
+        foreach (var c in units) doc.Blocks.Add(CloneParagraphRange(c.Paragraph, c.From, c.To));
         return doc;
+    }
+
+    // A paragraph's covered part [from, to) with its format. An inline object inside the part comes whole; with
+    // embedPartialTables, an inline table holding an endpoint comes too, holding only its own covered text (it stays
+    // in the document when the selection is deleted, so it is no part of the copy otherwise).
+    private static Paragraph TrimParagraph(Paragraph p, int from, int to, Dictionary<Paragraph, (int From, int To)> spans, bool embedPartialTables)
+    {
+        if (!embedPartialTables) return CloneParagraphRange(p, from, to);
+        var np = CloneParagraphRange(p, 0, 0); // the format, no content
+        np.Inlines.Clear();
+        int idx = 0;
+        foreach (var inl in p.Inlines)
+        {
+            int len = InlineLen(inl);
+            int segStart = idx, segEnd = idx + len;
+            idx = segEnd;
+            if (len == 0) continue;
+            if (inl is Run r && r.Text != null)
+            {
+                int x = Math.Max(from, segStart) - segStart, y = Math.Min(to, segEnd) - segStart;
+                if (y > x) { var c = (Run)r.Clone(); c.Text = r.Text.Substring(x, y - x); c.Parent = np; np.Inlines.Add(c); }
+            }
+            else if (segStart >= from && segEnd <= to)
+            {
+                var c = (Inline)inl.Clone(); c.Parent = np; np.Inlines.Add(c);
+            }
+            else if (inl is InlineTable it && TouchesTable(it.Table, spans))
+                np.Inlines.Add(new InlineTable { Table = TrimTable(it.Table, spans), Parent = np });
+        }
+        if (np.Inlines.Count == 0) np.Inlines.Add(new Run { Text = "", Parent = np });
+        return np;
+    }
+
+    private static bool TouchesTable(TableBlock tb, Dictionary<Paragraph, (int From, int To)> spans)
+    {
+        foreach (var p in BlockWalk.Paragraphs(new Block[] { tb }))
+            if (spans.TryGetValue(p, out var s) && s.From < s.To) return true;
+        return false;
+    }
+
+    // A table with its structure (rows, columns, merges, widths, cell formats) and only the covered text in its cells
+    // — what deleting the selection empties. Blocks other than paragraphs and tables stay in the document, so not here.
+    private static TableBlock TrimTable(TableBlock tb, Dictionary<Paragraph, (int From, int To)> spans)
+    {
+        var copy = (TableBlock)tb.Clone();
+        for (int r = 0; r < tb.Cells.Count && r < copy.Cells.Count; r++)
+            for (int c = 0; c < tb.Cells[r].Count && c < copy.Cells[r].Count; c++)
+            {
+                var src = tb.Cells[r][c];
+                var dst = copy.Cells[r][c];
+                dst.Blocks.Clear();
+                foreach (var blk in src.Blocks)
+                {
+                    if (blk is Paragraph cp)
+                    {
+                        var (from, to) = spans.TryGetValue(cp, out var s) ? s : (0, 0);
+                        dst.Blocks.Add(TrimParagraph(cp, from, to, spans, embedPartialTables: true));
+                    }
+                    else if (blk is TableBlock nested) dst.Blocks.Add(TrimTable(nested, spans));
+                }
+                if (dst.Blocks.Count == 0) dst.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "" } } });
+                foreach (var blk in dst.Blocks) blk.Parent = dst;
+            }
+        return copy;
     }
 
     // Wraps the selection's exported HTML so consumers inherit the editor's base font/size. ToHtml omits

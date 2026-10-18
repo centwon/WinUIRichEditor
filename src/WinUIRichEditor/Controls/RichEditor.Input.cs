@@ -148,11 +148,13 @@ public partial class RichEditor
     private int ComparePositions(TextPointer a, TextPointer b)
     {
         if (ReferenceEquals(a.Paragraph, b.Paragraph)) return a.Offset.CompareTo(b.Offset);
-        var map = ParaIndexMap();
-        int ia = a.Paragraph != null && map.TryGetValue(a.Paragraph, out var va) ? va : -1;
-        int ib = b.Paragraph != null && map.TryGetValue(b.Paragraph, out var vb) ? vb : -1;
-        return ia.CompareTo(ib);
+        // The position order TextRange goes by (PositionOrder): an inline table's cells sit inside their host at the
+        // table's place, not after the host's whole text. The paragraph index alone read a selection from after an
+        // inline table back into it inside out (pre-publish audit, 2026-10-18).
+        return PositionOrder.Compare(a.Paragraph, a.Offset, b.Paragraph, b.Offset, ParaIndex);
     }
+
+    private int ParaIndex(Paragraph p) => ParaIndexMap().TryGetValue(p, out var i) ? i : -1;
 
     private static bool KeyDownState(VirtualKey k)
         => (InputKeyboardSource.GetKeyStateForCurrentThread(k) & CoreVirtualKeyStates.Down) != 0;
@@ -2274,13 +2276,9 @@ public partial class RichEditor
         TextPointer s = _selStart, e = _selEnd;
         if (ComparePositions(s, e) > 0) (s, e) = (e, s);
 
-        int len = GetParagraphLength(p);
-        var pStart = new TextPointer(p, 0);
-        var pEnd = new TextPointer(p, len);
-        if (ComparePositions(pEnd, s) < 0 || ComparePositions(pStart, e) > 0) return; // paragraph outside selection
-
-        int hlStart = ReferenceEquals(p, s.Paragraph) ? s.Offset : 0;
-        int hlEnd = ReferenceEquals(p, e.Paragraph) ? e.Offset : len;
+        // The part Delete and Copy take (PositionOrder.Span): a host whose inline table holds an endpoint is lit only
+        // on the selected side of the table. Lit from 0 or to the end, it showed text the selection did not cover.
+        var (hlStart, hlEnd) = PositionOrder.Span(p, GetParagraphLength(p), s, e, ParaIndex);
         if (hlEnd <= hlStart) return;
 
         try

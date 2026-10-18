@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace WinUIRichEditor.Documents;
 
@@ -42,31 +43,28 @@ public class TextPointer : IComparable<TextPointer>
             return Offset.CompareTo(other.Offset);
         }
 
-        // Different paragraphs: order by position in the document. A single ordered walk records both
-        // paragraphs' global indices and exits as soon as both are located — their relative order can't
-        // change after that. A paragraph not found keeps index -1, so it sorts before any present one.
+        // Different paragraphs: PositionOrder decides — a position inside an inline table sits between the table's
+        // offset and the next in its host paragraph. Where that is not enough it asks for the paragraphs' place in
+        // the document order, and only about the few paragraphs that can matter, so one walk locating those ends it.
+        // A paragraph not found keeps index -1, so it sorts before any present one.
         var doc = GetFlowDocument(this.Paragraph);
-        if (doc == null) return 0; // cannot compare without document
+        if (doc == null || this.Paragraph == null || other.Paragraph == null) return 0; // cannot compare without document
 
         // The editor's block order, from the walk that owns it (BlockWalk). Every block takes one index,
         // tables included — that is the historical numbering these comparisons and undo's caret
-        // restoration both rely on. The walk is lazy, so locating both endpoints ends it.
-        //
-        // This used to be a hand-written copy of RichEditor.ParagraphsInBlocks, and its own comment
-        // recorded what a missing level of recursion cost: a pointer inside a nested or inline table kept
-        // index -1, and selections spanning one compared as equal or reversed.
-        int index = 0, thisIdx = -1, otherIdx = -1;
+        // restoration both rely on. The walk is lazy, so locating every paragraph asked about ends it.
+        var wanted = new HashSet<Paragraph>();
+        PositionOrder.IndexedParagraphs(this.Paragraph, other.Paragraph, wanted);
+        var found = new Dictionary<Paragraph, int>();
+        int index = 0;
         foreach (var block in BlockWalk.DocumentOrder(doc.Blocks))
         {
-            if (block is Paragraph p)
-            {
-                if (thisIdx < 0 && ReferenceEquals(p, this.Paragraph)) thisIdx = index;
-                if (otherIdx < 0 && ReferenceEquals(p, other.Paragraph)) otherIdx = index;
-            }
+            if (block is Paragraph p && wanted.Contains(p) && !found.ContainsKey(p)) found[p] = index;
             index++;
-            if (thisIdx >= 0 && otherIdx >= 0) break;
+            if (found.Count == wanted.Count) break;
         }
-        return thisIdx.CompareTo(otherIdx);
+        return PositionOrder.Compare(this.Paragraph, Offset, other.Paragraph, other.Offset,
+            p => found.TryGetValue(p, out int i) ? i : -1);
     }
 
     private FlowDocument? GetFlowDocument(TextElement? element)
