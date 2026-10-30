@@ -462,6 +462,63 @@ public class ControlHyperlinkTests
         });
     }
 
+    // A link wrapped over several lines is a link on EVERY line, at every character — the upstream peer's link hit
+    // test read Avalonia's HitTestPoint(...).IsInside, false after the first line, so only line 1 behaved as a link
+    // (AvaloniaRichEditor issue #75, 2026-10-29). This port does not use IsInside; the cases above check only the
+    // first character of line 2. Measured here, top level and in a table cell: the middle of each character.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AWrappedLink_IsALinkOnEveryLine(bool inACell)
+    {
+        var ed = Hosted.Value;
+        UiThread.Run(() =>
+        {
+            var link = new Paragraph();
+            link.Inlines.Add(new Run { Text = "before " });
+            link.Inlines.Add(new Run { Text = string.Concat(Enumerable.Repeat("word ", 120)).TrimEnd(), NavigateUri = "https://example.com/" });
+            link.Inlines.Add(new Run { Text = " after" });
+            var doc = new FlowDocument();
+            if (inACell)
+            {
+                var t = new TableBlock(1, 1);
+                t.ColumnWidths[0] = 300;
+                t.Cells[0][0].Blocks.Clear();
+                t.Cells[0][0].Blocks.Add(link);
+                doc.Blocks.Add(new Paragraph());
+                doc.Blocks.Add(t);
+                doc.Blocks.Add(new Paragraph());
+            }
+            else doc.Blocks.Add(link);
+            ed.Document = doc;
+            Call(ed, "RelayoutToViewport");
+
+            var para = inACell
+                ? ed.Document!.Blocks.OfType<TableBlock>().Single().Cells[0][0].Blocks.OfType<Paragraph>().Single()
+                : ed.Document!.Blocks.OfType<Paragraph>().Single();
+            (double x, double y, double h) At(int off)
+            {
+                var box = Call(ed, "CaretToDocPoint", new TextPointer(para, off))!;
+                var ty = box.GetType();
+                double F(string n) => (double)ty.GetField(n)!.GetValue(box)!;
+                return (F("Item1"), F("Item2"), F("Item3"));
+            }
+            int from = "before ".Length, to = from + para.Inlines.OfType<Run>().ElementAt(1).Text!.Length;
+            var lines = new HashSet<double>();
+            var missed = new List<string>();
+            for (int o = from; o < to; o++)
+            {
+                var a = At(o);
+                var b = At(o + 1);
+                if (Math.Abs(a.y - b.y) > 0.5 || b.x - a.x < 1) continue; // the character ends its line, or is zero-width
+                lines.Add(Math.Round(a.y));
+                if (!On(ed, (a.x + b.x) / 2, a.y + a.h / 2)) missed.Add($"char {o} (line at y {a.y:0})");
+            }
+            Assert.True(lines.Count >= 3, $"the link wrapped over {lines.Count} line(s) — the case was not built");
+            Assert.True(missed.Count == 0, $"{missed.Count} link character(s) not a link: {string.Join(", ", missed.Take(8))}");
+        });
+    }
+
     private static double LineBottomAt(RichEditor ed, int offset)
     {
         var para = ed.Document!.Blocks.OfType<Paragraph>().First();
