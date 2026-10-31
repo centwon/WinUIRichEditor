@@ -120,6 +120,35 @@ public class Round34BackportTests
         Assert.Equal(url, Clicked(json).NavigateUri);
         Assert.Contains("href=\"https://example.com/a?b=1\"", HtmlDocumentFormatter.ToHtml(Linked(url)).Replace("&amp;", "&"));
     }
+
+    // Text that LOOKS like markup went out as markup: the writer's one-argument Entitize leaves & < > alone, so
+    // typed "<img src=x onerror=…>" reached exported and clipboard HTML as a live tag, and came back as nothing
+    // (upstream PR #77, 2026-10-31). In a paragraph and in a cell, twice round.
+    [Fact]
+    public void TextThatLooksLikeMarkup_IsWrittenAsText()
+    {
+        const string text = "<img src=x onerror=alert(1)> & <b>co</b> &amp;";
+        var tb = new TableBlock(1, 1);
+        tb.Cells[0][0].Blocks.Clear();
+        tb.Cells[0][0].Blocks.Add(new Paragraph { Inlines = { new Run { Text = text } } });
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = text } } });
+        doc.Blocks.Add(tb);
+
+        string html = HtmlDocumentFormatter.ToHtml(doc);
+        Assert.DoesNotContain("<img", html);
+        Assert.DoesNotContain("<b>co", html);
+
+        var once = HtmlDocumentFormatter.ParseHtml(html);
+        var twice = HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(once));
+        foreach (var back in new[] { once, twice })
+        {
+            static string Text(Paragraph p) => string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text)).Replace(' ', ' ');
+            Assert.Equal(text, Text((Paragraph)back.Blocks[0]));
+            var cell = (Paragraph)back.Blocks.OfType<TableBlock>().Single().Cells[0][0].Blocks[0];
+            Assert.Equal(text, Text(cell));
+        }
+    }
 }
 
 /// <summary>Round 34's control-level cases, measured in this port (see <see cref="Round34BackportTests"/>).</summary>

@@ -6,6 +6,14 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 보안 — ⚠ 마크업처럼 생긴 글자가 HTML에 마크업으로 나감
+
+- **`ToHtml()`과 클립보드 HTML이 글자의 `&`·`<`·`>`를 이스케이프하지 않았다.** 쓰기가 HtmlAgilityPack의 인자 하나짜리
+  `HtmlEntity.Entitize`를 썼는데, 이것은 비ASCII 글자만 바꾸고 그 셋은 그대로 둔다. 입력한 `<img src=x onerror=alert(1)>`가 살아
+  있는 태그로 나가(HTML을 그리는 호스트·붙여넣기 대상에서 스크립트) 다시 읽으면 사라졌다(데이터 손실). 이제 글자를 모두
+  이스케이프한다. 상류 AvaloniaRichEditor PR #77과 같은 수정이다(상류의 다른 하나, 셀 하나짜리 서식 런은 이 포트에서 이미 맞았다).
+- 테스트: `Round34BackportTests.TextThatLooksLikeMarkup_IsWrittenAsText`(문단과 셀, 왕복 두 번). 수정 전에는 빨강.
+
 ## [1.3.0] - 2026-10-18
 
 > 1.2.0 다음으로 **NuGet에 게시하는 판**이다. 리포에서는 2026-09-30에 한 번 1.3.0으로 정리했지만 태그도 게시도 없이 두었고,

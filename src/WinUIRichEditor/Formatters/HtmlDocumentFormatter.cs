@@ -1373,7 +1373,9 @@ public static class HtmlDocumentFormatter
         }
         if (inline is not Run r || r.Text == null) return;
 
-        string t = HtmlEntity.Entitize(r.Text);
+        // The two-argument overload: the one-argument Entitize leaves & < > as they are, so text that looked
+        // like markup ("<img onerror=…>") went out as a live tag and came back as nothing.
+        string t = HtmlEntity.Entitize(r.Text, true, true);
         t = PreserveRunsOfSpaces(t);
         t = PreserveDroppableSpaces(t, closesParagraph);
         // Soft line breaks (Shift+Enter, stored as '\n' in run text) must survive as <br/> — a literal
