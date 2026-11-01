@@ -494,7 +494,20 @@ public static class HtmlDocumentFormatter
             // could not see it because the loss is IDEMPOTENT (cycle 2 loses exactly what cycle 1 did).
             // `name` is passed as "li" so the heading-from-tag rule does not disturb data-are-h above.
             ApplyBlockLeafFormat(child, "li", p);
-            ParseInlines(child, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
+            // Our own inline table on the item's line: the inline reader knows no tables and flattened it to its cells' text —
+            // structure, other cells and their links gone (the port's fuzz, seed 1488, 2026-11-01). The item is read the way
+            // a <p> holding one is (WalkBlocks), its sublists left to the loop below, and what that made lands in this item.
+            if (child.ChildNodes.Any(n => n.Name.Equals("table", StringComparison.OrdinalIgnoreCase) && Attr(n, "data-are-inline") == "1"))
+            {
+                var item = child.CloneNode(true);
+                foreach (var sub in item.ChildNodes.Where(n => n.Name.Equals("ul", StringComparison.OrdinalIgnoreCase) || n.Name.Equals("ol", StringComparison.OrdinalIgnoreCase)).ToList())
+                    sub.Remove();
+                var walked = new FlowDocument();
+                WalkBlocks(item, walked, linkUri);
+                foreach (var made in walked.Blocks.OfType<Paragraph>())
+                    foreach (var inl in made.Inlines) { inl.Parent = p; p.Inlines.Add(inl); }
+            }
+            else ParseInlines(child, p, uri: linkUri, inLink: !string.IsNullOrEmpty(linkUri));
             // An empty item is dropped like any empty element — unless our export marked it as a blank item
             // the author made (data-are-empty, as for paragraphs), and then its <br> is rendering, not content.
             // Dropped regardless, a blank numbered item vanished on the first round trip, and the items either
