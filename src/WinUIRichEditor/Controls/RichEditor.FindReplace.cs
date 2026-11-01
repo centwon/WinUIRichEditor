@@ -241,6 +241,9 @@ public partial class RichEditor
     private void ReplaceSelectionText(string replacement)
     {
         DeleteSelection();
+        // The model's line break is '\n', as typing normalizes: a host's "\r\n" left a raw '\r' in the run.
+        // (Upstream second review, 2026-11-01.)
+        if (replacement != null && replacement.Contains('\r')) replacement = replacement.Replace("\r\n", "\n").Replace('\r', '\n');
         if (!string.IsNullOrEmpty(replacement) && _caret.Paragraph != null)
         {
             TryInsertTextCore(_caret.Paragraph, replacement, _caret.Offset);
