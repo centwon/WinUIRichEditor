@@ -6,6 +6,13 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 변경 — 링크는 그냥 클릭으로 열림, 그림·표 옆 Backspace/Delete는 선택 먼저 (사용자 결정 2026-11-01, 상류와 맞춤)
+
+- 편집 중에도 링크를 **그냥 클릭**하면 연다(읽기 전용과 같게, 상류 방식). 끌어서 선택하면 열지 않는다. Ctrl+클릭도 그대로 연다.
+- 문단 처음의 Backspace / 끝의 Delete 옆에 그림이나 표가 있으면 첫 번째 누름이 그것을 **선택**하고 두 번째가 지운다
+  (Word·HWP). 예전엔 아무 일도 하지 않았다. 선택 단계는 편집이 아니다(undo 없음, 수정됨 아님). 구분선은 그대로(병합 안 함).
+- 테스트: `BackspaceOrDelete_NextToABlock_SelectsItFirst`; 링크 테스트를 새 동작으로 고침.
+
 ### 수정 — HTML 그림 크기·상대 글자 크기·색, 상태 표시줄 쪽 수 (업스트림 3차 리뷰 2026-11-01)
 
 - HTML: 그림 크기를 `width`/`height`로 끝나는 아무 속성(`border-width:1px`, `line-height`, `max-width`)에서 읽었다.

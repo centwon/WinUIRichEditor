@@ -546,7 +546,7 @@ public class ControlPointerSequenceTests
     }
 
     [Fact]
-    public void CtrlClickOpensALink_APlainClickDoesNot_AndADragNeverDoes()
+    public void APlainClickAndACtrlClickBothOpenALink_WhileEditing()
     {
         Hosted(ed =>
         {
@@ -561,16 +561,16 @@ public class ControlPointerSequenceTests
                 var onLink = DocPointOf(ed, new TextPointer(para, 3));
                 var cap = new FakeCapture(ed);
 
-                // Plain click: the caret moves, nothing opens.
+                // Plain click: opens it, as upstream does and as in a viewer (user decision, 2026-11-01).
                 ed.PointerPressedCore(Step(onLink, cap));
                 ed.PointerReleasedCore(Step(onLink, cap));
-                Assert.Empty(launched);
+                Assert.Equal(new[] { "https://example.com/" }, launched);
 
-                // Ctrl+click: opens the link under the POINTER.
+                // Ctrl+click: opens the link under the POINTER too.
                 NoRepeat(ed);
                 ed.PointerPressedCore(Step(onLink, cap, ctrl: true));
                 ed.PointerReleasedCore(Step(onLink, cap, ctrl: true));
-                Assert.Equal(new[] { "https://example.com/" }, launched);
+                Assert.Equal(new[] { "https://example.com/", "https://example.com/" }, launched);
             }
             finally { ed.LaunchOverride = null; }
         });
