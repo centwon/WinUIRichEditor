@@ -137,6 +137,11 @@ public partial class RichEditorView : UserControl
         Content = grid;
 
         Editor.StatusChanged += (_, _) => UpdateStatus();
+        // The page count follows the paper: it stayed at the old paper's count until the caret next moved.
+        // (Upstream code review 2026-11-01.)
+        foreach (var dp in new[] { RichEditor.PageSizeProperty, RichEditor.PageOrientationProperty,
+                                   RichEditor.PageMarginProperty, RichEditor.ViewModeProperty })
+            Editor.RegisterPropertyChangedCallback(dp, (_, _) => UpdateStatus());
         Editor.FindRequested += (_, withReplace) => ShowFindBar(withReplace); // Ctrl+F / Ctrl+H
         Loaded += (_, _) => { RichEditorLocalization.LanguageChanged += OnLanguageChanged; UpdateStatus(); };
         Unloaded += (_, _) => RichEditorLocalization.LanguageChanged -= OnLanguageChanged;
