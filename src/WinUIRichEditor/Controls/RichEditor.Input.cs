@@ -827,6 +827,8 @@ public partial class RichEditor
                 if (item is not Windows.Storage.StorageFile file) continue;
                 try
                 {
+                    // Bounded as a package's pictures are: a dropped multi-gigabyte file was read whole first.
+                    if ((await file.GetBasicPropertiesAsync()).Size > (ulong)Formatters.DocumentPackage.MaxPictureBytes) continue;
                     var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
                     var bytes = new byte[buffer.Length];
                     using (var reader = Windows.Storage.Streams.DataReader.FromBuffer(buffer)) reader.ReadBytes(bytes);

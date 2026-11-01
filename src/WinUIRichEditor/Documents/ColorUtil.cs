@@ -22,7 +22,7 @@ internal static class ColorUtil
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Parses a CSS/hex color string, or returns <see langword="null"/> when empty/unrecognized.</summary>
-    public static Color? Parse(string? value)
+    public static Color? Parse(string? value, bool css = false)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         string v = value.Trim();
@@ -39,12 +39,12 @@ internal static class ColorUtil
             return Color.FromArgb(a, r, g, b);
         }
 
-        if (v.StartsWith("#", StringComparison.Ordinal)) return ParseHex(v.Substring(1));
+        if (v.StartsWith("#", StringComparison.Ordinal)) return ParseHex(v.Substring(1), css);
 
         return Named(v.ToLowerInvariant());
     }
 
-    private static Color? ParseHex(string h)
+    private static Color? ParseHex(string h, bool css)
     {
         try
         {
@@ -54,6 +54,12 @@ internal static class ColorUtil
                     return Color.FromArgb(255, Dup(h[0]), Dup(h[1]), Dup(h[2]));
                 case 6:
                     return Color.FromArgb(255, Hex(h, 0), Hex(h, 2), Hex(h, 4));
+                // CSS puts alpha LAST (#RGBA, #RRGGBBAA); this library's JSON stores #AARRGGBB (Color.ToString()). Read as
+                // the JSON form, a pasted #ff000080 (half-transparent red) came in navy. (Upstream code review 2026-11-01.)
+                case 4 when css:
+                    return Color.FromArgb(Dup(h[3]), Dup(h[0]), Dup(h[1]), Dup(h[2]));
+                case 8 when css:
+                    return Color.FromArgb(Hex(h, 6), Hex(h, 0), Hex(h, 2), Hex(h, 4));
                 case 8: // AARRGGBB (Color.ToString() form)
                     return Color.FromArgb(Hex(h, 0), Hex(h, 2), Hex(h, 4), Hex(h, 6));
             }

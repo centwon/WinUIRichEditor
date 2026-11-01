@@ -635,6 +635,7 @@ public partial class RichEditor
         void Apply(Color? color)
         {
             flyout.Hide();
+            if (CellBackgroundTargets(tb, r, c).All(cell => cell.Background == color)) return; // already so: no empty undo step
             PushUndo(null);
             foreach (var cell in CellBackgroundTargets(tb, r, c)) cell.Background = color;
             InvalidateCanvas();

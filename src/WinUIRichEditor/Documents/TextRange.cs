@@ -48,8 +48,13 @@ public class TextRange
     // and end paragraphs even where they cover nothing (a copied paragraph break). InsideCoveredObject marks a
     // paragraph in an inline table that a covered part of its host takes whole: that table is one object to delete
     // or copy, not a range of cells.
-    internal List<CoveredPart> Covered()
+    internal List<CoveredPart> Covered() => Covered(out _);
+
+    // `index`: the covered paragraphs' place in the document order, for PositionOrder.Compare (null where the range
+    // has no document to order in) — so the position sort below need not walk the document per comparison.
+    private List<CoveredPart> Covered(out Func<Paragraph, int>? index)
     {
+        index = null;
         var result = new List<CoveredPart>();
         var sp = _start.Paragraph;
         var ep = _end.Paragraph;
@@ -73,6 +78,7 @@ public class TextRange
         for (int b = si; b <= ei; b++)
             foreach (var p in BlockWalk.Paragraphs(new[] { doc.Blocks[b] })) { order[p] = order.Count; paras.Add(p); }
         int Index(Paragraph p) => order.TryGetValue(p, out int i) ? i : -1;
+        index = Index;
 
         var spans = new Dictionary<Paragraph, (int From, int To)>();
         foreach (var p in paras)
@@ -95,9 +101,12 @@ public class TextRange
     // sequence: the text and the copied runs.
     private List<CoveredPart> CoveredInPositionOrder(bool skipCoveredObjects)
     {
-        var parts = Covered();
+        var parts = Covered(out var index);
         if (skipCoveredObjects) parts.RemoveAll(c => c.InsideCoveredObject);
+        // By the order Covered already built (upstream 2026-11-01): TextPointer.CompareTo walks the document on every
+        // call, and the sort makes n·log n of them.
         parts.Sort((a, b) => ReferenceEquals(a.Paragraph, b.Paragraph) ? 0
+            : index != null ? PositionOrder.Compare(a.Paragraph, a.From, b.Paragraph, b.From, index)
             : new TextPointer(a.Paragraph, a.From).CompareTo(new TextPointer(b.Paragraph, b.From)));
         return parts;
     }
