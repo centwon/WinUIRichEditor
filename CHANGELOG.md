@@ -22,7 +22,10 @@ and follows [Semantic Versioning](https://semver.org/).
   문서가 바뀌거나 읽기 전용이 되면 붙여넣기가 새 문서·읽기 전용 문서에 들어갔다.
 - **붙여넣기의 원격 그림은 256 MB까지만 읽는다**(`DocumentPackage.MaxPictureBytes`, 다른 그림 경로와 같은 상한).
   `GetByteArrayAsync`는 2 GB까지 버퍼링했다.
-- 테스트: `ReviewFixes20261101Tests` — ⚠ .NET SDK 없는 환경에서 작성, 빌드·실행 안 함. 붙여넣기·다운로드 상한은 자동 테스트 없음.
+- **RTF 링크 필드 읽기 두 가지**: 건너뛰는 목적지(`{\*\…}`) 안 필드의 `\fldrslt`가 그룹을 본문으로 바꿔 숨은 글자가
+  본문에 들어왔다. 그리고 쓰기가 링크 주소를 `\uN`·`\\`로 이스케이프하는데 지시문 읽기가 둘 다 버려, `…/wiki/한글`이
+  `…/wiki/`로, `file:///C:\docs\a.txt`가 `file:///C:docsa.txt`로 돌아왔다.
+- 테스트: `ReviewFixes20261101Tests`. 붙여넣기·다운로드 상한은 자동 테스트 없음.
 
 ### 보안 — ⚠ 마크업처럼 생긴 글자가 HTML에 마크업으로 나감
 

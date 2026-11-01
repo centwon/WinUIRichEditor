@@ -81,4 +81,25 @@ public class ReviewFixes20261101Tests
     {
         Assert.Equal("e\u2011mail", Text(RtfDocumentFormatter.Parse(@"{\rtf1\ansi e\_mail\par}")));
     }
+
+    // \fldrslt switched its group to Normal, so the result of a field inside a skipped destination came into the body.
+    [Fact]
+    public void AFieldInsideASkippedDestination_StaysOutOfTheBody()
+    {
+        var doc = RtfDocumentFormatter.Parse(
+            @"{\rtf1\ansi a{\*\unknowndest {\field{\*\fldinst PAGE}{\fldrslt LEAK}}}b\par}");
+        Assert.Equal("ab", Text(doc));
+    }
+
+    // The writer escapes the address (\uN, \\); the instruction reader dropped both.
+    [Theory]
+    [InlineData("https://ko.wikipedia.org/wiki/\ud55c\uae00")]
+    [InlineData(@"file:///C:\docs\a.txt")]
+    public void ALinkAddressWithNonAsciiOrBackslash_SurvivesAnRtfRoundTrip(string url)
+    {
+        var doc = new FlowDocument();
+        doc.Blocks.Add(new Paragraph { Inlines = { new Run { Text = "link", NavigateUri = url } } });
+        var back = RtfDocumentFormatter.Parse(RtfDocumentFormatter.Write(doc));
+        Assert.Equal(url, FirstRun(back).NavigateUri);
+    }
 }

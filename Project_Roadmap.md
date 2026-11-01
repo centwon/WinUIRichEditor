@@ -26,8 +26,10 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 AvaloniaRichEditor `src` 전체 리뷰(같은 날, 브랜치 `fix/review-2026-11-01`)의 결함 중 포트에도 있던 8건을 같은 방식으로 고침 —
 HTML 속성 엔티티 미해독(`Attr`), 이모지 서로게이트 내보내기(`TextEscape`)·`&#128512;` 읽기(`Decode`), RTF 머리글/바닥글의
 `\{ \} \\ \~ \'hh`·`\_`, 붙여넣기 await 뒤 재확인, 원격 그림 256 MB 상한. 상세는 CHANGELOG `[Unreleased]`.
-⚠ **.NET SDK 없는 환경에서 수정 — 빌드·`ReviewFixes20261101Tests`·반증 미실행, 로컬 확인 필요.**
-업스트림에 없던 포트 쪽 기능: RTF 형광펜·HYPERLINK 필드 읽기/쓰기(업스트림으로 백포트 중). `ReplaceAll` O(일치×문단)은 양쪽 보류.
+SDK 없는 환경에서 작성 → 로컬 확인(2026-11-01): 빌드 0 error · 테스트 **1071** 그린.
+업스트림에 없던 포트 쪽 기능: RTF 형광펜·HYPERLINK 필드 읽기/쓰기(업스트림으로 백포트, 업스트림 PR #79).
+업스트림 로컬 확인에서 그 필드 읽기의 결함 2건이 나와 포트에도 같은 수정 — `\fldrslt`가 건너뛰는 목적지의 글자를 본문으로
+흘림, 링크 주소의 `\uN`·`\\`를 버림(한글·역슬래시 주소 손실). 포트 main부터 있던 결함. 반증 3/3. `ReplaceAll` O(일치×문단)은 양쪽 보류.
 
 ### 1.3.0 게시 체크리스트 (2026-10-17, 사용자 결정: 1.x로 내고 개명은 SemVer 예외로 기록, 09-30 정리분에 합쳐 1.3.0)
 - [x] `PublicAPI.Unshipped.txt` → `Shipped.txt` 이관(제거 3·추가 10 → 670줄), Unshipped 비움
