@@ -78,7 +78,9 @@ public class DocumentFuzzTests
         // and stopping at seed 26 hid whatever seeds 27..399 had to say — the failure detail below is
         // still the first one's, but the tally tells you whether you are looking at one defect or five.
         var failures = new List<string>();
-        for (int seed = 0; seed < Seeds; seed++)
+        // RICHEDITOR_FUZZ_ONLY=N runs seed N alone, to look at one failure without the other 1999.
+        bool only = int.TryParse(Environment.GetEnvironmentVariable("RICHEDITOR_FUZZ_ONLY"), out int onlySeed);
+        for (int seed = only ? onlySeed : 0; seed < (only ? onlySeed + 1 : Seeds); seed++)
         {
             var rng = new Random(seed);
             var doc = SeedDocument(rng);
@@ -114,7 +116,9 @@ public class DocumentFuzzTests
                 // carries — are compared against the ORIGINAL. A query's &amp; came back as the address itself.
                 string la = Links(doc), lb = Links(once);
                 if (la != lb)
-                    failures.Add($"seed {seed} / {name} changed a link address.\n  before: {la}\n  after:  {lb}");
+                    failures.Add($"seed {seed} / {name} changed a link address.\n  before: {la}\n  after:  {lb}\n" +
+                        $"  {Dump(doc)}\n  after:  {Dump(once)}" +
+                        (only ? "\n  written: " + Written(name, doc) : ""));
             }
         }
         if (failures.Count > 0)
@@ -844,6 +848,14 @@ public class DocumentFuzzTests
         string Win(string s) => from >= s.Length ? "(end)" : s[from..Math.Min(s.Length, i + 60)].Replace("\n", "\\n");
         return $"first difference at {i}\n  once : …{Win(a)}…\n  twice: …{Win(b)}…";
     }
+
+    // What the format wrote for the document — for a single-seed run (RICHEDITOR_FUZZ_ONLY), where its length is fine.
+    private static string Written(string format, FlowDocument doc) => format switch
+    {
+        "html" => HtmlDocumentFormatter.ToHtml(doc),
+        "rtf" => RtfDocumentFormatter.Write(doc),
+        _ => "(not a text format)",
+    };
 
     private static string Dump(FlowDocument doc) => "doc: " + Trunc(Shape(doc));
 
