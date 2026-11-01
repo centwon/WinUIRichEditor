@@ -192,7 +192,7 @@ public static class HtmlDocumentFormatter
             // An element node anywhere is the discriminator: markup in, empty paragraph out.
             bool wasMarkup = root.Descendants().Any(n => n.NodeType == HtmlNodeType.Element);
             var p = new Paragraph();
-            if (!wasMarkup) p.Inlines.Add(new Run { Text = HtmlEntity.DeEntitize(html) });
+            if (!wasMarkup) p.Inlines.Add(new Run { Text = Decode(html) });
             flowDoc.Blocks.Add(p);
         }
         return flowDoc;
@@ -202,7 +202,7 @@ public static class HtmlDocumentFormatter
     {
         var result = new Dictionary<string, byte[]?>();
         var urls = doc.DocumentNode.Descendants("img")
-            .Select(n => n.GetAttributeValue("src", ""))
+            .Select(n => Attr(n, "src"))
             .Where(s => s.StartsWith("http"))
             .Distinct()
             .ToList();
@@ -211,7 +211,24 @@ public static class HtmlDocumentFormatter
         using var cts = new System.Threading.CancellationTokenSource(RemoteImageBudget);
         async System.Threading.Tasks.Task<(string, byte[]?)> Fetch(string url)
         {
-            try { return (url, await Http.GetByteArrayAsync(url, cts.Token).ConfigureAwait(false)); }
+            // Read up to the picture bound every other source has (DocumentPackage.MaxPictureBytes): GetByteArrayAsync
+            // buffers up to 2 GB, and the page being pasted chooses the URL.
+            try
+            {
+                using var resp = await Http.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+                resp.EnsureSuccessStatusCode();
+                if (resp.Content.Headers.ContentLength > DocumentPackage.MaxPictureBytes) return (url, null);
+                using var body = await resp.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
+                using var ms = new System.IO.MemoryStream();
+                var chunk = new byte[81920];
+                int n;
+                while ((n = await body.ReadAsync(chunk, cts.Token).ConfigureAwait(false)) > 0)
+                {
+                    ms.Write(chunk, 0, n);
+                    if (ms.Length > DocumentPackage.MaxPictureBytes) return (url, null);
+                }
+                return (url, ms.ToArray());
+            }
             catch (Exception ex) { RichEditorDiagnostics.Report(ex); return (url, null); }
         }
         foreach (var (url, bytes) in await System.Threading.Tasks.Task.WhenAll(urls.Select(Fetch)).ConfigureAwait(false))
@@ -261,7 +278,7 @@ public static class HtmlDocumentFormatter
             string? childLink = linkUri;
             if (name == "a")
             {
-                var href = child.GetAttributeValue("href", "");
+                var href = Attr(child, "href");
                 if (!string.IsNullOrEmpty(href)) childLink = SafeHref(href);
             }
             bool hasLink = !string.IsNullOrEmpty(childLink);
@@ -274,14 +291,14 @@ public static class HtmlDocumentFormatter
                 // <img> case — the pending paragraph, else the preceding one, else a new one. Without
                 // this an inline table came back as a BLOCK table and permanently split its host
                 // paragraph on every save/load. Foreign HTML carries no marker and still lands as a block.
-                if (tbl != null && child.GetAttributeValue("data-are-inline", "") == "1")
+                if (tbl != null && Attr(child, "data-are-inline") == "1")
                 {
                     var it = new InlineTable { Table = tbl };
                     // `data-are-opens` says the table was the FIRST thing in its paragraph. There is then
                     // no earlier paragraph of its own to rejoin, and taking the preceding one merges two
                     // paragraphs and swallows it — and "a paragraph holding nothing but the table" is the
                     // ordinary shape of an inline table, so this is the common case.
-                    bool opensParagraph = child.GetAttributeValue("data-are-opens", "") == "1";
+                    bool opensParagraph = Attr(child, "data-are-opens") == "1";
                     if (current == null && !opensParagraph && flow.Blocks.Count > 0 && flow.Blocks[^1] is Paragraph lastPara)
                     {
                         // Reopen that paragraph as the pending one (Flush re-adds it): HTML parsers close
@@ -314,7 +331,7 @@ public static class HtmlDocumentFormatter
                         // block-or-media), so `current` is null by the time we get here, and rejoining the
                         // PRECEDING paragraph swallowed the image's line — on every second round trip a
                         // picture on its own line jumped up into the paragraph above it.
-                        bool imgOpens = child.GetAttributeValue("data-are-opens", "") == "1";
+                        bool imgOpens = Attr(child, "data-are-opens") == "1";
                         if (current != null)
                             current.Inlines.Add(icon);
                         else if (!imgOpens && flow.Blocks.Count > 0 && flow.Blocks[flow.Blocks.Count - 1] is Paragraph lastP)
@@ -355,7 +372,7 @@ public static class HtmlDocumentFormatter
             }
             else if (name == "#text")
             {
-                string t = HtmlEntity.DeEntitize(child.InnerText);
+                string t = Decode(child.InnerText);
                 if (!IsCollapsibleWhitespace(t))
                 {
                     TakeSpace();
@@ -409,7 +426,7 @@ public static class HtmlDocumentFormatter
                     pre: name == "pre"); // <pre> keeps its whitespace/newlines verbatim
                 // Empty elements are dropped — foreign HTML uses them for spacing — unless this export
                 // marked one as a blank line the author actually typed (see data-are-empty).
-                bool markedEmpty = child.GetAttributeValue("data-are-empty", "") == "1";
+                bool markedEmpty = Attr(child, "data-are-empty") == "1";
                 // A marked paragraph carries a <br> so outside renderers give it a line; that <br> is the blank
                 // line's rendering, not its content, and reading it back would turn one blank line into two.
                 if (markedEmpty) p.Inlines.Clear();
@@ -482,7 +499,7 @@ public static class HtmlDocumentFormatter
             // the author made (data-are-empty, as for paragraphs), and then its <br> is rendering, not content.
             // Dropped regardless, a blank numbered item vanished on the first round trip, and the items either
             // side could merge into one list on the second and lose a marker (fuzz seed 8178, 2026-09-24).
-            bool markedEmpty = child.GetAttributeValue("data-are-empty", "") == "1";
+            bool markedEmpty = Attr(child, "data-are-empty") == "1";
             if (markedEmpty) p.Inlines.Clear();
             if (p.Inlines.Count > 0 || markedEmpty) flow.Blocks.Add(p);
 
@@ -494,7 +511,7 @@ public static class HtmlDocumentFormatter
 
     private static string? ReadStyleValue(HtmlNode node, string prop)
     {
-        var style = node.GetAttributeValue("style", "");
+        var style = Attr(node, "style");
         if (string.IsNullOrEmpty(style)) return null;
         var m = System.Text.RegularExpressions.Regex.Match(style, prop + @"\s*:\s*([^;]+)",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -503,8 +520,8 @@ public static class HtmlDocumentFormatter
 
     private static TextAlignment ReadAlign(HtmlNode node)
     {
-        string a = node.GetAttributeValue("align", "").ToLowerInvariant();
-        var style = node.GetAttributeValue("style", "").ToLowerInvariant();
+        string a = Attr(node, "align").ToLowerInvariant();
+        var style = Attr(node, "style").ToLowerInvariant();
         var m = System.Text.RegularExpressions.Regex.Match(style, "text-align\\s*:\\s*(left|center|right|justify)");
         if (m.Success) a = m.Groups[1].Value;
         return a switch { "center" => TextAlignment.Center, "right" => TextAlignment.Right, "justify" => TextAlignment.Justify, _ => TextAlignment.Left };
@@ -536,7 +553,7 @@ public static class HtmlDocumentFormatter
     {
         foreach (var c in n.ChildNodes)
         {
-            if (c.Name.Equals("table", StringComparison.OrdinalIgnoreCase) && c.GetAttributeValue("data-are-inline", "") == "1")
+            if (c.Name.Equals("table", StringComparison.OrdinalIgnoreCase) && Attr(c, "data-are-inline") == "1")
                 continue;
             if ((BlockOrMedia.Contains(c.Name) && !c.Name.Equals("img", StringComparison.OrdinalIgnoreCase))
                 || HasBlockChild(c)) return true;
@@ -566,7 +583,7 @@ public static class HtmlDocumentFormatter
     // CSS margins are deliberately not read).
     private static void ApplyMarginMarker(HtmlNode node, Paragraph p)
     {
-        var v = node.GetAttributeValue("data-are-m", "");
+        var v = Attr(node, "data-are-m");
         if (string.IsNullOrEmpty(v)) return;
         var parts = v.Split(',');
         if (parts.Length != 3) return;
@@ -706,11 +723,11 @@ public static class HtmlDocumentFormatter
     // decode is deferred to the render layer. Returns (null,0,0,null) on failure/unsupported source.
     private static (byte[]?, double, double, string?) LoadImage(HtmlNode node)
     {
-        var src = node.GetAttributeValue("src", "");
+        var src = Attr(node, "src");
         if (string.IsNullOrEmpty(src)) return (null, 0, 0, null);
 
-        string altAttr = node.GetAttributeValue("alt", "");
-        string? alt = string.IsNullOrWhiteSpace(altAttr) ? null : HtmlEntity.DeEntitize(altAttr);
+        string altAttr = Attr(node, "alt");
+        string? alt = string.IsNullOrWhiteSpace(altAttr) ? null : altAttr;
         double declW = ReadPx(node, "width", "width");
         double declH = ReadPx(node, "height", "height");
 
@@ -779,6 +796,35 @@ public static class HtmlDocumentFormatter
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return false; }
     }
 
+    // An attribute's value with its entities decoded. HtmlAgilityPack hands attribute text back raw (its
+    // BackwardCompatibility default), so a link's `&amp;` stayed in the URL — and the writer escaped it again, growing
+    // by one `amp;` per HTML round trip — and Chrome's `font-family: &quot;Malgun Gothic&quot;` read as the family
+    // "&quot" (the style regexes stop at the `;` inside `&quot;`). Skips the copy when there is no `&`, which a data:
+    // URI picture never has. (Upstream code review, 2026-11-01.)
+    private static string Attr(HtmlNode node, string name)
+    {
+        string v = node.GetAttributeValue(name, "");
+        return v.Contains('&') ? Decode(v) : v;
+    }
+
+    // HtmlEntity.DeEntitize, plus numeric references past U+FFFF: it makes a char of the number, which fails for an
+    // emoji's &#128512; / &#x1F600; and leaves the reference in the text as it was.
+    private static readonly System.Text.RegularExpressions.Regex AstralRef =
+        new(@"&#(?:[xX]([0-9a-fA-F]{5,6})|([0-9]{5,7}));", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static string Decode(string text)
+    {
+        if (text.Contains("&#", StringComparison.Ordinal))
+            text = AstralRef.Replace(text, m =>
+            {
+                int cp = m.Groups[1].Success
+                    ? int.Parse(m.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture)
+                    : int.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+                return cp is > 0xFFFF and <= 0x10FFFF ? char.ConvertFromUtf32(cp) : m.Value;
+            });
+        return HtmlEntity.DeEntitize(text);
+    }
+
     // A link's address, or null for a script link (javascript:, vbscript:, data:). The text stays; only the link
     // goes. Kept, a pasted page's script link was written back out as an <a href> into exported and clipboard HTML
     // (upstream round 34, user decision: drop on read). Checked the way a browser reads a scheme: entities decoded,
@@ -786,7 +832,7 @@ public static class HtmlDocumentFormatter
     internal static string? SafeHref(string href)
     {
         var sb = new StringBuilder();
-        foreach (char ch in HtmlEntity.DeEntitize(href))
+        foreach (char ch in Decode(href))
         {
             if (ch <= ' ') continue;
             if (ch == ':') break;
@@ -799,14 +845,14 @@ public static class HtmlDocumentFormatter
 
     private static double ReadPx(HtmlNode node, string attr, string cssProp)
     {
-        var a = node.GetAttributeValue(attr, "").Trim();
+        var a = Attr(node, attr).Trim();
         // HWP emits nonstandard unit suffixes in the ATTRIBUTES (width="168pt"); accept pt (→px ×4/3)
         // and px so those sizes aren't silently dropped. Percentages still fall through (NaN).
         double mult = 1;
         if (a.EndsWith("pt", StringComparison.OrdinalIgnoreCase)) { mult = 96.0 / 72.0; a = a[..^2]; }
         else if (a.EndsWith("px", StringComparison.OrdinalIgnoreCase)) a = a[..^2];
         if (double.TryParse(a, System.Globalization.CultureInfo.InvariantCulture, out var v)) return v * mult;
-        var style = node.GetAttributeValue("style", "");
+        var style = Attr(node, "style");
         if (!string.IsNullOrEmpty(style))
         {
             var m = System.Text.RegularExpressions.Regex.Match(style, cssProp + "\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)px",
@@ -862,13 +908,13 @@ public static class HtmlDocumentFormatter
             bool childInLink = inLink || name == "a";
             if (name == "a")
             {
-                var href = child.GetAttributeValue("href", "");
+                var href = Attr(child, "href");
                 if (!string.IsNullOrEmpty(href)) cu = SafeHref(href);
             }
 
-            bool childOwnColor = ownColor || child.GetAttributeValue("data-are-fg", "") == "1";
+            bool childOwnColor = ownColor || Attr(child, "data-are-fg") == "1";
 
-            ApplyInlineStyle(child.GetAttributeValue("style", ""), ref cw, ref cs, ref cc, ref sz, ref cbg, ref cfam, ref cunder, ref cstrike);
+            ApplyInlineStyle(Attr(child, "style"), ref cw, ref cs, ref cc, ref sz, ref cbg, ref cfam, ref cunder, ref cstrike);
 
             // Links stay visually distinct (blue) regardless of the SITE'S own inline color — foreign
             // pages style anchors dark, or white for button text, and either disappears in this editor.
@@ -878,7 +924,7 @@ public static class HtmlDocumentFormatter
 
             if (name == "#text")
             {
-                string text = HtmlEntity.DeEntitize(child.InnerText);
+                string text = Decode(child.InnerText);
                 if (pre)
                 {
                     // Preformatted: whitespace and newlines are content (code blocks); default to a
@@ -997,7 +1043,7 @@ public static class HtmlDocumentFormatter
 
     private static double ReadIndentPx(HtmlNode node)
     {
-        var style = node.GetAttributeValue("style", "").ToLowerInvariant();
+        var style = Attr(node, "style").ToLowerInvariant();
         var m = System.Text.RegularExpressions.Regex.Match(style, "margin-left\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt)?");
         if (!m.Success) m = System.Text.RegularExpressions.Regex.Match(style, "padding-left\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt)?");
         if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0)
@@ -1008,7 +1054,7 @@ public static class HtmlDocumentFormatter
     // A cell's vertical alignment from the valign attribute or CSS vertical-align.
     private static CellVerticalAlignment ReadCellVAlign(HtmlNode td)
     {
-        string v = td.GetAttributeValue("valign", "").ToLowerInvariant();
+        string v = Attr(td, "valign").ToLowerInvariant();
         if (v.Length == 0) v = ReadStyleValue(td, "vertical-align")?.ToLowerInvariant() ?? "";
         return v switch
         {
@@ -1021,7 +1067,7 @@ public static class HtmlDocumentFormatter
     // Background color from a node's style="background[-color]:..." or legacy bgcolor="..." attr.
     private static Color? ReadBackground(HtmlNode node)
     {
-        var style = node.GetAttributeValue("style", "");
+        var style = Attr(node, "style");
         if (!string.IsNullOrEmpty(style))
         {
             var m = System.Text.RegularExpressions.Regex.Match(style.ToLowerInvariant(), "background(?:-color)?\\s*:\\s*([^;]+)");
@@ -1031,7 +1077,7 @@ public static class HtmlDocumentFormatter
                 if (b != null) return b;
             }
         }
-        var bg = node.GetAttributeValue("bgcolor", "");
+        var bg = Attr(node, "bgcolor");
         return string.IsNullOrEmpty(bg) ? null : ParseCssColor(bg.Trim());
     }
 
@@ -1373,9 +1419,8 @@ public static class HtmlDocumentFormatter
         }
         if (inline is not Run r || r.Text == null) return;
 
-        // The two-argument overload: the one-argument Entitize leaves & < > as they are, so text that looked
-        // like markup ("<img onerror=…>") went out as a live tag and came back as nothing.
-        string t = HtmlEntity.Entitize(r.Text, true, true);
+        // Escaped, so text that looked like markup ("<img onerror=…>") goes out as text, not a live tag.
+        string t = TextEscape(r.Text);
         t = PreserveRunsOfSpaces(t);
         t = PreserveDroppableSpaces(t, closesParagraph);
         // Soft line breaks (Shift+Enter, stored as '\n' in run text) must survive as <br/> — a literal
@@ -1483,6 +1528,29 @@ public static class HtmlDocumentFormatter
         int j = s.Length;
         while (j > 0 && s[j - 1] == ' ') j--;
         return s[..j] + string.Concat(Enumerable.Repeat("&nbsp;", s.Length - j));
+    }
+
+    // Text content: & < > " as entities, everything past ASCII as a numeric reference by CODE POINT. HtmlEntity.Entitize
+    // numbers UTF-16 units, so an emoji went out as two surrogate references (&#55357;&#56832;), which every HTML reader
+    // but ours turns into two U+FFFD.
+    private static string TextEscape(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            char ch = s[i];
+            if (ch == '&') sb.Append("&amp;");
+            else if (ch == '<') sb.Append("&lt;");
+            else if (ch == '>') sb.Append("&gt;");
+            else if (ch == '"') sb.Append("&quot;");
+            else if (ch > 127)
+            {
+                int cp = char.IsSurrogatePair(s, i) ? char.ConvertToUtf32(ch, s[++i]) : ch;
+                sb.Append("&#").Append(cp).Append(';');
+            }
+            else sb.Append(ch);
+        }
+        return sb.ToString();
     }
 
     private static string AttrEscape(string s) =>

@@ -22,6 +22,13 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 | AOT | self-contained 게시 성공(2026-09-29): 네이티브 exe **15.2MB**, 게시 **74.7MB**(pdb 제외), CoreCLR·관리 dll 없음 |
 | 공개 표면 | **670**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 추가 + **개명 하나**(`TextForeground`→`DefaultForeground`, SemVer 예외로 CHANGELOG에 기록), Unshipped 비어 있음 |
 
+### 업스트림 코드 리뷰 반영 (2026-11-01, 미릴리스)
+AvaloniaRichEditor `src` 전체 리뷰(같은 날, 브랜치 `fix/review-2026-11-01`)의 결함 중 포트에도 있던 8건을 같은 방식으로 고침 —
+HTML 속성 엔티티 미해독(`Attr`), 이모지 서로게이트 내보내기(`TextEscape`)·`&#128512;` 읽기(`Decode`), RTF 머리글/바닥글의
+`\{ \} \\ \~ \'hh`·`\_`, 붙여넣기 await 뒤 재확인, 원격 그림 256 MB 상한. 상세는 CHANGELOG `[Unreleased]`.
+⚠ **.NET SDK 없는 환경에서 수정 — 빌드·`ReviewFixes20261101Tests`·반증 미실행, 로컬 확인 필요.**
+업스트림에 없던 포트 쪽 기능: RTF 형광펜·HYPERLINK 필드 읽기/쓰기(업스트림으로 백포트 중). `ReplaceAll` O(일치×문단)은 양쪽 보류.
+
 ### 1.3.0 게시 체크리스트 (2026-10-17, 사용자 결정: 1.x로 내고 개명은 SemVer 예외로 기록, 09-30 정리분에 합쳐 1.3.0)
 - [x] `PublicAPI.Unshipped.txt` → `Shipped.txt` 이관(제거 3·추가 10 → 670줄), Unshipped 비움
 - [x] CHANGELOG `[1.3.0] - 2026-10-17` 한 절로 합침 — 맨 앞에 SemVer 예외와 "올릴 때 확인할 것"(개명·ViewMode·InsertText·경량 JSON 포함)

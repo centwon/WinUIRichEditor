@@ -211,6 +211,11 @@ public partial class RichEditor
     public async Task PasteAsync(bool plainOnly = false)
     {
         if (IsReadOnly || Document == null || _caret.Paragraph == null) return;
+        // Every await below can outlast a change of document or of read-only (a pasted page's pictures download for up to
+        // 5 s); the paste then landed in the newly loaded document, or in one that had gone read-only. Checked before each
+        // insert's undo step. (Upstream code review, 2026-11-01.)
+        var pasteInto = Document;
+        bool Stale() => !ReferenceEquals(Document, pasteInto) || IsReadOnly;
         DataPackageView view;
         try { view = await RetryWhileClipboardBusyAsync(() => Task.FromResult(Clipboard.GetContent())); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
@@ -227,6 +232,7 @@ public partial class RichEditor
         {
             var snapshot = AdaptToCapabilities(_internalClipboardDoc.Clone(), out bool emptied);
             if (emptied) return; // everything it held is disallowed here: nothing to paste
+            if (Stale()) return;
             PushUndo(null);
             if (HasSelection) DeleteSelection();
             InsertDocumentAtCaret(snapshot);
@@ -270,6 +276,7 @@ public partial class RichEditor
                         }
                         chosen = AdaptToCapabilities(chosen, out bool emptiedRtf);
                         if (emptiedRtf) return;
+                        if (Stale()) return;
                         PushUndo(null);
                         if (HasSelection) DeleteSelection();
                         InsertDocumentAtCaret(chosen);
@@ -297,6 +304,7 @@ public partial class RichEditor
                         await HtmlDocumentFormatter.ParseHtmlAsync(fragment, AllowLocalFileImagesOnPaste, AllowRemoteImagesOnPaste),
                         out bool emptiedHtml);
                     if (emptiedHtml) return;
+                    if (Stale()) return;
                     PushUndo(null);
                     if (HasSelection) DeleteSelection();
                     InsertDocumentAtCaret(pd);
@@ -321,6 +329,7 @@ public partial class RichEditor
                 {
                     // Snapshot BEFORE deleting the replaced selection, so one undo restores both the
                     // removed image and the text it replaced (the insert must not push its own step).
+                    if (Stale()) return;
                     PushUndo(null);
                     if (HasSelection) DeleteSelection();
                     if (meta is { Inline: true } im)
@@ -337,6 +346,7 @@ public partial class RichEditor
         // 5) Tab-separated text (e.g. Excel/HWP cells copied without HTML) -> rebuild as a table.
         if (!plainOnly && AllowRichPaste && AllowTables && CaretCanHostBlock && !string.IsNullOrEmpty(clipText) && LooksTabular(clipText!))
         {
+            if (Stale()) return;
             PushUndo(null);
             if (HasSelection) DeleteSelection();
             InsertTableFromTsv(clipText!);
@@ -346,7 +356,7 @@ public partial class RichEditor
 
         // 6) Plain text. Multi-line text splits into PARAGRAPHS (Word/HWP behavior — Enter = new
         //    paragraph in this model); single-line text splices inline.
-        if (clipText != null) InsertPlainTextBlock(clipText);
+        if (clipText != null && !Stale()) InsertPlainTextBlock(clipText);
     }
 
     // Inserts plain text at the caret, mapping newlines to paragraph breaks. Falls back to the inline

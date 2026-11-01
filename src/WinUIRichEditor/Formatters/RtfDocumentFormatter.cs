@@ -304,11 +304,12 @@ internal sealed class RtfParser
         if (!char.IsLetter(c))
         {
             _i++;
-            if (_st.Dest == Dest.Normal)
-            {
-                if (c == '\\' || c == '{' || c == '}') AppendByte(c);
-                else if (c == '~') AppendByte(' ');
-            }
+            // AppendByte keeps these to body and header/footer text: gated on the body alone, a header written as
+            // "Report \{draft\}" read back as "Report draft", and Word's non-breaking hyphen "e\_mail" came in as "email".
+            // (Upstream code review, 2026-11-01.)
+            if (c == '\\' || c == '{' || c == '}') AppendByte(c);
+            else if (c == '~') AppendByte(' ');
+            else if (c == '_') AppendByte('\u2011');
             if (c == '*') _st.Dest = Dest.Skip;
             return;
         }
@@ -355,7 +356,8 @@ internal sealed class RtfParser
         string hex = _s.Substring(_i, 2);
         _i += 2;
         if (!byte.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b)) return;
-        if (_st.Dest == Dest.Normal) _bytes.Add(b);
+        // Header/footer text too: a Word/HWP header in code-page bytes (\'b0\'a1…) came in empty.
+        if (_st.Dest is Dest.Normal or Dest.PageChrome) _bytes.Add(b);
         else if (_st.Dest == Dest.FontTable) _ftblBytes.Add(b); // CJK font names arrive as \'hh bytes
     }
 
