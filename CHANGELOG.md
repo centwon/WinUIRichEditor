@@ -6,6 +6,27 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 수정 — HTML 속성 엔티티·이모지, RTF 머리글 글자, 붙여넣기 재확인 (업스트림 코드 리뷰 2026-11-01)
+
+- **HTML 속성을 엔티티 해독해서 읽는다.** HtmlAgilityPack은 속성 값을 원문 그대로 준다. 붙여넣은 링크
+  `href="…?a=1&amp;b=2"`가 `&amp;`를 품은 채 들어와(누르면 엉뚱한 주소) 쓰기가 한 번 더 이스케이프해 HTML 왕복마다
+  `amp;`가 하나씩 늘었다. `&amp;`가 든 원격 `<img src>`는 틀린 주소로 받았다. Chrome의
+  `style="font-family: &quot;Malgun Gothic&quot;"`은 글꼴 `&quot`이 됐다(스타일 정규식이 `&quot;`의 `;`에서 끊김).
+- **`ToHtml()`·클립보드 HTML의 이모지.** `HtmlEntity.Entitize`가 UTF-16 단위로 번호를 매겨 😀가 `&#55357;&#56832;`
+  (브라우저·Word·HWP에서 U+FFFD 두 개)로 나갔다. 이제 코드 포인트로(`&#128512;`) 쓰고, 읽기는 U+FFFF 너머 숫자 참조를
+  해독한다(HtmlAgilityPack은 `&#128512;`·`&#x1F600;`을 글자 그대로 남겼다).
+- **RTF 머리글/바닥글**: `\{ \} \\ \~`와 코드 페이지 `\'hh`를 본문에서만 받았다 — 우리 RTF의 머리글 `Report {draft}`가
+  `Report draft`로 돌아오고, 코드 페이지 바이트로 된 Word/HWP 머리글은 비어 들어왔다. `\_`(Word의 줄바꿈 없는 하이픈)는
+  버리지 않고 U+2011로 읽는다.
+- **붙여넣기가 await 뒤마다 편집기를 다시 확인한다**: 클립보드를 읽거나 붙여넣은 페이지의 그림을 받는 동안(최대 5초)
+  문서가 바뀌거나 읽기 전용이 되면 붙여넣기가 새 문서·읽기 전용 문서에 들어갔다.
+- **붙여넣기의 원격 그림은 256 MB까지만 읽는다**(`DocumentPackage.MaxPictureBytes`, 다른 그림 경로와 같은 상한).
+  `GetByteArrayAsync`는 2 GB까지 버퍼링했다.
+- **RTF 링크 필드 읽기 두 가지**: 건너뛰는 목적지(`{\*\…}`) 안 필드의 `\fldrslt`가 그룹을 본문으로 바꿔 숨은 글자가
+  본문에 들어왔다. 그리고 쓰기가 링크 주소를 `\uN`·`\\`로 이스케이프하는데 지시문 읽기가 둘 다 버려, `…/wiki/한글`이
+  `…/wiki/`로, `file:///C:\docs\a.txt`가 `file:///C:docsa.txt`로 돌아왔다.
+- 테스트: `ReviewFixes20261101Tests`. 붙여넣기·다운로드 상한은 자동 테스트 없음.
+
 ### 보안 — ⚠ 마크업처럼 생긴 글자가 HTML에 마크업으로 나감
 
 - **`ToHtml()`과 클립보드 HTML이 글자의 `&`·`<`·`>`를 이스케이프하지 않았다.** 쓰기가 HtmlAgilityPack의 인자 하나짜리

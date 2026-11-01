@@ -304,11 +304,14 @@ internal sealed class RtfParser
         if (!char.IsLetter(c))
         {
             _i++;
-            if (_st.Dest == Dest.Normal)
-            {
-                if (c == '\\' || c == '{' || c == '}') AppendByte(c);
-                else if (c == '~') AppendByte(' ');
-            }
+            // AppendByte keeps these to body and header/footer text: gated on the body alone, a header written as
+            // "Report \{draft\}" read back as "Report draft", and Word's non-breaking hyphen "e\_mail" came in as "email".
+            // (Upstream code review, 2026-11-01.)
+            // A link address is written through the same escaping, so its `\` and braces belong to the instruction.
+            if ((c == '\\' || c == '{' || c == '}') && _st.Dest == Dest.FieldInst) _fldInst.Append(c);
+            else if (c == '\\' || c == '{' || c == '}') AppendByte(c);
+            else if (c == '~') AppendByte(' ');
+            else if (c == '_') AppendByte('\u2011');
             if (c == '*') _st.Dest = Dest.Skip;
             return;
         }
@@ -355,7 +358,8 @@ internal sealed class RtfParser
         string hex = _s.Substring(_i, 2);
         _i += 2;
         if (!byte.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b)) return;
-        if (_st.Dest == Dest.Normal) _bytes.Add(b);
+        // Header/footer text too: a Word/HWP header in code-page bytes (\'b0\'a1…) came in empty.
+        if (_st.Dest is Dest.Normal or Dest.PageChrome) _bytes.Add(b);
         else if (_st.Dest == Dest.FontTable) _ftblBytes.Add(b); // CJK font names arrive as \'hh bytes
     }
 
@@ -484,9 +488,9 @@ internal sealed class RtfParser
             case "field": _pendingFieldUrl = null; break;
             case "fldinst": _st.Dest = Dest.FieldInst; _fldInst.Clear(); break;
             case "fldrslt":
-                // Not from inside the page chrome: a footer's NUMPAGES field has a ldrslt group, and
-                // switching to Normal there would drop its text into the document body.
-                if (_st.Dest != Dest.PageChrome) { _st.Dest = Dest.Normal; _st.LinkUrl = _pendingFieldUrl; }
+                // The result group already reads as its field does — only the link is added. Switching to Normal
+                // put the text of a field in a skipped destination (or a footer's NUMPAGES) into the document body.
+                if (_st.Dest == Dest.Normal) _st.LinkUrl = _pendingFieldUrl;
                 break;
 
             case "u": EmitUnicode(p ?? 0); break;
@@ -814,6 +818,9 @@ internal sealed class RtfParser
             FlushFtblBytes();
             _ftblName.Append((char)code); // font names may arrive as \uN too
         }
+        // A link address with non-ASCII (…/wiki/한글) is written as \uN too.
+        else if (_st.Dest == Dest.FieldInst && code >= 0 && code <= 0xFFFF)
+            _fldInst.Append((char)code);
         for (int k = 0; k < _st.UnicodeSkip && _i < _s.Length; k++)
         {
             if (_s[_i] == '\\')
