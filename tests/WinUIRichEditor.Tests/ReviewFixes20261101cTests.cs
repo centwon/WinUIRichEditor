@@ -70,4 +70,22 @@ public class ReviewFixes20261101cTests
         Assert.Equal("https://example.com/2", link.NavigateUri);
         Assert.Contains(p.Inlines.OfType<Run>(), r => r.Text == "after");
     }
+
+    // The tag is one of <li>/<blockquote>/<h1..6>; what lost was dropped: a quoted list item's quote, a quote's heading level.
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 3)]
+    [InlineData(true, 2)]
+    public void QuoteAndHeading_SurviveHtml_UnderAListItemOrAQuote(bool listItem, int heading)
+    {
+        var para = new Paragraph { IsQuote = true, HeadingLevel = heading, Inlines = { new Run { Text = "q" } } };
+        if (listItem) para.ListType = ListKind.Bullet;
+        var doc = new FlowDocument();
+        doc.Blocks.Add(para);
+
+        var p = Assert.Single(HtmlDocumentFormatter.ParseHtml(HtmlDocumentFormatter.ToHtml(doc)).Blocks.OfType<Paragraph>());
+        Assert.True(p.IsQuote);
+        Assert.Equal(heading, p.HeadingLevel);
+        Assert.Equal(listItem ? ListKind.Bullet : ListKind.None, p.ListType);
+    }
 }

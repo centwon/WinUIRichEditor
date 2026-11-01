@@ -12,6 +12,7 @@ and follows [Semantic Versioning](https://semver.org/).
   `font-size`의 `em`/`rem`/`%`를 px로 읽었다(1.2em → 0.9pt). `text-decoration-color`·`border-color`를 글자색으로 읽었다.
 - `RichEditorView`: 용지·방향·여백·보기 모드가 바뀌면 상태 표시줄 쪽 수를 다시 셈(다음 캐럿 이동까지 옛 값이었다).
 - HTML: 목록 항목 줄의 인라인 표가 읽기에서 칸 글자로 납작해졌다(구조·다른 칸·그 안의 링크 손실). 넓힌 퍼즈의 링크 검사가 찾음(시드 1488).
+- HTML: 인용인 목록 항목이 인용을, 제목인 인용이 제목 단계를 잃었다(태그는 하나뿐) — `data-are-q` 추가, `data-are-h`를 `<blockquote>`에도.
 - 퍼즈: `RICHEDITOR_FUZZ_ONLY=N`으로 시드 하나만, 링크 실패에 문서 모양·쓴 내용 출력.
 - 테스트: `ReviewFixes20261101cTests`.
 
