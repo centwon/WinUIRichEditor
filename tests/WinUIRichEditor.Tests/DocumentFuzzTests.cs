@@ -110,6 +110,11 @@ public class DocumentFuzzTests
                 string a = Shape(once), b = Shape(twice);
                 if (a != b)
                     failures.Add($"seed {seed} / {name} is not idempotent — cycle 2 differs from cycle 1.\n" + Diff(a, b));
+                // Idempotency cannot see a loss every cycle makes alike, so the link addresses — which every format
+                // carries — are compared against the ORIGINAL. A query's &amp; came back as the address itself.
+                string la = Links(doc), lb = Links(once);
+                if (la != lb)
+                    failures.Add($"seed {seed} / {name} changed a link address.\n  before: {la}\n  after:  {lb}");
             }
         }
         if (failures.Count > 0)
@@ -362,7 +367,7 @@ public class DocumentFuzzTests
                     if (rng.Next(2) == 0) r.FontWeight = FontWeightValues.Bold;
                     if (rng.Next(3) == 0) r.Foreground = Color.FromArgb(255, (byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
                     if (rng.Next(4) == 0) r.Background = Color.FromArgb(255, (byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
-                    if (rng.Next(4) == 0) r.NavigateUri = "https://example.com/" + rng.Next(100);
+                    if (rng.Next(4) == 0) r.NavigateUri = RandomLink(rng);
                     // The rest of the character format. Italic, the decorations and an explicit family/size
                     // were never generated, so nothing downstream of them was fuzzed at all — and a
                     // fractional size is the one that has bitten this codebase before (10.5pt never
@@ -521,13 +526,53 @@ public class DocumentFuzzTests
         }
     }
 
+    // Tokens, not chars: an astral character is two UTF-16 units, and picking one unit at a time would make lone
+    // surrogates. The characters each format escapes (& < > " ' { } \) and an emoji were never generated, so every
+    // escaping defect of 2026-11-01 (HTML &amp; growing per cycle, RTF header braces, emoji as two surrogate
+    // references) lived outside what this fuzz could see.
+    private static readonly string[] TextTokens =
+    {
+        "가", "나", "다", "a", "b", "c", " ", "1", "2", "3",
+        "&", "<", ">", "\"", "'", "{", "}", "\\", "\U0001F600", "é", "&amp;", "<b>",
+    };
+
     private static string RandomText(Random rng)
     {
-        const string alphabet = "가나다abc 123";
         var sb = new StringBuilder();
         int n = rng.Next(1, 8);
-        for (int i = 0; i < n; i++) sb.Append(alphabet[rng.Next(alphabet.Length)]);
+        for (int i = 0; i < n; i++) sb.Append(TextTokens[rng.Next(TextTokens.Length)]);
         return sb.ToString();
+    }
+
+    // Link addresses with what their formats escape: a query's &, non-ASCII, a backslash.
+    private static string RandomLink(Random rng) => rng.Next(4) switch
+    {
+        0 => "https://example.com/" + rng.Next(100),
+        1 => "https://example.com/?a=1&b=" + rng.Next(100),
+        2 => "https://ko.wikipedia.org/wiki/한글" + rng.Next(100),
+        _ => @"file:///C:\docs\" + rng.Next(100) + ".txt",
+    };
+
+    // The distinct link addresses on runs with visible text, sorted — a set, so a format that splits or merges the
+    // runs of one link is not reported.
+    private static string Links(FlowDocument doc)
+    {
+        var set = new SortedSet<string>(StringComparer.Ordinal);
+        void Walk(IEnumerable<Block> blocks)
+        {
+            foreach (var b in blocks)
+            {
+                if (b is Paragraph p)
+                    foreach (var inl in p.Inlines)
+                    {
+                        if (inl is Run r && !string.IsNullOrEmpty(r.NavigateUri) && !string.IsNullOrWhiteSpace(r.Text)) set.Add(r.NavigateUri!);
+                        else if (inl is InlineTable it) foreach (var row in it.Table.Cells) foreach (var c in row) Walk(c.Blocks);
+                    }
+                else if (b is TableBlock tb) foreach (var row in tb.Cells) foreach (var c in row) Walk(c.Blocks);
+            }
+        }
+        Walk(doc.Blocks);
+        return string.Join(" | ", set);
     }
 
     private static T? Pick<T>(List<T> xs, Random rng) where T : class => xs.Count == 0 ? null : xs[rng.Next(xs.Count)];
