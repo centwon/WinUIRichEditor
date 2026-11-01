@@ -29,9 +29,11 @@ public partial class RichEditor
     public async Task EditHyperlinkAsync()
     {
         if (Document == null || IsReadOnly || XamlRoot == null) return;
+        var doc = Document;
+        string? current = CurrentLinkUri();
         var box = new TextBox
         {
-            Text = CurrentLinkUri() ?? "https://",
+            Text = current ?? "https://",
             AcceptsReturn = false,
             Width = 360,
         };
@@ -58,8 +60,13 @@ public partial class RichEditor
         ContentDialogResult result;
         try { result = await dlg.ShowAsync(); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
-        if (result == ContentDialogResult.Primary) ApplyHyperlinkFromDialog(box.Text);
-        else if (result == ContentDialogResult.Secondary) SetHyperlink(null);
+        // Not when the document was swapped or went read-only while the dialog was open, and not for OK on the
+        // unchanged address with nothing selected: that re-applied the same link to the caret's word — an undo step
+        // that undid nothing, and a modified document. (Upstream second review, 2026-11-01.)
+        bool stale = !ReferenceEquals(Document, doc) || IsReadOnly;
+        bool unchanged = !HasSelection && current != null && box.Text.Trim() == current;
+        if (!stale && result == ContentDialogResult.Primary && !unchanged) ApplyHyperlinkFromDialog(box.Text);
+        else if (!stale && result == ContentDialogResult.Secondary) SetHyperlink(null);
         _canvas.Focus(FocusState.Programmatic); // back to the caret the dialog was opened from
     }
 

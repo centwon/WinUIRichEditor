@@ -98,11 +98,14 @@ public partial class RichEditor
 
     private async Task ReplaceImageBytesAsync(object imageElement)
     {
-        if (ImageReplacePicker == null) return;
+        if (ImageReplacePicker == null || IsReadOnly) return;
+        var doc = Document;
         byte[]? bytes;
         try { bytes = await ImageReplacePicker(); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
         if (bytes is not { Length: > 0 }) return;
+        // The host's picker can outlast a document swap or a switch to read-only. (Upstream second review, 2026-11-01.)
+        if (Document == null || !ReferenceEquals(Document, doc) || IsReadOnly) return;
         PushUndo(null);
         var mime = ImageMime.Detect(bytes);
         // The cache is keyed by the RawBytes array; drop the OLD bytes' entry (an undo snapshot may
@@ -230,6 +233,7 @@ public partial class RichEditor
     private async Task EditImageAltTextAsync(ImageBlock? block, InlineImage? inline)
     {
         if (IsReadOnly || XamlRoot == null || (block == null && inline == null)) return;
+        var doc = Document;
         var box = new Microsoft.UI.Xaml.Controls.TextBox
         {
             Text = block?.AltText ?? inline?.AltText ?? "",
@@ -252,7 +256,10 @@ public partial class RichEditor
         try { result = await dlg.ShowAsync(); }
         catch (Exception ex) { RichEditorDiagnostics.Report(ex); return; }
         if (result != Microsoft.UI.Xaml.Controls.ContentDialogResult.Primary) return;
+        if (!ReferenceEquals(Document, doc) || IsReadOnly) return; // changed while the dialog was open
         string? alt = string.IsNullOrWhiteSpace(box.Text) ? null : box.Text.Trim();
+        // OK on the unchanged text is not an edit: no undo step, and the document stays unmodified.
+        if (alt == (block?.AltText ?? inline?.AltText)) return;
         PushUndo(null);
         if (block != null) block.AltText = alt;
         else inline!.AltText = alt;
