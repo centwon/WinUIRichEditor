@@ -108,8 +108,8 @@ public class Audit4Tests
         var json = DocumentSerializer.Serialize(Doc(P(new Run { Text = "x" })));
         var future = Regex.Replace(json, "\"Version\"\\s*:\\s*\"[^\"]*\"", "\"Version\":\"3\"");
         Assert.NotEqual(json, future);
-        Assert.ThrowsAny<JsonException>(() => DocumentSerializer.Deserialize(future));
-        DocumentSerializer.Deserialize(Regex.Replace(json, "\"Version\"\\s*:\\s*\"[^\"]*\"", "\"Version\":\"2\""));
+        Assert.ThrowsAny<JsonException>(() => DocumentSerializer.DeserializeDocument(future));
+        DocumentSerializer.DeserializeDocument(Regex.Replace(json, "\"Version\"\\s*:\\s*\"[^\"]*\"", "\"Version\":\"2\""));
     }
 }
 

@@ -1948,23 +1948,7 @@ internal sealed class RtfWriter
     // clipboard copy, since the RTF flavour is the one Word and HWP prefer.
     private static (byte[] bytes, string? mime)? PictBytes(byte[]? rawBytes, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp)
     {
-        if (rawBytes != null && ImageMime.Detect(rawBytes) is "image/png" or "image/jpeg") return (rawBytes, mime);
-        // RTF names only PNG and JPEG blips: a GIF/BMP/WebP went out labelled \pngblip and Word/HWP showed it broken.
-        // Anything else is decoded (WIC) and re-encoded to PNG. (Upstream code review 2026-11-01.)
-        if (rawBytes != null)
-        {
-            var (nw, nh) = ImageInfo.GetPixelSize(rawBytes);
-            if (Controls.ImageDecoder.Decode(rawBytes, (int)Math.Max(1, nw), (int)Math.Max(1, nh)) is not { } px) return null;
-            try
-            {
-                using var decoded = Microsoft.Graphics.Canvas.CanvasBitmap.CreateFromBytes(
-                    Microsoft.Graphics.Canvas.CanvasDevice.GetSharedDevice(), px.Pixels, px.Width, px.Height,
-                    Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
-                var png = ImageEncoder.ToPngBytes(decoded);
-                return png == null ? null : (png, "image/png");
-            }
-            catch (Exception ex) { RichEditorDiagnostics.Report(ex); return null; }
-        }
+        if (rawBytes != null) return (rawBytes, mime);
         var encoded = ImageEncoder.ToPngBytes(bmp);
         return encoded == null ? null : (encoded, "image/png");
     }

@@ -24,7 +24,7 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 
 ### 정책 + 파일별 전수조사 반영 (2026-11-01, 미릴리스)
 정책(사용자 결정, `fix/policy-2026-11-01`): 링크 = 그냥 클릭으로 열림(상류 방식), 그림·표 옆 Backspace/Delete = 선택 먼저.
-전수조사(`fix/audit4-2026-11-01`, 정책 브랜치 위): 그림 인라인/블록 표지(HTML·RTF, RTF는 비PNG/JPEG를 PNG로), CSS `#RGBA`/`#RRGGBBAA`,
+전수조사(`fix/audit4-2026-11-01`, 정책 브랜치 위): 그림 인라인/블록 표지(HTML·RTF; 비PNG/JPEG의 PNG 재인코딩은 원본 바이트 보존 계약과 충돌해 철회), CSS `#RGBA`/`#RRGGBBAA`,
 h4–h6, JSON 열거값/점 없는 버전, 빈 undo 3종, 그림 끔이면 붙여넣기 fetch 안 함, 드롭 파일 한도, 위치 정렬 성능, 정규식 한 번 컴파일.
 `Audit4Tests`·`Audit4ControlTests`. ⚠ SDK 없이 수정 — 미실행.
 

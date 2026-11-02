@@ -17,7 +17,6 @@ and follows [Semantic Versioning](https://semver.org/).
 
 - **그림 종류**: HTML·RTF에서 큰 인라인 그림이 블록으로, 작은 블록 그림이 인라인으로 돌아왔다(크기 규칙이 결정). 쓰기가 종류를
   표시한다(`data-are-inline`/`data-are-block`, `{\*\arpicinl}`/`{\*\arpicblk}`). 표시 없는 입력은 크기 규칙 그대로.
-  RTF는 PNG/JPEG가 아닌 그림을 PNG로 다시 써서 낸다.
 - **CSS 색**: `#RGBA`/`#RRGGBBAA`를 읽는다(모델의 `#AARRGGBB`는 그대로). `font-weight`가 `mso-font-weight` 같은 이름에도 걸리던 것을 상류처럼 막음.
 - **HTML**: 문단 안의 `<h4>`–`<h6>`이 굵게·크기 없이 읽혔다(h1–h3만).
 - **JSON 리더**: 숫자(`"ListType":"7"`)나 쉼표 목록으로 쓴 열거값을 어떤 코드도 다루지 않는 값으로 받았다 — 모르는 이름처럼 기본값.
