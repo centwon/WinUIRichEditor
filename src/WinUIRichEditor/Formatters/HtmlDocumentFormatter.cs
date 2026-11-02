@@ -120,8 +120,8 @@ public static class HtmlDocumentFormatter
     // wrapping <table>. Wrap it so it's recognized.
     private static HtmlDocument LoadHtmlDoc(ref string html)
     {
-        if (System.Text.RegularExpressions.Regex.IsMatch(html, "<tr[\\s>]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-            && !System.Text.RegularExpressions.Regex.IsMatch(html, "<table", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        if (RxTr.IsMatch(html)
+            && !RxTable.IsMatch(html))
             html = "<table>" + html + "</table>";
         // No id index: nothing here looks elements up by id, and keeping it makes removing a subtree walk that
         // subtree recursively (HtmlNode.RemoveAllIDforNode) — the very overflow CapDepth exists to prevent.
@@ -320,7 +320,7 @@ public static class HtmlDocumentFormatter
                 var (bytes, w, h, alt) = LoadImage(child);
                 if (bytes != null)
                 {
-                    if (w < IconMaxSize && h < IconMaxSize)
+                    if (Attr(child, "data-are-inline") == "1" || (Attr(child, "data-are-block") != "1" && w < IconMaxSize && h < IconMaxSize))
                     {
                         // Small icon/logo -> keep on a text line rather than its own block.
                         var icon = new InlineImage { Width = w, Height = h, AltText = alt };
@@ -535,12 +535,28 @@ public static class HtmlDocumentFormatter
     {
         string a = Attr(node, "align").ToLowerInvariant();
         var style = Attr(node, "style").ToLowerInvariant();
-        var m = System.Text.RegularExpressions.Regex.Match(style, "text-align\\s*:\\s*(left|center|right|justify)");
+        var m = RxTextAlign.Match(style);
         if (m.Success) a = m.Groups[1].Value;
         return a switch { "center" => TextAlignment.Center, "right" => TextAlignment.Right, "justify" => TextAlignment.Justify, _ => TextAlignment.Left };
     }
 
     // Heading sizes in points (pt), mirroring RichEditor.HeadingFontSize.
+    // Constant patterns, built once: the static Regex calls went through a 15-entry cache that this file's
+    // patterns alone outnumber, so a paste re-parsed them per style attribute.
+    private static readonly System.Text.RegularExpressions.Regex RxTr = new("<tr[\\s>]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static readonly System.Text.RegularExpressions.Regex RxTable = new("<table", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static readonly System.Text.RegularExpressions.Regex RxTextAlign = new("text-align\\s*:\\s*(left|center|right|justify)");
+    private static readonly System.Text.RegularExpressions.Regex RxCssSpace = new("[ \t\r\n\f\v]+");
+    private static readonly System.Text.RegularExpressions.Regex RxFontWeight = new(@"(?<![\w-])font-weight\s*:\s*([^;]+)");
+    private static readonly System.Text.RegularExpressions.Regex RxUnderline = new("text-decoration[^;]*underline");
+    private static readonly System.Text.RegularExpressions.Regex RxLineThrough = new("text-decoration[^;]*line-through");
+    private static readonly System.Text.RegularExpressions.Regex RxColor = new("(?<![\\w-])color\\s*:\\s*([^;]+)");
+    private static readonly System.Text.RegularExpressions.Regex RxBackground = new("background(?:-color)?\\s*:\\s*([^;]+)");
+    private static readonly System.Text.RegularExpressions.Regex RxFontFamily = new("font-family\\s*:\\s*([^;]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static readonly System.Text.RegularExpressions.Regex RxFontSize = new("font-size\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt|rem|em|%)?");
+    private static readonly System.Text.RegularExpressions.Regex RxMarginLeft = new("margin-left\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt)?");
+    private static readonly System.Text.RegularExpressions.Regex RxPaddingLeft = new("padding-left\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt)?");
+
     private static double HeadingSize(string name, out FontWeight weight)
     {
         switch (name)
@@ -630,7 +646,7 @@ public static class HtmlDocumentFormatter
     // single space and now keep their width.
     private static string CollapseWhitespace(string s)
     {
-        s = System.Text.RegularExpressions.Regex.Replace(s, "[ \t\r\n\f\v]+", " ");
+        s = RxCssSpace.Replace(s, " ");
         return s.Replace(' ', ' ');
     }
 
@@ -919,9 +935,8 @@ public static class HtmlDocumentFormatter
             if (name == "i" || name == "em") cs = FontStyle.Italic;
             if (name == "u") cunder = true;
             if (name == "s" || name == "strike" || name == "del") cstrike = true;
-            if (name == "h1") { cw = FontWeightValues.Bold; sz = 20; } // pt, mirrors HeadingSize
-            if (name == "h2") { cw = FontWeightValues.Bold; sz = 16; }
-            if (name == "h3") { cw = FontWeightValues.Bold; sz = 14; }
+            // h1..h6 (h4..h6 were missing here, so a heading inside a paragraph lost its bold and size).
+            if (name.Length == 2 && name[0] == 'h' && name[1] is >= '1' and <= '6') { sz = HeadingSize(name, out var hw); cw = hw; }
 
             bool childInLink = inLink || name == "a";
             if (name == "a")
@@ -993,7 +1008,7 @@ public static class HtmlDocumentFormatter
         // Scope the test to the font-weight DECLARATION'S VALUE. Scanning the whole style string let an
         // unrelated declaration decide the weight: "font-weight:normal;width:600px" contains ":600" and
         // came out bold. A numeric compare also covers weights the old fixed list missed (e.g. 650).
-        var wm = System.Text.RegularExpressions.Regex.Match(s, @"font-weight\s*:\s*([^;]+)");
+        var wm = RxFontWeight.Match(s);
         if (wm.Success)
         {
             string wv = wm.Groups[1].Value.Trim();
@@ -1008,25 +1023,24 @@ public static class HtmlDocumentFormatter
                 weight = FontWeightValues.Normal;
         }
         if (s.Contains("font-style:italic") || s.Contains("font-style: italic")) style = FontStyle.Italic;
-        if (System.Text.RegularExpressions.Regex.IsMatch(s, "text-decoration[^;]*underline")) underline = true;
-        if (System.Text.RegularExpressions.Regex.IsMatch(s, "text-decoration[^;]*line-through")) strike = true;
+        if (RxUnderline.IsMatch(s)) underline = true;
+        if (RxLineThrough.IsMatch(s)) strike = true;
 
-        var m = System.Text.RegularExpressions.Regex.Match(s, "(?<![\\w-])color\\s*:\\s*([^;]+)");
+        var m = RxColor.Match(s);
         if (m.Success)
         {
             var col = ParseCssColor(m.Groups[1].Value.Trim());
             if (col != null) color = col;
         }
 
-        var bm = System.Text.RegularExpressions.Regex.Match(s, "background(?:-color)?\\s*:\\s*([^;]+)");
+        var bm = RxBackground.Match(s);
         if (bm.Success)
         {
             var col = ParseCssColor(bm.Groups[1].Value.Trim());
             if (col != null) background = col;
         }
 
-        var famMatch = System.Text.RegularExpressions.Regex.Match(styleAttr, "font-family\\s*:\\s*([^;]+)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var famMatch = RxFontFamily.Match(styleAttr);
         if (famMatch.Success)
         {
             string fam = famMatch.Groups[1].Value.Split(',')[0].Trim().Trim('\'', '"').Trim();
@@ -1035,7 +1049,7 @@ public static class HtmlDocumentFormatter
 
         // Accept px and pt; the model stores pt, so pt passes through and px converts px->pt (횞0.75).
         // em/rem/% are relative (to the inherited size, the 10pt body for rem): read as px, 1.2em came out at 0.9pt.
-        var fm = System.Text.RegularExpressions.Regex.Match(s, "font-size\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt|rem|em|%)?");
+        var fm = RxFontSize.Match(s);
         if (fm.Success && double.TryParse(fm.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture, out double val) && val > 0)
             size = fm.Groups[2].Value switch
             {
@@ -1070,8 +1084,8 @@ public static class HtmlDocumentFormatter
     private static double ReadIndentPx(HtmlNode node)
     {
         var style = Attr(node, "style").ToLowerInvariant();
-        var m = System.Text.RegularExpressions.Regex.Match(style, "margin-left\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt)?");
-        if (!m.Success) m = System.Text.RegularExpressions.Regex.Match(style, "padding-left\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt)?");
+        var m = RxMarginLeft.Match(style);
+        if (!m.Success) m = RxPaddingLeft.Match(style);
         if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0)
             return m.Groups[2].Value == "pt" ? v * 96.0 / 72.0 : v;
         return 0;
@@ -1096,7 +1110,7 @@ public static class HtmlDocumentFormatter
         var style = Attr(node, "style");
         if (!string.IsNullOrEmpty(style))
         {
-            var m = System.Text.RegularExpressions.Regex.Match(style.ToLowerInvariant(), "background(?:-color)?\\s*:\\s*([^;]+)");
+            var m = RxBackground.Match(style.ToLowerInvariant());
             if (m.Success)
             {
                 var b = ParseCssColor(m.Groups[1].Value.Trim());
@@ -1108,7 +1122,7 @@ public static class HtmlDocumentFormatter
     }
 
     // CSS color value -> Color (hex / rgb() / named), or null. Delegates to the shared parser.
-    private static Color? ParseCssColor(string value) => ColorUtil.Parse(value);
+    private static Color? ParseCssColor(string value) => ColorUtil.Parse(value, css: true);
 
     private static string CssListStyle(ListKind kind, ListMarkerStyle marker) => marker switch
     {
@@ -1439,7 +1453,7 @@ public static class HtmlDocumentFormatter
     {
         if (inline is InlineImage im && (im.RawBytes != null || im.Image != null))
         {
-            AppendImgTag(sb, im.RawBytes, im.MimeType, im.RawBytes == null ? im.Image : null, im.Width, im.Height, im.AltText, opensParagraph);
+            AppendImgTag(sb, im.RawBytes, im.MimeType, im.RawBytes == null ? im.Image : null, im.Width, im.Height, im.AltText, opensParagraph, inline: true);
             return;
         }
         if (inline is InlineTable itbl)
@@ -1590,7 +1604,7 @@ public static class HtmlDocumentFormatter
     // a bitmap set without bytes is PNG-encoded. `alt` round-trips the accessibility description.
     // `opensParagraph` carries the same meaning as it does for an inline table: this image was the FIRST
     // thing in its paragraph, so on import there is no earlier paragraph of its own to rejoin.
-    private static void AppendImgTag(StringBuilder sb, byte[]? raw, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp, double w, double h, string? alt = null, bool opensParagraph = false)
+    private static void AppendImgTag(StringBuilder sb, byte[]? raw, string? mime, Microsoft.Graphics.Canvas.CanvasBitmap? bmp, double w, double h, string? alt = null, bool opensParagraph = false, bool inline = false)
     {
         byte[] data;
         string m;
@@ -1614,6 +1628,9 @@ public static class HtmlDocumentFormatter
         if (!double.IsNaN(h) && h > 0) sb.Append(" height=\"").Append((int)h).Append('"');
         if (!string.IsNullOrEmpty(alt)) sb.Append(" alt=\"").Append(AttrEscape(alt)).Append('"');
         if (opensParagraph) sb.Append(" data-are-opens=\"1\"");
+        // Ours: which the picture was. The reader otherwise decides by size (under 64 px = inline), so an inline
+        // picture made bigger came back a block that split its line, and a small block came back inline.
+        sb.Append(inline ? " data-are-inline=\"1\"" : " data-are-block=\"1\"");
         sb.Append("/>");
     }
 

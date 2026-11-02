@@ -22,6 +22,12 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 | AOT | self-contained 게시 성공(2026-09-29): 네이티브 exe **15.2MB**, 게시 **74.7MB**(pdb 제외), CoreCLR·관리 dll 없음 |
 | 공개 표면 | **670**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 추가 + **개명 하나**(`TextForeground`→`DefaultForeground`, SemVer 예외로 CHANGELOG에 기록), Unshipped 비어 있음 |
 
+### 정책 + 파일별 전수조사 반영 (2026-11-01, 미릴리스)
+정책(사용자 결정, `fix/policy-2026-11-01`): 링크 = 그냥 클릭으로 열림(상류 방식), 그림·표 옆 Backspace/Delete = 선택 먼저.
+전수조사(`fix/audit4-2026-11-01`, 정책 브랜치 위): 그림 인라인/블록 표지(HTML·RTF; 비PNG/JPEG의 PNG 재인코딩은 원본 바이트 보존 계약과 충돌해 철회), CSS `#RGBA`/`#RRGGBBAA`,
+h4–h6, JSON 열거값/점 없는 버전, 빈 undo 3종, 그림 끔이면 붙여넣기 fetch 안 함, 드롭 파일 한도, 위치 정렬 성능, 정규식 한 번 컴파일.
+`Audit4Tests`·`Audit4ControlTests`. ⚠ SDK 없이 수정 — 미실행.
+
 ### 업스트림 3차 리뷰 반영 (2026-11-01, 미릴리스)
 두 레포 대조 리뷰에서 포트에도 있던 4건: HTML 그림 크기를 `border-width`·`line-height`·`max-width`에서 읽음, `font-size`의
 `em`/`rem`/`%`를 px로, 다른 `-color` 속성을 글자색으로, 용지 변경 뒤 상태 표시줄 쪽 수. 상류에만 있던 것: RTF 붙여넣기의

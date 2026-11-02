@@ -6,6 +6,27 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 변경 — 링크는 그냥 클릭으로 열림, 그림·표 옆 Backspace/Delete는 선택 먼저 (사용자 결정 2026-11-01, 상류와 맞춤)
+
+- 편집 중에도 링크를 **그냥 클릭**하면 연다(읽기 전용과 같게, 상류 방식). 끌어서 선택하면 열지 않는다. Ctrl+클릭도 그대로 연다.
+- 문단 처음의 Backspace / 끝의 Delete 옆에 그림이나 표가 있으면 첫 번째 누름이 그것을 **선택**하고 두 번째가 지운다
+  (Word·HWP). 예전엔 아무 일도 하지 않았다. 선택 단계는 편집이 아니다(undo 없음, 수정됨 아님). 구분선은 그대로(병합 안 함).
+- 테스트: `BackspaceOrDelete_NextToABlock_SelectsItFirst`; 링크 테스트를 새 동작으로 고침.
+
+### 수정 — 그림 종류 왕복, CSS 알파, 리더 검증, 빈 undo, 성능 (업스트림과 파일별 전수조사 2026-11-01)
+
+- **그림 종류**: HTML·RTF에서 큰 인라인 그림이 블록으로, 작은 블록 그림이 인라인으로 돌아왔다(크기 규칙이 결정). 쓰기가 종류를
+  표시한다(`data-are-inline`/`data-are-block`, `{\*\arpicinl}`/`{\*\arpicblk}`). 표시 없는 입력은 크기 규칙 그대로.
+- **CSS 색**: `#RGBA`/`#RRGGBBAA`를 읽는다(모델의 `#AARRGGBB`는 그대로). `font-weight`가 `mso-font-weight` 같은 이름에도 걸리던 것을 상류처럼 막음.
+- **HTML**: 문단 안의 `<h4>`–`<h6>`이 굵게·크기 없이 읽혔다(h1–h3만).
+- **JSON 리더**: 숫자(`"ListType":"7"`)나 쉼표 목록으로 쓴 열거값을 어떤 코드도 다루지 않는 값으로 받았다 — 모르는 이름처럼 기본값.
+  레거시 `1`/`2`를 넘는 점 없는 버전(`"3"`)은 더 새 메이저처럼 거부.
+- **undo 단계 없음**: 본문에 `SetHeading(0)`, 이미 같은 `SetListStyle`, 이미 그 색인 셀 배경.
+- **그림 끔**: `AllowImages`가 꺼져 있으면 HTML 붙여넣기·`InsertHtml`이 그림을 가져오지 않는다. 끌어 놓은 파일이 패키지 그림
+  한도(256MB)를 넘으면 통째로 읽지 않고 건너뛴다.
+- 성능: 선택의 위치 정렬이 이미 만든 순서를 쓴다(비교마다 문서를 걸었다). HTML 리더의 스타일 정규식을 한 번만 컴파일.
+- 테스트: `Audit4Tests`, `Audit4ControlTests`. ⚠ SDK 없이 작성, 미실행.
+
 ### 수정 — HTML 그림 크기·상대 글자 크기·색, 상태 표시줄 쪽 수 (업스트림 3차 리뷰 2026-11-01)
 
 - HTML: 그림 크기를 `width`/`height`로 끝나는 아무 속성(`border-width:1px`, `line-height`, `max-width`)에서 읽었다.

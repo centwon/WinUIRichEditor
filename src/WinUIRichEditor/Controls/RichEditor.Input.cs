@@ -359,9 +359,10 @@ public partial class RichEditor
             }
         }
 
-        // Read-only viewer: a PLAIN click on a link opens it (no Ctrl needed — browser convention).
-        // Armed here, launched on release only when no drag-selection happened in between.
-        if (IsReadOnly && !s.Shift && LinkRunAtPoint(ptp)?.NavigateUri is { Length: > 0 } roUri)
+        // A PLAIN click on a link opens it — in a viewer and in the editor alike, as upstream does (user decision,
+        // 2026-11-01; it was Ctrl+click only while editing). Armed here, launched on release only when no
+        // drag-selection happened in between; Ctrl+click is the branch above.
+        if (!s.Shift && !s.Ctrl && LinkRunAtPoint(ptp)?.NavigateUri is { Length: > 0 } roUri)
             _pressLink = (roUri, new Point(ptp.X, ptp.Y));
 
         _clickCount = repeat ? _clickCount + 1 : 1;
@@ -568,7 +569,7 @@ public partial class RichEditor
         StopAutoScroll();
         s.Capture.Release();
         if (IsFormatPainterActive) ApplyFormatPainterToSelection();
-        // Read-only link click: launch only if the press stayed a CLICK (no selection was dragged out
+        // Link click: launch only if the press stayed a CLICK (no selection was dragged out
         // and the pointer didn't travel) — a drag over link text selects, exactly like a browser.
         if (_pressLink is { } pl)
         {
@@ -826,6 +827,8 @@ public partial class RichEditor
                 if (item is not Windows.Storage.StorageFile file) continue;
                 try
                 {
+                    // Bounded as a package's pictures are: a dropped multi-gigabyte file was read whole first.
+                    if ((await file.GetBasicPropertiesAsync()).Size > (ulong)Formatters.DocumentPackage.MaxPictureBytes) continue;
                     var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
                     var bytes = new byte[buffer.Length];
                     using (var reader = Windows.Storage.Streams.DataReader.FromBuffer(buffer)) reader.ReadBytes(bytes);
@@ -1166,7 +1169,10 @@ public partial class RichEditor
         var cur = _caret.Paragraph!;
         if (BlockContainerOf(cur) is not { } container) return;
         int idx = container.IndexOf(cur);
-        if (idx <= 0 || container[idx - 1] is not Paragraph prev) return; // prev block is an image/table — no merge
+        // A picture or table before it: the first Backspace selects it, the next deletes it (Word/HWP; user decision,
+        // 2026-11-01 — it did nothing at all here, and upstream deleted the whole block at once).
+        if (idx > 0 && container[idx - 1] is ImageBlock or TableBlock) { SelectBlockObject(container[idx - 1]); return; }
+        if (idx <= 0 || container[idx - 1] is not Paragraph prev) return; // a divider before it — no merge
         PushUndo("del"); // after validation; keeps coalescing with the char-delete run
         int joinAt = GetParagraphLength(prev);
         foreach (var inl in cur.Inlines.ToList()) { inl.Parent = prev; prev.Inlines.Add(inl); }
@@ -1184,6 +1190,8 @@ public partial class RichEditor
         var cur = _caret.Paragraph!;
         if (BlockContainerOf(cur) is not { } container) return;
         int idx = container.IndexOf(cur);
+        // See MergeWithPrevious: a picture or table after it is selected by the first Delete.
+        if (idx >= 0 && idx + 1 < container.Count && container[idx + 1] is ImageBlock or TableBlock) { SelectBlockObject(container[idx + 1]); return; }
         if (idx < 0 || idx + 1 >= container.Count || container[idx + 1] is not Paragraph next) return;
         PushUndo("del"); // after validation; keeps coalescing with the char-delete run
         int joinAt = GetParagraphLength(cur);

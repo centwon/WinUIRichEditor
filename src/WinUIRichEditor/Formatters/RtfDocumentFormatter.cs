@@ -192,6 +192,7 @@ internal sealed class RtfParser
 
     private readonly StringBuilder _pictHex = new();
     private string? _pictMime;
+    private int _nextPictKind; // {\*\arpicinl} = 1, {\*\arpicblk} = 2, none = 0 (decide by size)
     private int _pictWTwips, _pictHTwips;
 
     // \sl / \slmult state (line spacing; see Apply's "sl"/"slmult" cases).
@@ -516,13 +517,15 @@ internal sealed class RtfParser
             //
             // Applied to _para directly: the definition precedes the paragraph's text, and \pard (which
             // resets paragraph formatting) precedes the definition, so nothing later clears it.
+            // The marker words also sit in Word's section-level {\*\pnseclvlN …} groups, which make no list: taken only
+            // after a \pn (or level word) has made this paragraph one, they no longer leave a stray marker on body text.
             case "pn": _para.ListType = ListKind.Bullet; _para.ListMarker = ListMarkerStyle.Default; break;
             case "pnlvlblt": _para.ListType = ListKind.Bullet; break;
             case "pnlvlbody": _para.ListType = ListKind.Ordered; break;
-            case "pndec": _para.ListMarker = ListMarkerStyle.Default; break;
-            case "pnlcltr": _para.ListMarker = ListMarkerStyle.LowerAlpha; break;
-            case "pnucltr": _para.ListMarker = ListMarkerStyle.UpperAlpha; break;
-            case "pnlcrm": _para.ListMarker = ListMarkerStyle.LowerRoman; break;
+            case "pndec": if (_para.ListType != ListKind.None) _para.ListMarker = ListMarkerStyle.Default; break;
+            case "pnlcltr": if (_para.ListType != ListKind.None) _para.ListMarker = ListMarkerStyle.LowerAlpha; break;
+            case "pnucltr": if (_para.ListType != ListKind.None) _para.ListMarker = ListMarkerStyle.UpperAlpha; break;
+            case "pnlcrm": if (_para.ListType != ListKind.None) _para.ListMarker = ListMarkerStyle.LowerRoman; break;
             // Ours (see WriteListMarker): the list kind + exact marker style, and a signal that the text up
             // to the next \tab is the MARKER rather than content. Every other reader skips the group and
             // renders that text — the only spelling both Word and HWP show — while we drop it.
@@ -592,6 +595,8 @@ internal sealed class RtfParser
             case "pict": FlushRun(); _st.Dest = Dest.Pict; _pictHex.Clear(); _pictMime = null; _pictWTwips = _pictHTwips = 0; break;
             case "pngblip": _pictMime = "image/png"; break;
             case "jpegblip": _pictMime = "image/jpeg"; break;
+            case "arpicinl": _nextPictKind = 1; break; // ours: the next picture is inline (see WritePict)
+            case "arpicblk": _nextPictKind = 2; break; // ours: the next picture is a block
             case "dibitmap": _pictMime = "dib"; break; // raw DIB (no BMP file header); wrapped in FinalizePict
             case "picwgoal": _pictWTwips = p ?? 0; break;
             case "pichgoal": _pictHTwips = p ?? 0; break;
@@ -1309,6 +1314,7 @@ internal sealed class RtfParser
     {
         var hex = _pictHex.ToString();
         _pictHex.Clear();
+        int kind = _nextPictKind; _nextPictKind = 0; // taken before any early return, so a dropped picture's marker is not the next one's
         if (hex.Length < 8) return;
         var bytes = HexToBytes(hex);
         if (bytes == null || bytes.Length == 0) return;
@@ -1335,7 +1341,8 @@ internal sealed class RtfParser
         }
         string mime = ImageMime.Detect(bytes);
 
-        if (w < 64 && h < 64)
+        bool inlinePic = kind == 1 || (kind != 2 && w < 64 && h < 64);
+        if (inlinePic)
         {
             var img = new InlineImage { Width = w, Height = h };
             img.SetImageData(bytes, mime);
@@ -1484,7 +1491,7 @@ internal sealed class RtfWriter
             case TableBlock tb: WriteTable(tb); break;
             case ImageBlock ib when PictBytes(ib.RawBytes, ib.MimeType, ib.Image) is { } pic:
                 _body.Append(@"\pard ");
-                WritePict(pic.bytes, pic.mime, ib.Width, ib.Height);
+                WritePict(pic.bytes, pic.mime, ib.Width, ib.Height, inline: false);
                 _body.Append(@"\par").Append('\n');
                 break;
             case DividerBlock:
@@ -1691,7 +1698,7 @@ internal sealed class RtfWriter
         {
             if (inline is Run r && !string.IsNullOrEmpty(r.Text)) { WriteRun(r); wrote = true; }
             else if (inline is InlineImage img && PictBytes(img.RawBytes, img.MimeType, img.Image) is { } ipic)
-            { WritePict(ipic.bytes, ipic.mime, img.Width, img.Height); wrote = true; }
+            { WritePict(ipic.bytes, ipic.mime, img.Width, img.Height, inline: true); wrote = true; }
             else if (inline is InlineTable itbl)
             {
                 // An INLINE table ("treat as character") lives in the paragraph's text flow, but RTF has
@@ -1849,7 +1856,7 @@ internal sealed class RtfWriter
                     }
                     else if (inline is Run r && !string.IsNullOrEmpty(r.Text)) WriteRun(r);
                     else if (inline is InlineImage cii && PictBytes(cii.RawBytes, cii.MimeType, cii.Image) is { } cipic)
-                        WritePict(cipic.bytes, cipic.mime, cii.Width, cii.Height);
+                        WritePict(cipic.bytes, cipic.mime, cii.Width, cii.Height, inline: true);
                 }
             }
             else if (blk is TableBlock nested)
@@ -1863,7 +1870,7 @@ internal sealed class RtfWriter
             {
                 if (!first) _body.Append(@"\par ");
                 first = false;
-                WritePict(cbpic.bytes, cbpic.mime, cib.Width, cib.Height);
+                WritePict(cbpic.bytes, cbpic.mime, cib.Width, cib.Height, inline: false);
             }
             else if (blk is DividerBlock)
             {
@@ -1946,8 +1953,10 @@ internal sealed class RtfWriter
         return encoded == null ? null : (encoded, "image/png");
     }
 
-    private void WritePict(byte[] bytes, string? mime, double w, double h)
+    private void WritePict(byte[] bytes, string? mime, double w, double h, bool inline)
     {
+        // Ours: which the picture was (see the reader's "arpicinl"): it otherwise goes by size.
+        _body.Append(inline ? @"{\*\arpicinl}" : @"{\*\arpicblk}");
         _body.Append(@"{\*\shppict{\pict");
         _body.Append(mime != null && mime.Contains("jpeg", StringComparison.OrdinalIgnoreCase) ? @"\jpegblip" : @"\pngblip");
         // Natural pixel size (\picw/\pich) alongside the display goals: some consumers (HWP notably)

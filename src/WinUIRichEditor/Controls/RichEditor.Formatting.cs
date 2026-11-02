@@ -180,6 +180,8 @@ public partial class RichEditor
     public void SetHeading(int level)
     {
         if (_caret.Paragraph == null || IsReadOnly) return;
+        // Body to body touches nothing: no undo step that undoes nothing (same level otherwise re-applies the look).
+        if (level == 0 && SelectedParagraphs().DefaultIfEmpty(_caret.Paragraph).All(p => p.HeadingLevel == 0)) return;
         PushUndo(null);
         // Setting a level writes the heading's format onto its text (HeadingStyle.Retype): the preset on
         // first application, the new size on a level change, off again back to body. After that the text
@@ -314,6 +316,10 @@ public partial class RichEditor
     private void SetListType(ListKind kind, ListMarkerStyle? marker = null)
     {
         if (_caret.Paragraph == null || Document == null || IsReadOnly) return;
+        // A style pick on paragraphs that already are that list, with that marker and no hard line to split,
+        // changes nothing: no undo step that undoes nothing.
+        if (marker is { } m0 && SelectedParagraphs().DefaultIfEmpty(_caret.Paragraph)
+                .All(p => p.ListType == kind && p.ListMarker == m0 && !p.Inlines.Any(i => i is Run r && r.Text?.Contains('\n') == true))) return;
         PushUndo(null);
         bool turningOff = marker == null && _caret.Paragraph.ListType == kind;
         void ApplyMarker(Paragraph par) { if (marker.HasValue) par.ListMarker = marker.Value; }

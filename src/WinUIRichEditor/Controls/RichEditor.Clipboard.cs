@@ -267,7 +267,7 @@ public partial class RichEditor
                                 string frag0 = HtmlFormatHelper.GetStaticFragment(cfhtml0);
                                 if (!string.IsNullOrWhiteSpace(frag0))
                                 {
-                                    var hd = await HtmlDocumentFormatter.ParseHtmlAsync(frag0, AllowLocalFileImagesOnPaste, AllowRemoteImagesOnPaste);
+                                    var hd = await HtmlDocumentFormatter.ParseHtmlAsync(frag0, AllowImages && AllowLocalFileImagesOnPaste, AllowImages && AllowRemoteImagesOnPaste);
                                     if (HasAnyImage(hd)) chosen = hd;
                                 }
                             }
@@ -301,7 +301,7 @@ public partial class RichEditor
                     // Async: remote (http) images download off the UI thread so a slow network can't freeze
                     // the paste (the model build itself still runs on the UI thread inside ParseHtmlAsync).
                     var pd = AdaptToCapabilities(
-                        await HtmlDocumentFormatter.ParseHtmlAsync(fragment, AllowLocalFileImagesOnPaste, AllowRemoteImagesOnPaste),
+                        await HtmlDocumentFormatter.ParseHtmlAsync(fragment, AllowImages && AllowLocalFileImagesOnPaste, AllowImages && AllowRemoteImagesOnPaste),
                         out bool emptiedHtml);
                     if (emptiedHtml) return;
                     if (Stale()) return;

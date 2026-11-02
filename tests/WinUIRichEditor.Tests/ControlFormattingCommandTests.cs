@@ -234,6 +234,34 @@ public class ControlFormattingCommandTests
         Assert.Equal("onetwo", TextOf(a));
     });
 
+    // Next to a picture or a table, the first Backspace / Delete selects it and the next deletes it (user decision,
+    // 2026-11-01). It did nothing at all before; the second press is the block-selection delete.
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void BackspaceOrDelete_NextToABlock_SelectsItFirst(bool backspace, bool table) => UiThread.Run(() =>
+    {
+        var a = P("one");
+        Block blk = table ? new TableBlock(1, 1) : new ImageBlock();
+        var b = P("two");
+        var ed = Editor(a, blk, b);
+        ed.MarkSaved();
+        if (backspace) Caret(ed, b, 0); else Caret(ed, a, 3);
+
+        Call(ed, backspace ? "Backspace" : "DeleteForward");
+
+        Assert.True(ed.HasBlockSelection);
+        Assert.Contains(blk, ed.Document!.Blocks);
+        Assert.False(ed.CanUndo);
+        Assert.False(ed.IsModified);
+
+        Call(ed, "DeleteSelectedObject");
+        Assert.DoesNotContain(blk, ed.Document!.Blocks);
+        Assert.True(ed.CanUndo);
+    });
+
     // Upstream once pushed two identical checkpoints per Enter, so the first Ctrl+Z appeared to do nothing.
     [Fact]
     public void Enter_PushesExactlyOneUndoStep() => UiThread.Run(() =>
