@@ -47,30 +47,37 @@ public class LayoutCacheBackportTests
     [Fact]
     public void TogglingAList_ChangesTheMeasuredHeight_ToWhatAFreshEditorMeasures()
     {
-        static FlowDocument Doc() => new() { Blocks = { new Paragraph { Inlines = { new Run { Text = string.Concat(Enumerable.Repeat("word ", 400)) } } } } };
+        static FlowDocument Doc(int words, ListKind list = ListKind.None)
+            => new() { Blocks = { new Paragraph { ListType = list, Inlines = { new Run { Text = string.Concat(Enumerable.Repeat("word ", words)) } } } } };
         static double Height(RichEditor ed)
         {
             T.GetMethod("RelayoutToViewport", NP)!.Invoke(ed, null);
             return (double)T.GetField("_measuredHeight", NP)!.GetValue(ed)!;
         }
 
-        // Continuous view wraps to viewport ÷ zoom: at zoom 1 the lines are ~1,260 wide and a bullet's gutter does not
-        // change how many there are. Zoom 4 narrows them to ~300, as the upstream test measures.
-        var ed = UiThread.Run(() => new RichEditor { Document = Doc(), PageSize = RichEditorPageSize.Continuous, Zoom = 4 });
+        // Continuous view wraps to the viewport, which differs by machine (1,264 here, narrower on CI): whether a
+        // gutter adds a line at a given length is a coincidence of that width. So first find a length where it does.
+        var ed = UiThread.Run(() => new RichEditor { PageSize = RichEditorPageSize.Continuous });
         UiThread.Host(ed);
-        var fresh = UiThread.Run(() => new RichEditor { PageSize = RichEditorPageSize.Continuous, Zoom = 4 });
+        var fresh = UiThread.Run(() => new RichEditor { PageSize = RichEditorPageSize.Continuous });
         UiThread.Host(fresh);
         UiThread.Run(() =>
         {
+            int words = Enumerable.Range(1, 400).FirstOrDefault(n =>
+            {
+                fresh.Document = Doc(n); double p = Height(fresh);
+                fresh.Document = Doc(n, ListKind.Bullet); return Height(fresh) > p;
+            });
+            Assert.True(words > 0, "no length up to 400 words where a bullet's gutter adds a line");
+            ed.Document = Doc(words);
+
             double plain = Height(ed);
             T.GetMethod("SelectAll", NP, Type.EmptyTypes)!.Invoke(ed, null);
             ed.ToggleBullet();
             double bulleted = (double)T.GetField("_measuredHeight", NP)!.GetValue(ed)!;
             Assert.True(bulleted > plain, $"height {plain} -> {bulleted}: the gutter narrowed the lines, so there are more of them");
 
-            var copy = Doc();
-            ((Paragraph)copy.Blocks[0]).ListType = ListKind.Bullet;
-            fresh.Document = copy;
+            fresh.Document = Doc(words, ListKind.Bullet);
             Assert.Equal(Height(fresh), bulleted, 2);
 
             ed.ToggleBullet();
