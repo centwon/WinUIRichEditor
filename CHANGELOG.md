@@ -33,6 +33,9 @@ and follows [Semantic Versioning](https://semver.org/).
 - 높이 제한 없는 부모(StackPanel)에서 글을 따라 커진 에디터가 바깥 페이지의 뷰포트를 넘으면, 캐럿 끌어오기가 안쪽 스크롤 영역(스크롤할
   거리 없음)만 움직여 캐럿이 화면 밖으로 나갔다. 안쪽에 스크롤할 거리가 없으면 조상 스크롤 영역에 맡긴다(상류 BringIntoView처럼).
   테스트 `ControlFitHeightTests`.
+- 색 없는 글자는 흰 종이 위(쪽 경계를 그리는 쪽 보기·인쇄·PDF)에서 `DefaultForeground`와 무관하게 검정 — 어두운 테마 호스트의 밝은
+  회색이 종이에 옅게 나왔다. 호스트의 캔버스(연속 보기)에는 여전히 `DefaultForeground`. 상류와 같은 규칙.
+  테스트 `ControlHostSurfaceTests.Brushes_ResolveToTheirColour_OrTheDefault` 보강.
 
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 

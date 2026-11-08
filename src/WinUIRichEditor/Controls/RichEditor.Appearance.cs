@@ -105,7 +105,9 @@ public partial class RichEditor
         => ((RichEditor)d).InvalidateCanvas();
 
     // The effective default text color (Win2D draws take a Color, not a Brush).
-    internal Color EffectiveTextColor => BrushColor(DefaultForeground, Colors.Black);
+    // DefaultForeground on the host's canvas, black on the white paper — page view with page boundaries, printing, PDF.
+    // A dark-theme host's light grey drew faint text on the paper (2026-11-09, as the upstream control).
+    internal Color EffectiveTextColor => _printMode || PagedChrome ? Colors.Black : BrushColor(DefaultForeground, Colors.Black);
 
     // The selection-highlight color, resolved from SelectionBrush (Win2D fills take a Color).
     private Color SelectionFill => BrushColor(SelectionBrush, Color.FromArgb(80, 0, 120, 215));
