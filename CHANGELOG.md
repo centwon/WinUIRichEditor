@@ -14,6 +14,9 @@ and follows [Semantic Versioning](https://semver.org/).
 - RTF `\sl-2147483648`이 `Math.Abs` 오버플로로 문서 전체를 빈 문서로 만들었다.
 - `.flow` 그림 합계 1 GB 넘으면 패키지 거부(그림 하나 256 MB는 그대로), HTML 원격 그림은 앞의 서로 다른 주소 64개만 받는다.
 - 테스트: `SaveFailureFixesTests`, `InputTotalBoundsTests`(상류와 같은 테스트). 수정마다 되돌리면 빨강.
+- RTF 작성기가 `javascript:` 링크를 내보내고(HTML 작성기는 안 내보냄) 주소의 `"`를 그대로 써 필드 주소가 거기서 끊겼다 — 스크립트
+  링크는 글만, `"`는 `%22`로. HTML 글자색·배경을 스타일 어디서나 찾아 글꼴 이름 속 `color:`가 글자색이 됐다 — 선언 시작에서만.
+  테스트 `LinkAndFontNameEscapeTests`.
 
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 

@@ -1734,13 +1734,16 @@ internal sealed class RtfWriter
     {
         // Hyperlink as a real field: {\field{\*\fldinst{HYPERLINK "url"}}{\fldrslt {...}}} — Word/HWP
         // then keep the target address (the bare \ul form only looked like a link).
-        bool link = !string.IsNullOrEmpty(r.NavigateUri);
+        // A script link does not leave, whatever put it in the document — the HTML writer's rule — and a quote would end the
+        // field's address early (Word reads what follows as switches; this reader cut the address there). 2026-11-08.
+        string? href = string.IsNullOrEmpty(r.NavigateUri) ? null : HtmlDocumentFormatter.SafeHref(r.NavigateUri);
+        bool link = href != null;
         if (link)
-            _body.Append(@"{\field{\*\fldinst{HYPERLINK """).Append(EscapeText(r.NavigateUri!)).Append("\"}}{\\fldrslt ");
+            _body.Append(@"{\field{\*\fldinst{HYPERLINK """).Append(EscapeText(href!.Replace("\"", "%22"))).Append("\"}}{\\fldrslt ");
         _body.Append('{');
         if (r.FontWeight.IsBold()) _body.Append(@"\b");
         if (r.FontStyle == FontStyle.Italic) _body.Append(@"\i");
-        if (r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri)) _body.Append(@"\ul");
+        if (r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || link) _body.Append(@"\ul");
         if (r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)) _body.Append(@"\strike");
         int f = FontIndex(r.FontFamily);
         if (f > 0) _body.Append($@"\f{f}");
