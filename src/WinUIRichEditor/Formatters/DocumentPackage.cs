@@ -23,6 +23,11 @@ public static class DocumentPackage
     // out at 1.9 GB (upstream 1.3.0 audit, AvaloniaRichEditor PR #70).
     internal const long MaxDocumentBytes = 256L * 1024 * 1024;
 
+    // The most picture bytes one package reads back, all its pictures together. Each picture had its bound but their sum
+    // had none: a document referring to many highly compressed pictures inflated without limit. Past it the package is
+    // refused like a damaged one — opened without its pictures, the next save would drop them (2026-11-08).
+    internal const long MaxPictureTotalBytes = 1024L * 1024 * 1024;
+
     /// <summary>Writes <paramref name="document"/> to <paramref name="destination"/> as a .flow
     /// package. The stream is left open.</summary>
     public static void Save(FlowDocument document, Stream destination)
@@ -76,7 +81,7 @@ public static class DocumentPackage
     }
 
     // Thread-free half of Load: zip + JSON parsing and byte extraction only, no model objects.
-    internal static (FlowDocumentDto? Dto, Dictionary<string, (byte[] Bytes, string Mime)> Pool) ReadPackage(Stream source)
+    internal static (FlowDocumentDto? Dto, Dictionary<string, (byte[] Bytes, string Mime)> Pool) ReadPackage(Stream source, long maxPictureTotal = MaxPictureTotalBytes)
     {
         var pool = new Dictionary<string, (byte[] Bytes, string Mime)>();
         try
@@ -108,6 +113,7 @@ public static class DocumentPackage
             // inflated whole, so a 63 KB package held 64 MB of zeros nothing referred to (upstream round 35; measured
             // here too) — a zip bomb needs no more than that.
             var used = DocumentSerializer.ImageRefs(dto);
+            long total = 0;
             foreach (var entry in zip.Entries)
             {
                 if (!entry.FullName.StartsWith("images/", StringComparison.Ordinal)) continue;
@@ -117,8 +123,13 @@ public static class DocumentPackage
                 using var ms = new MemoryStream();
                 var chunk = new byte[81920];
                 int n;
-                while ((n = es.Read(chunk, 0, chunk.Length)) > 0 && ms.Length <= MaxPictureBytes) ms.Write(chunk, 0, n);
+                while ((n = es.Read(chunk, 0, chunk.Length)) > 0 && ms.Length <= MaxPictureBytes)
+                {
+                    ms.Write(chunk, 0, n);
+                    if (total + ms.Length > maxPictureTotal) throw new InvalidDataException("The package's pictures are too large.");
+                }
                 if (ms.Length > MaxPictureBytes) continue; // not a picture anyone took; the reference stays unresolved
+                total += ms.Length;
                 var bytes = ms.ToArray();
                 // A null pool entry ("k": null) threw NullReferenceException out of the load.
                 string mime = ImageMime.Safe(dto?.Images != null && dto.Images.TryGetValue(key, out var meta) ? meta?.MimeType : null, bytes);

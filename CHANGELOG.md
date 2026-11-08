@@ -6,6 +6,15 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 고침 — 열리는데 저장 안 되던 문서, 문서를 비우던 RTF 토큰, 입력 합계 상한 (상류와 같은 수정, 2026-11-08)
+
+- HTML 숫자 읽기가 `Infinity`·`NaN`·`1e400`·400자리 수를 받아 모델에 넣었다 — 그 뒤 모든 JSON·`.flow` 저장이 실패. 유한한 값만
+  읽는다(단위 변환 결과까지, `width="1e308pt"`도).
+- 표 중첩 약 12단 초과는 저장 불가였다(JSON 기본 깊이 64, HTML 판독기는 DOM 한도까지·RTF는 32단까지 만든다). 읽기·쓰기 `MaxDepth = 320`.
+- RTF `\sl-2147483648`이 `Math.Abs` 오버플로로 문서 전체를 빈 문서로 만들었다.
+- `.flow` 그림 합계 1 GB 넘으면 패키지 거부(그림 하나 256 MB는 그대로), HTML 원격 그림은 앞의 서로 다른 주소 64개만 받는다.
+- 테스트: `SaveFailureFixesTests`, `InputTotalBoundsTests`(상류와 같은 테스트). 수정마다 되돌리면 빨강.
+
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 
 - `HasSelection`(글자 또는 셀 블록 선택), `GetHyperlinkAt(Point)`, `TrySetHyperlinkAt(Point, string?)`. 호스트가 자기 툴바 버튼이나
