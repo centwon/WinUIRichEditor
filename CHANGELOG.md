@@ -6,6 +6,14 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
+
+- `HasSelection`(글자 또는 셀 블록 선택), `GetHyperlinkAt(Point)`, `TrySetHyperlinkAt(Point, string?)`. 호스트가 자기 툴바 버튼이나
+  클릭한 링크의 메뉴를 만들 수 있다. 점은 에디터 기준 좌표(`e.GetCurrentPoint(editor).Position`) — 스크롤·캔버스 여백·줌·쪽 보기를
+  거쳐 문서 좌표로 바꾼다. `TrySetHyperlinkAt`는 선택을 건드리지 않고 그 링크만 바꾸며(undo 1단계, 같은 주소면 없음), 빈칸이면 지운다.
+  링크 적용 자체는 기존 `SetHyperlink(string?)`.
+- 테스트: `ControlHyperlinkApiTests`(에디터→캔버스 변환을 빼면 5건 빨강).
+
 ### 변경 — 링크는 그냥 클릭으로 열림, 그림·표 옆 Backspace/Delete는 선택 먼저 (사용자 결정 2026-11-01, 상류와 맞춤)
 
 - 편집 중에도 링크를 **그냥 클릭**하면 연다(읽기 전용과 같게, 상류 방식). 끌어서 선택하면 열지 않는다. Ctrl+클릭도 그대로 연다.

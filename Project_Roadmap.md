@@ -22,6 +22,12 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 | AOT | self-contained 게시 성공(2026-09-29): 네이티브 exe **15.2MB**, 게시 **74.7MB**(pdb 제외), CoreCLR·관리 dll 없음 |
 | 공개 표면 | **670**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 추가 + **개명 하나**(`TextForeground`→`DefaultForeground`, SemVer 예외로 CHANGELOG에 기록), Unshipped 비어 있음 |
 
+### 호스트용 링크 API (2026-11-08, 미릴리스, 브랜치 `feat/hyperlink-host-api`)
+상류 PR #87(외부 기여, 메인테이너 수정 후 머지)과 같은 이름: `HasSelection`(기존 private을 공개), `GetHyperlinkAt(Point)`,
+`TrySetHyperlinkAt(Point, string?)`. `SetHyperlink(string?)`는 포트에 이미 있었다. 상류와 다른 점: 포트는 캔버스가 컨트롤 안
+스크롤뷰어에 있어 에디터 좌표 → `TransformToVisual(_canvas)` → `ViewToDoc` 두 단계. 첫 반증이 공허했다(캔버스 여백 10px라 링크
+줄 안쪽을 찍으면 변환 없이도 맞음) → 줄 아래 가장자리를 찍게 고친 뒤 5건 빨강. 로컬: 테스트 1105 그린. Unshipped 3줄.
+
 ### 정책 + 파일별 전수조사 반영 (2026-11-01, 미릴리스)
 정책(사용자 결정, `fix/policy-2026-11-01`): 링크 = 그냥 클릭으로 열림(상류 방식), 그림·표 옆 Backspace/Delete = 선택 먼저.
 전수조사(`fix/audit4-2026-11-01`, 정책 브랜치 위): 그림 인라인/블록 표지(HTML·RTF; 비PNG/JPEG의 PNG 재인코딩은 원본 바이트 보존 계약과 충돌해 철회), CSS `#RGBA`/`#RRGGBBAA`,

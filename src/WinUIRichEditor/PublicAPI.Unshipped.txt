@@ -1,0 +1,4 @@
+﻿#nullable enable
+WinUIRichEditor.Controls.RichEditor.GetHyperlinkAt(Windows.Foundation.Point point) -> string?
+WinUIRichEditor.Controls.RichEditor.HasSelection.get -> bool
+WinUIRichEditor.Controls.RichEditor.TrySetHyperlinkAt(Windows.Foundation.Point point, string? url) -> bool
