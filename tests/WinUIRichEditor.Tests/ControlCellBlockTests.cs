@@ -60,7 +60,7 @@ public class ControlCellBlockTests
     private static string Text(TableCell cell)
         => string.Concat(cell.Blocks.OfType<Paragraph>().SelectMany(p => p.Inlines.OfType<Run>()).Select(r => r.Text));
 
-    private static bool HasSelection(RichEditor ed) => (bool)T.GetProperty("HasSelection", NP)!.GetValue(ed)!;
+    private static bool HasSelection(RichEditor ed) => ed.HasSelection;
 
     [Fact]
     public void F5_SelectsTheCaretsCell_AsABlock() => UiThread.Run(() =>

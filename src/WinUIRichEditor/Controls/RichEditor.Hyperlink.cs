@@ -17,6 +17,31 @@ public partial class RichEditor
         ApplyStyleToSelection(r => r.NavigateUri = u);
     }
 
+    /// <summary>The target of the link under <paramref name="point"/>, or null when there is no link there.
+    /// The point is relative to this editor, as <c>e.GetCurrentPoint(editor).Position</c> gives it.</summary>
+    public string? GetHyperlinkAt(Windows.Foundation.Point point) => LinkRunAtPoint(EditorPointToDoc(point))?.NavigateUri;
+
+    /// <summary>Changes the target of the link under <paramref name="point"/> to <paramref name="url"/>, or removes
+    /// the link when it is null or blank. The selection is left as it is. The point is relative to this editor,
+    /// as <c>e.GetCurrentPoint(editor).Position</c> gives it.</summary>
+    /// <returns>False when there is no link at that point or the editor is read-only.</returns>
+    public bool TrySetHyperlinkAt(Windows.Foundation.Point point, string? url)
+    {
+        if (Document == null || IsReadOnly) return false;
+        if (LinkRunAtPoint(EditorPointToDoc(point)) is not { } run) return false;
+        var u = string.IsNullOrWhiteSpace(url) ? null : url.Trim();
+        if (run.NavigateUri == u) return true; // unchanged: no empty undo step
+        PushUndo(null);
+        run.NavigateUri = u;
+        AfterFormat();
+        return true;
+    }
+
+    // A point in the editor's own space (a host's pointer position) to document space: through the scroller to
+    // the canvas (scroll offset and the canvas margin), then ViewToDoc (zoom and the page stack).
+    private Windows.Foundation.Point EditorPointToDoc(Windows.Foundation.Point point)
+        => ViewToDoc(TransformToVisual(_canvas).TransformPoint(point));
+
     /// <summary>The hyperlink URL at the caret, or null if the caret is not on a linked run.</summary>
     public string? CurrentLinkUri()
     {
