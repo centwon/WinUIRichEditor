@@ -19,6 +19,9 @@ and follows [Semantic Versioning](https://semver.org/).
   테스트 `LinkAndFontNameEscapeTests`.
 - RTF의 빈 줄을 빈 런 하나로 읽는다 — 편집기가 만든 빈 문단은 빈 런 하나인데 RTF는 빈 런을 쓸 수 없어, 저장한 빈 줄이 다르게
   돌아왔다(상류는 같은 날 정규화의 빈 문단도 빈 런 하나로 맞춰 두 컨트롤의 저장 JSON이 같아짐). 테스트 `NormalizedParagraphRunTests`.
+- 여러 문단 붙여넣기를 상류와 한 규칙으로 — 마지막 붙인 문단이 캐럿 뒤 글과 합쳐지지 않고 따로 남았다(`Hello |World`에 두 문단을 붙이면
+  세 줄), 문단 끝에 붙이면 빈 문단이 남았다. 이제 첫 문단은 캐럿 앞 글에, 마지막은 뒤 글에 합치고, 빈 쪽은 합쳐지는 붙인 문단의
+  서식을 받으며, 빈 런·빈 문단을 남기지 않고, 캐럿은 붙인 내용 끝. 테스트 `PasteSpliceRuleTests`(상류와 같은 사례).
 
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 
