@@ -483,6 +483,13 @@ public partial class RichEditor
 
     private double PageDeskX => System.Math.Max(0, (CanvasLogicalWidth - PaperWidth) / 2); // centered on the desk
 
+    // How much of the content box page `i` fills: its slice of the document, to the next page's break. A page whose slice
+    // stops short (a table row or a picture that did not fit moved to the next page) has room left at the bottom, and
+    // clipped to the whole box it drew the top of the next page's content there too — the same row on both pages
+    // (2026-11-08). As the Avalonia control. An oversized atom keeps the whole box (Min).
+    private double PageSliceHeight(System.Collections.Generic.IReadOnlyList<double> breaks, int i)
+        => i + 1 < breaks.Count ? System.Math.Min(PaperContentHeight, breaks[i + 1] - breaks[i]) : PaperContentHeight;
+
     // Converts a canvas/view point (physical, zoom-scaled) to document space. Zoom is divided out first so
     // the rest works in logical units; the paged page-stack transform is then applied (identity if not paged).
     private Point ViewToDoc(Point v)
@@ -495,7 +502,17 @@ public partial class RichEditor
         int i = System.Math.Clamp((int)((v.Y - PageGap) / System.Math.Max(1, stride)), 0, br.Count - 1);
         double viewContentLeft = PageDeskX + PagePadLeft;
         double viewContentTop = PageGap + i * stride + PagePadTop;
-        return new Point(v.X - (viewContentLeft - DocContentLeft), br[i] + (v.Y - viewContentTop));
+        // Kept in the page's slice: a click on the room left below a short slice (or on a margin) is that page's last line,
+        // not the next page's first content, which is no longer drawn there (PageSliceHeight). Clamped to the slice's very
+        // end it landed in the grab zone of the object that moved (its top edge sits at the break), and the room acted like
+        // that table or picture — so kept clear of every edge grab zone (≤ 5). 2026-11-08.
+        double local = v.Y - viewContentTop;
+        if (i + 1 < br.Count)
+        {
+            double slice = br[i + 1] - br[i] - 0.01;
+            local = local > slice ? System.Math.Max(0, slice - 6) : System.Math.Max(0, local);
+        }
+        return new Point(v.X - (viewContentLeft - DocContentLeft), br[i] + local);
     }
 
     // Converts a document point to canvas/view space (physical, zoom-scaled). The paged transform maps to
