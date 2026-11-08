@@ -180,4 +180,92 @@ public class ControlTableDrawTests
             Assert.True(total <= 200, $"a table drawn in a 200px cell is {total}px wide");
         });
     }
+
+    // In page view the rubber band showed away from the pointer — off by the desk and page-margin offset — while the
+    // table it inserted landed under the pointer (2026-11-08): the content is drawn page by page, translated
+    // onto its paper, and the overlay was not. Drawn now, the band's middle is under the middle of the drag on screen.
+    [Fact]
+    public void InPageView_TheRubberBandIsDrawnUnderThePointer()
+    {
+        Hosted(ed =>
+        {
+            ed.ViewMode = RichEditorViewMode.Page;
+            ed.PageSize = RichEditorPageSize.A4;
+            try
+            {
+                Load(ed, Para("first line"), Para("second line"));
+                Call(ed, "RelayoutToViewport");
+                // Pressed on the first line (the drag is clamped to the content's height), dragged 60 × 20.
+                var docStart = new Point(40, 4);
+                var press = (Point)Call(ed, "DocToView", docStart)!; // where that is on screen: on the paper, at 100 %
+                ed.BeginTableDraw(2, 2);
+                Assert.True(ed.TableDrawPressAt(docStart));
+                Call(ed, "TableDrawPointerMoved", new Point(docStart.X + 60, docStart.Y + 20));
+
+                using var rt = new CanvasRenderTarget(CanvasDevice.GetSharedDevice(), 1000, 1400, 96);
+                using (var ds = rt.CreateDrawingSession()) Call(ed, "DrawDocument", ds, new Rect(0, 0, 1000, 1400));
+                var px = rt.GetPixelBytes();
+                // BGRA. The band's fill is translucent blue: blue clearly above red, which neither paper, desk nor text is.
+                bool Tinted(double x, double y)
+                {
+                    int o = ((int)y * (int)rt.SizeInPixels.Width + (int)x) * 4;
+                    return px[o] - px[o + 2] > 15;
+                }
+                Assert.True(press.X > docStart.X + 60 && press.Y > docStart.Y + 20, "page view should move the content on screen");
+                Assert.True(Tinted(press.X + 30, press.Y + 10), "no rubber band under the middle of the drag");
+                Assert.False(Tinted(docStart.X + 30, docStart.Y + 10), "the band is drawn at its document position, not its page's");
+            }
+            finally
+            {
+                ed.ViewMode = RichEditorViewMode.Continuous;
+                ed.PageSize = RichEditorPageSize.Continuous;
+            }
+        });
+    }
+    // Pressed in the empty area below the last line: the band starts at the content's bottom, where the table goes (the
+    // caret lands on the last line), and the drag sizes it downwards. The far corner was clamped to the content's height
+    // as well, so at the end of a document no drag made a taller table (2026-11-08).
+    [Fact]
+    public void PressedBelowTheLastLine_TheTableGoesAfterIt_SizedByTheDrag()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("a"), Para("b"));
+            double bottom = (double)T.GetField("_measuredHeight", NP)!.GetValue(ed)!;
+            ed.BeginTableDraw(2, 2);
+            Assert.True(ed.TableDrawPressAt(new Point(40, bottom + 150)));
+            Assert.Equal(bottom, ((Point)T.GetField("_tableDrawStart", NP)!.GetValue(ed)!).Y, 1);
+            Call(ed, "TableDrawPointerMoved", new Point(160, bottom + 200));
+            Assert.True(ed.TableDrawReleaseAt());
+
+            var blocks = ed.Document!.Blocks;
+            var tb = blocks.OfType<TableBlock>().Single();
+            Assert.True(blocks.IndexOf(tb) > 1, "the table should follow the last line");
+            Assert.Equal(200, tb.RowHeights.Sum(), 1);
+        });
+    }
+    // The table lands where the drag began, not at the caret (2026-11-08 — as on the Avalonia control).
+    [Fact]
+    public void TheTable_LandsWhereTheDragBegan_NotAtTheCaret()
+    {
+        Hosted(ed =>
+        {
+            Load(ed, Para("first"), Para("a"), Para("b"), Para("target"), Para("c"), Para("d"), Para("e"), Para("last"));
+            var paras = ed.Document!.Blocks.OfType<Paragraph>().ToList();
+            var target = paras.First(p => p.Inlines.OfType<Run>().Any(r => r.Text == "target"));
+            object boxed = Call(ed, "CaretToDocPoint", new TextPointer(target, 3))!; // the caret itself stays in "first"
+            var ty = boxed.GetType();
+            var at = new Point((double)ty.GetField("Item1")!.GetValue(boxed)!, (double)ty.GetField("Item2")!.GetValue(boxed)! + 2);
+
+            ed.BeginTableDraw(2, 2);
+            Assert.True(ed.TableDrawPressAt(at));
+            Call(ed, "TableDrawPointerMoved", new Point(at.X + 200, at.Y + 60));
+            Assert.True(ed.TableDrawReleaseAt());
+
+            var blocks = ed.Document!.Blocks;
+            int ti = blocks.IndexOf(blocks.OfType<TableBlock>().Single());
+            Assert.Contains("tar", string.Concat(((Paragraph)blocks[ti - 1]).Inlines.OfType<Run>().Select(r => r.Text)));
+        });
+    }
+
 }

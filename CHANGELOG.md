@@ -27,6 +27,9 @@ and follows [Semantic Versioning](https://semver.org/).
   개체의 잡기 영역 밖). 테스트 `ControlPageSliceTests`.
 - 쪽 보기: 표 행·그림 크기를 끌어 쪽 끝을 넘기면 화면이 깜박였다 — 행이 쪽 사이를 오가며 높이가 진동. 끄는 이동량을 화면(확대를 뺀)
   좌표로 잰다. 테스트 `ControlPointerSequenceTests.InPageView_ARowDraggedPastThePage_GrowsSteadily`.
+- 마우스로 표 그리기: 표가 캐럿 자리(어디에 있든)에 들어갔다 — 이제 누른 자리에(캐럿도 그리로), 상류와 같게. 쪽 보기에서 미리보기
+  고무줄이 마우스와 어긋난 자리(용지·여백만큼)에 그려졌다. 문서 끝 빈 곳에서는 끝점도 내용 높이로 막혀 표를 키울 수 없었다(끝점은
+  위·왼쪽만 막는다). 테스트 `ControlTableDrawTests` 3개.
 
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 

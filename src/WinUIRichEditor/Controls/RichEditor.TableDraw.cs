@@ -17,7 +17,7 @@ namespace WinUIRichEditor.Controls;
 public partial class RichEditor
 {
     private (int rows, int cols)? _pendingTableDraw;
-    private Point? _tableDrawStart;   // doc space — anchored at the caret
+    private Point? _tableDrawStart;   // doc space — where the drag began (the caret moves there)
     private Point? _tableDrawCurrent; // doc space — follows the pointer
 
     /// <summary>Arms "draw table" mode with the picked <paramref name="rows"/>×<paramref name="cols"/>: the
@@ -59,9 +59,14 @@ public partial class RichEditor
     internal bool TableDrawPressAt(Point docPt)
     {
         if (_pendingTableDraw == null) return false;
-        // Anchor at the caret (where the table will land); the dragged opposite corner sets the size.
-        _tableDrawStart = CaretToDocPoint(_caret) is { } cp ? new Point(cp.X, cp.Y) : ClampDocPoint(docPt);
-        _tableDrawCurrent = ClampDocPoint(docPt);
+        // Anchor where the drag begins, and move the caret there: the table lands under the pointer, as on the Avalonia
+        // control (2026-11-08). It was anchored at the caret, wherever that happened to be. The dragged opposite corner sets
+        // the size; the caret's cell (now the pressed one) bounds its width (TableDrawRoom). Pressed below the last line, the
+        // point is clamped to the content's bottom — where the table goes.
+        var at = ClampDocPoint(docPt);
+        if (GetPositionFromPoint(at) is { } pos) { _caret = pos; CollapseSelectionToCaret(); }
+        _tableDrawStart = at;
+        _tableDrawCurrent = at;
         InvalidateCanvas();
         return true;
     }
@@ -94,7 +99,9 @@ public partial class RichEditor
     private bool TableDrawPointerMoved(Point docPt)
     {
         if (_pendingTableDraw == null) return false; // not armed
-        if (_tableDrawStart != null) { _tableDrawCurrent = ClampDocPoint(docPt); InvalidateCanvas(); }
+        // The far corner may go below the content (a table drawn at the end of a document), only not above or left of it.
+        // It was clamped to the content's height too, so at the end of a document no drag could make a table taller.
+        if (_tableDrawStart != null) { _tableDrawCurrent = new Point(Math.Clamp(docPt.X, 0, Math.Max(0, _layoutWidth)), Math.Max(0, docPt.Y)); InvalidateCanvas(); }
         return true; // consume all moves while armed (keep the cross cursor, skip hover/selection)
     }
 
@@ -119,7 +126,7 @@ public partial class RichEditor
         _tableDrawStart = null;
         _tableDrawCurrent = null;
         SetCursorShape(InputSystemCursorShape.IBeam);
-        // Insert at the existing caret (the drag only sizes the table — it does not move the caret).
+        // Insert at the caret — placed where the drag began (TableDrawPressAt).
         if (rect.Width >= 20 && rect.Height >= 16) InsertTableDrawn(pd.rows, pd.cols, rect.Width, rect.Height);
         else InsertTable(pd.rows, pd.cols); // click with no real drag -> the picked default size
         return true;
@@ -150,6 +157,22 @@ public partial class RichEditor
     private void DrawTableDrawRubberBand(CanvasDrawingSession ds)
     {
         if (_pendingTableDraw is not { } pd || _tableDrawStart is not { } s || _tableDrawCurrent is not { } c) return;
+        // In page view the content is drawn page by page, each translated onto its paper (DrawPagedDocument), and this overlay
+        // was drawn untranslated — off by the desk and margin offset, while the table still landed under the pointer
+        // (2026-11-08). Translate it as the page the drag began on is; the session's own transform carries the zoom.
+        var saved = ds.Transform;
+        if (PagedChrome)
+        {
+            var v = DocToView(s);
+            double z = EffectiveZoom;
+            ds.Transform = System.Numerics.Matrix3x2.CreateTranslation((float)(v.X / z - s.X), (float)(v.Y / z - s.Y)) * saved;
+        }
+        try { DrawRubberBand(ds, pd, s, c); }
+        finally { ds.Transform = saved; }
+    }
+
+    private void DrawRubberBand(CanvasDrawingSession ds, (int rows, int cols) pd, Point s, Point c)
+    {
         var rect = DrawnTableRect(s, c);
         ds.FillRectangle(rect, RubberFill);
         using var dash = new CanvasStrokeStyle { DashStyle = CanvasDashStyle.Dash };
