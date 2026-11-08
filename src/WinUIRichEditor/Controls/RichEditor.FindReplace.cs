@@ -286,5 +286,15 @@ public partial class RichEditor
         if (newV is double nv && !double.IsFinite(nv)) newV = double.IsNaN(nv) ? null : MaxCanvasExtent;
         if (newH is double nh && !double.IsFinite(nh)) newH = double.IsNaN(nh) ? null : MaxCanvasExtent;
         if (newV != null || newH != null) _scroll.ChangeView(newH, newV, null);
+
+        // Height following the content (an unbounded parent, MaxHeight not reached): the inner scroller has nothing to
+        // scroll, so ask the ancestors (a host page's ScrollViewer) to bring the caret in, as upstream's BringIntoView does.
+        // Without this the editor grew past the host's viewport and the caret went off-screen (2026-11-08).
+        if (_scroll.ScrollableHeight <= 0 && double.IsFinite(top) && double.IsFinite(bottom))
+            _canvas.StartBringIntoView(new BringIntoViewOptions
+            {
+                TargetRect = new Rect(v.X, top - margin, 2, bottom - top + 2 * margin),
+                AnimationDesired = false,
+            });
     }
 }
