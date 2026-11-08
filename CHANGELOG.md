@@ -17,6 +17,8 @@ and follows [Semantic Versioning](https://semver.org/).
 - RTF 작성기가 `javascript:` 링크를 내보내고(HTML 작성기는 안 내보냄) 주소의 `"`를 그대로 써 필드 주소가 거기서 끊겼다 — 스크립트
   링크는 글만, `"`는 `%22`로. HTML 글자색·배경을 스타일 어디서나 찾아 글꼴 이름 속 `color:`가 글자색이 됐다 — 선언 시작에서만.
   테스트 `LinkAndFontNameEscapeTests`.
+- RTF의 빈 줄을 빈 런 하나로 읽는다 — 편집기가 만든 빈 문단은 빈 런 하나인데 RTF는 빈 런을 쓸 수 없어, 저장한 빈 줄이 다르게
+  돌아왔다(상류는 같은 날 정규화의 빈 문단도 빈 런 하나로 맞춰 두 컨트롤의 저장 JSON이 같아짐). 테스트 `NormalizedParagraphRunTests`.
 
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 
