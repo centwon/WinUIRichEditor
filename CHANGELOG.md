@@ -6,6 +6,14 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 수정 — 한 번의 편집 안 두 변경이 문단 서명에서 상쇄되어 옛 레이아웃·높이가 남음 (상류 PR #58 대조, 2026-11-08)
+
+- 문단 서명(`ParagraphSig`)의 FNV 단계는 차이를 위쪽 비트로만 옮긴다. 그래서 double의 위쪽 비트만 다른 두 값(줄 간격 NaN↔1.5
+  같은)이 한 편집에서 함께 바뀌면 서로 상쇄될 수 있었고, 문단은 옛 레이아웃과 높이를 그대로 썼다(인라인 표를 담은 문단의
+  줄 간격·제목 조합 28쌍 중 2쌍). 섞기 전 값마다 SplitMix64 마무리(`Avalanche`)를 거친다.
+- 같은 대조의 다른 하나(목록 토글이 측정을 무효화하지 않음)는 포트에 없었다 — `AfterFormat`이 매번 다시 잰다. 지키는 테스트만 넣음.
+- 테스트: `LayoutCacheBackportTests`(서명 상쇄, 목록 토글 높이 = 새 편집기 높이). 둘 다 반증 확인.
+
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 
 - `HasSelection`(글자 또는 셀 블록 선택), `GetHyperlinkAt(Point)`, `TrySetHyperlinkAt(Point, string?)`. 호스트가 자기 툴바 버튼이나
