@@ -319,6 +319,20 @@ public partial class RichEditor
 
     private void OnCanvasPointerPressed(object sender, PointerRoutedEventArgs e) => PointerPressedCore(StepFrom(e));
 
+    // A row or picture resize measures the pointer's travel in view space (zoom removed), not document space: in page view a
+    // row or picture that grows past the page moves to the next one, the page breaks move with it, and the same screen
+    // point maps to another document Y — the travel shrank, the row fitted again and came back, and the next move pushed it
+    // over: the page flickered while dragging (2026-11-08, upstream same day). The press-time helpers keep their document
+    // points (the tests drive them); a real press re-bases their starting point here.
+    private Point SurfacePoint(Point viewPos) => new(viewPos.X / EffectiveZoom, viewPos.Y / EffectiveZoom);
+
+    private void MeasureResizeOnSurface(Point viewPos)
+    {
+        var p = SurfacePoint(viewPos);
+        if (_resizingRow) _rowResizeStartY = p.Y;
+        if (_resizingImage != null || _resizingInline != null) { _resizeStartX = p.X; _resizeStartY = p.Y; }
+    }
+
     /// <summary>The press, driven by a <see cref="PointerStep"/> so a test can run a whole gesture in
     /// order (see RichEditor.PointerPipeline.cs). The handler above only adapts the event.</summary>
     internal void PointerPressedCore(PointerStep s)
@@ -329,11 +343,11 @@ public partial class RichEditor
         if (s.RightButton) return;
         var ptp = ViewToDoc(s.ViewPos); // doc space (identity unless paged)
         if (TableDrawPointerPressed(ptp, s)) return;  // "draw table" mode: drag from the caret to size it
-        if (BeginResizeDragAt(ptp)) { s.Capture.Capture(); return; } // picture handle / table boundary
+        if (BeginResizeDragAt(ptp)) { MeasureResizeOnSurface(s.ViewPos); s.Capture.Capture(); return; } // picture handle / table boundary
         // Table left/top border -> select the whole table, and arm dragging it (RichEditor.DragBlock.cs).
         if (TrySelectTableBlock(ptp)) { ArmObjectDrag(_selectedBlock, ptp, s); return; }
         if (TrySelectInlineTable(ptp)) { ArmObjectDrag(_selectedInlineTable?.it, ptp, s); return; }
-        if (TryBeginImageInteraction(ptp, s)) return; // image resize handle or selection
+        if (TryBeginImageInteraction(ptp, s)) { MeasureResizeOnSurface(s.ViewPos); return; } // image resize handle or selection
         ClearObjectSelection(); // any other press clears an image selection
         var tp = GetPositionFromPoint(ptp);
         if (tp == null) return;
@@ -424,8 +438,8 @@ public partial class RichEditor
         var pt = ViewToDoc(vpos);                         // doc space (identity unless paged)
         if (TableDrawPointerMoved(pt)) return;        // "draw table" mode: extend the rubber-band
         if (_resizingColumn) { ResizeColumn(pt); return; }
-        if (_resizingRow) { ResizeRow(pt); return; }
-        if (_resizingImage != null || _resizingInline != null) { TryResizeImage(pt); return; }
+        if (_resizingRow) { ResizeRow(SurfacePoint(vpos)); return; }
+        if (_resizingImage != null || _resizingInline != null) { TryResizeImage(SurfacePoint(vpos)); return; }
         if (_dragObject != null) { DragObjectMoved(pt, s.Ctrl); return; }
         if (_dragTextArmed) { DragTextMoved(pt); return; }
         UpdateHoverCursor(pt, s.Ctrl);

@@ -681,4 +681,59 @@ public class ControlPointerSequenceTests
             Assert.False(cap.Held, "the release did not let go of the pointer");
         });
     }
+
+    // In page view, dragging a row's bottom edge down until the row no longer fits its page made the page flicker
+    // (2026-11-08): the row moved to the next page, the page breaks moved with it, and the same screen point mapped to
+    // another document Y — the travel measured in document space shrank, the row fitted again, and the next move pushed it
+    // over. Measured in view space, the row grows by exactly the pointer's travel, whatever the pages do.
+    [Fact]
+    public void InPageView_ARowDraggedPastThePage_GrowsSteadily()
+    {
+        Hosted(ed =>
+        {
+            ed.ViewMode = RichEditorViewMode.Page;
+            ed.PageSize = RichEditorPageSize.A4;
+            try
+            {
+                var tb = Table(2, 2);
+                tb.RowHeights.Add(ed.PaperContentHeight - 260);
+                tb.RowHeights.Add(100);
+                Load(ed, tb);
+                var bounds = (IDictionary)Field(ed, "_rowBoundaries")!;
+                var rows = (IEnumerable)bounds[ed.Document!.Blocks.OfType<TableBlock>().Single()]!;
+                Rect edge = default;
+                foreach (var r in rows)
+                {
+                    var ty = r.GetType();
+                    if ((int)ty.GetField("Item1")!.GetValue(r)! == 1) edge = (Rect)ty.GetField("Item3")!.GetValue(r)!;
+                }
+                Assert.NotEqual(default, edge);
+                var at = (Point)Call(ed, "DocToView", new Point(edge.X + 40, edge.Y + edge.Height / 2))!; // inside the first column, clear of the column edge
+                var model = ed.Document!.Blocks.OfType<TableBlock>().Single();
+                double start = model.RowHeights[1];
+                var cap = new FakeCapture(ed);
+
+                ed.PointerPressedCore(Step(at, cap));
+                Assert.True(cap.Held, "the press on the row edge did not start a resize");
+                var heights = new List<double>();
+                for (int k = 1; k <= 16; k++)
+                {
+                    ed.PointerMovedCore(Step(new Point(at.X, at.Y + 20 * k), cap));
+                    Draw(ed);
+                    heights.Add(model.RowHeights[1]);
+                }
+                ed.PointerReleasedCore(Step(new Point(at.X, at.Y + 320), cap));
+
+                Assert.True(((List<double>)Call(ed, "EnsurePageBreaks")!).Count >= 2, "the row never reached the next page");
+                for (int k = 1; k <= 16; k++)
+                    Assert.True(Math.Abs(heights[k - 1] - (start + 20 * k)) < 1,
+                        $"move {k}: row {heights[k - 1]}, expected {start + 20 * k} — all: {string.Join(", ", heights)}");
+            }
+            finally
+            {
+                ed.ViewMode = RichEditorViewMode.Continuous;
+                ed.PageSize = RichEditorPageSize.Continuous;
+            }
+        });
+    }
 }

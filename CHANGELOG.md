@@ -25,6 +25,8 @@ and follows [Semantic Versioning](https://semver.org/).
 - 쪽 보기: 쪽 끝에 맞지 않아 다음 쪽으로 넘어간 표 행·그림이 앞 쪽 빈자리에도 그려졌다 — 같은 행이 두 쪽에(화면·인쇄·PDF), 선택돼
   있으면 선택 테두리가 빈자리에. 쪽마다 제 구간까지만 자르고 그 구간과 겹치는 블록만 그린다. 빈자리를 누르면 그 쪽 마지막 줄(넘어간
   개체의 잡기 영역 밖). 테스트 `ControlPageSliceTests`.
+- 쪽 보기: 표 행·그림 크기를 끌어 쪽 끝을 넘기면 화면이 깜박였다 — 행이 쪽 사이를 오가며 높이가 진동. 끄는 이동량을 화면(확대를 뺀)
+  좌표로 잰다. 테스트 `ControlPointerSequenceTests.InPageView_ARowDraggedPastThePage_GrowsSteadily`.
 
 ### 추가 — 호스트용 링크 API (상류 PR #87과 같은 이름, 2026-11-08)
 
