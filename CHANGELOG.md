@@ -6,6 +6,11 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 성능 — 툴바의 색·표 피커는 처음 열 때 만든다 (2026-11-09)
+
+- 색 팔레트 둘과 표 격자 80칸을 툴바 줄을 만들 때마다 함께 만들어 붙잡고 있었다(대부분 열지 않음). 처음 열 때 만든다.
+  `RichEditorToolbar.Palette`는 그때 읽으므로 색 피커를 처음 열기 전에 정할 것. 테스트 `ToolbarLazyBuildTests`.
+
 ### 고침 — 열리는데 저장 안 되던 문서, 문서를 비우던 RTF 토큰, 입력 합계 상한 (상류와 같은 수정, 2026-11-08)
 
 - HTML 숫자 읽기가 `Infinity`·`NaN`·`1e400`·400자리 수를 받아 모델에 넣었다 — 그 뒤 모든 JSON·`.flow` 저장이 실패. 유한한 값만
