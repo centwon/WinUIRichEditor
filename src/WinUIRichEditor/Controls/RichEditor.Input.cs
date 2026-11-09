@@ -859,6 +859,48 @@ public partial class RichEditor
         finally { deferral.Complete(); }
     }
 
+    // A key with an object selected (a picture, or a table selected as an object): Delete/Backspace removes it; Ctrl+C/X
+    // copy and cut it; an arrow steps out of a selected block to the adjacent paragraph; any other (non-modifier) key
+    // clears it. True when the key is used up here.
+    private bool HandleObjectSelectionKey(VirtualKey key, bool ctrl, bool shift)
+    {
+        if (!HasBlockSelection) return false;
+        if (key is VirtualKey.Delete or VirtualKey.Back)
+        {
+            if (!IsReadOnly) DeleteSelectedObject();
+            return true;
+        }
+        // Copy/Cut act on the object itself — must run before the "clear on any other key" below, which
+        // would otherwise deselect the object before the clipboard sees it. `!shift` matters: these
+        // match on the bare key, so without it Ctrl+SHIFT+X (strikethrough) was swallowed here and cut
+        // the object instead — the same defect the original hit on its plain-text cut branch.
+        if (ctrl && !shift && key == VirtualKey.C) { _ = CopyAsync(); return true; }
+        if (ctrl && !shift && key == VirtualKey.X) { if (!IsReadOnly) _ = CutAsync(); return true; }
+        // Block caret: an arrow steps out of the selected top-level object to the adjacent paragraph.
+        if (_selectedBlock is { } selBlk
+            && key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down)
+        {
+            ExitBlockSelection(selBlk, forward: key is VirtualKey.Right or VirtualKey.Down);
+            return true;
+        }
+        if (key is not (VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu))
+        {
+            // Ctrl+←/→ go on by a word from right after a selected inline picture or table, as upstream (2026-11-09) —
+            // they moved from the caret, which a click on the object leaves where it was, maybe far away.
+            if (ctrl && key is VirtualKey.Left or VirtualKey.Right)
+            {
+                if (_selectedInline is { } si && si.p.Inlines.IndexOf(si.img) is int ii and >= 0)
+                    _caret = new TextPointer(si.p, si.p.Inlines.Take(ii + 1).Sum(InlineLen));
+                else if (_selectedInlineTable is { } st && st.host.Inlines.IndexOf(st.it) is int ti and >= 0)
+                    _caret = new TextPointer(st.host, st.host.Inlines.Take(ti + 1).Sum(InlineLen));
+                CollapseSelectionToCaret();
+            }
+            ClearObjectSelection();
+            InvalidateCanvas();
+        }
+        return false;
+    }
+
     private void OnEditorKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Control && DropPreviewActive) OnDragModifierChanged(); // copy mark follows Ctrl
@@ -870,31 +912,7 @@ public partial class RichEditor
         // Ctrl+Alt shortcut (the heading keys took ² and ³) or the object Copy below (which took ć). See AltGrKeys.
         if (AltGrKeys.IsTyping(ctrl, alt, () => AltGrKeys.TextForCtrlAlt(e.Key, shift))) return;
 
-        // A selected image (block or inline): Delete/Backspace removes it; any other (non-modifier) key clears it.
-        if (HasBlockSelection)
-        {
-            if (e.Key is VirtualKey.Delete or VirtualKey.Back)
-            {
-                if (!IsReadOnly) DeleteSelectedObject();
-                e.Handled = true;
-                return;
-            }
-            // Copy/Cut act on the object itself — must run before the "clear on any other key" below, which
-            // would otherwise deselect the object before the clipboard sees it. `!shift` matters: these
-            // match on the bare key, so without it Ctrl+SHIFT+X (strikethrough) was swallowed here and cut
-            // the object instead — the same defect the original hit on its plain-text cut branch.
-            if (ctrl && !shift && e.Key == VirtualKey.C) { _ = CopyAsync(); e.Handled = true; return; }
-            if (ctrl && !shift && e.Key == VirtualKey.X) { if (!IsReadOnly) _ = CutAsync(); e.Handled = true; return; }
-            // Block caret: an arrow steps out of the selected top-level object to the adjacent paragraph.
-            if (_selectedBlock is { } selBlk
-                && e.Key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down)
-            {
-                ExitBlockSelection(selBlk, forward: e.Key is VirtualKey.Right or VirtualKey.Down);
-                e.Handled = true;
-                return;
-            }
-            if (e.Key is not (VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu)) { ClearObjectSelection(); InvalidateCanvas(); }
-        }
+        if (HandleObjectSelectionKey(e.Key, ctrl, shift)) { e.Handled = true; return; }
 
         if (_caret.Paragraph == null) return;
 

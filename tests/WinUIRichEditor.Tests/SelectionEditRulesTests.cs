@@ -222,6 +222,27 @@ public class SelectionEditRulesTests
         }
     });
 
+    // ---- a Ctrl chord with an object selected ------------------------------------------------------------
+
+    [Fact]
+    public void CtrlRight_WithAnInlineTableSelected_GoesOnFromRightAfterIt() => UiThread.Run(() =>
+    {
+        // Ctrl+←/→ moved by a word from the caret, which a click on the object leaves where it was, maybe far away.
+        var it = new InlineTable { Table = new TableBlock(1, 1) };
+        var host = new Paragraph();
+        host.Inlines.Add(new Run { Text = "ab" });
+        host.Inlines.Add(it);
+        host.Inlines.Add(new Run { Text = "cd" });
+        var far = P("far away");
+        var ed = Editor(host, far);
+        Caret(ed, far, 4);
+        T.GetField("_selectedInlineTable", NP)!.SetValue(ed, ((Paragraph, InlineTable)?)(host, it));
+        T.GetMethod("HandleObjectSelectionKey", NP)!.Invoke(ed, new object[] { Windows.System.VirtualKey.Right, true, false });
+        var caret = (TextPointer)T.GetField("_caret", NP)!.GetValue(ed)!;
+        Assert.Same(host, caret.Paragraph);
+        Assert.Equal(3, caret.Offset); // right after the table; the word move runs from here
+    });
+
     // ---- "treat as character" inside a cell -----------------------------------------------------------
 
     [Fact]
