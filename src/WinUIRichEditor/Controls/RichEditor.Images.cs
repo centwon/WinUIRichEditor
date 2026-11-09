@@ -326,6 +326,8 @@ public partial class RichEditor
         if (_caret.Paragraph is not { } p) return;
 
         if (pushUndo) PushUndo(null);
+        MoveCaretToInsertionPoint(); // after a selection, which stays; a paste has deleted it already
+        p = _caret.Paragraph ?? p;
 
         var (nw, nh) = ImageInfo.GetPixelSize(bytes);
         double w = displayW > 0 ? displayW : (nw > 0 ? nw : 80);

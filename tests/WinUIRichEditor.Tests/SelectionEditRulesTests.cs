@@ -90,6 +90,70 @@ public class SelectionEditRulesTests
         Assert.Equal(20, a.Indent);
     });
 
+    // ---- inserting keeps what is selected ----------------------------------------------------------------
+
+    private static readonly byte[] TinyPng = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP8//8/AzJgYkAD5AsAAP//A+8DTgn2rL0AAAAASUVORK5CYII=");
+
+    private static string Shape(RichEditor ed)
+        => string.Join(",", ed.Document!.Blocks.Select(b => b is Paragraph bp ? (TextOf(bp).Length > 0 ? TextOf(bp) : "P") : b.GetType().Name));
+
+    private static int OffsetOf<TInline>(Paragraph p) where TInline : Inline
+    {
+        int off = 0;
+        foreach (var inl in p.Inlines) { if (inl is TInline) return off; off += inl is Run r ? (r.Text?.Length ?? 0) : 1; }
+        return -1;
+    }
+
+    [Fact]
+    public void InsertDivider_OverABackwardsSelection_GoesAtItsEnd() => UiThread.Run(() =>
+    {
+        // The block went in at the caret — the START of a selection made backwards — and the selection stood.
+        var p = P("hello world");
+        var ed = Editor(p);
+        Select(ed, p, 8, p, 3);
+        ed.InsertDivider();
+        Assert.Equal("hello wo,DividerBlock,rld", Shape(ed));
+    });
+
+    [Fact]
+    public void InsertTable_WithAPictureSelected_GoesRightAfterIt() => UiThread.Run(() =>
+    {
+        // With a picture selected the block went in where the caret had been before the click.
+        var above = P("above");
+        var pic = new ImageBlock { Width = 50, Height = 50 };
+        pic.SetImageData(TinyPng, "image/png");
+        var ed = Editor(above, pic, P("below"));
+        Caret(ed, above, 0);
+        T.GetField("_selectedBlock", NP)!.SetValue(ed, pic);
+        ed.InsertTable(2, 2);
+        Assert.Equal("above,ImageBlock,P,TableBlock,below", Shape(ed));
+    });
+
+    [Fact]
+    public void InsertInlineTable_OverABackwardsSelection_GoesAtItsEnd_AndKeepsTheText() => UiThread.Run(() =>
+    {
+        var p = P("hello world");
+        var ed = Editor(p);
+        Select(ed, p, 8, p, 3);
+        ed.InsertInlineTable(1, 1);
+        Assert.Equal("hello world", TextOf(p));
+        Assert.Equal(8, OffsetOf<InlineTable>(p));
+        Assert.False(ed.HasSelection);
+    });
+
+    [Fact]
+    public void InsertInlineImage_OverABackwardsSelection_GoesAtItsEnd_AndKeepsTheText() => UiThread.Run(() =>
+    {
+        var p = P("hello world");
+        var ed = Editor(p);
+        Select(ed, p, 8, p, 3);
+        ed.InsertInlineImage(TinyPng);
+        Assert.Equal("hello world", TextOf(p));
+        Assert.Equal(8, OffsetOf<InlineImage>(p));
+        Assert.False(ed.HasSelection);
+    });
+
     // ---- "treat as character" inside a cell -----------------------------------------------------------
 
     [Fact]

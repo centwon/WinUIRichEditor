@@ -60,6 +60,37 @@ public partial class RichEditor
 
     private void ClearObjectSelection() { _selectedBlock = null; _selectedInline = null; _selectedInlineTable = null; }
 
+    // Where an insert (a table, a picture, a divider; one put in as a character) goes with something selected: nothing
+    // selected is removed — the caret goes to the end of a text selection (in document order, whichever way it was
+    // made), or right after a selected picture or table — and the selection is let go of, as upstream (2026-11-09).
+    // The block went in wherever the caret was, beside a selection left standing; InsertInlineImage replaced nothing
+    // either and left the text selected. A paste replaces the selection instead: its caller deletes it first.
+    private void MoveCaretToInsertionPoint()
+    {
+        static int After(Paragraph p, Inline target)
+        {
+            int off = 0;
+            foreach (var inl in p.Inlines) { off += InlineLen(inl); if (ReferenceEquals(inl, target)) break; }
+            return off;
+        }
+        if (_selectedBlock is { } b && BlockContainerOf(b) is { } list && list.IndexOf(b) is var bi and >= 0)
+        {
+            for (int i = bi + 1; i < list.Count; i++)
+                if (list[i] is Paragraph after) { _caret = new TextPointer(after, 0); break; }
+        }
+        else if (_selectedInline is { } si && si.p.Inlines.Contains(si.img))
+            _caret = new TextPointer(si.p, After(si.p, si.img));
+        else if (_selectedInlineTable is { } st && st.host.Inlines.Contains(st.it))
+            _caret = new TextPointer(st.host, After(st.host, st.it));
+        else if (_selStart.Paragraph != null && _selEnd.Paragraph != null && ComparePositions(_selStart, _selEnd) != 0)
+        {
+            var end = ComparePositions(_selStart, _selEnd) > 0 ? _selStart : _selEnd;
+            _caret = new TextPointer(end.Paragraph, end.Offset);
+        }
+        ClearObjectSelection();
+        CollapseSelectionToCaret();
+    }
+
     // Lets go of a selected object that an edit took out of the document. Pointer, key and menu paths clear the
     // selection before they edit, but a host call does not: DeleteTableRow around a selected nested table or
     // picture left it selected, and Delete then removed the inline picture from the detached row and parked the

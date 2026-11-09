@@ -527,7 +527,9 @@ public partial class RichEditor
     // or a table cell's block list (rule #3: containers generalize) — so tables/dividers nest in cells.
     private void InsertBlockAtCaret(Block block)
     {
-        if (Document == null || _caret.Paragraph is not { } p) return;
+        if (Document == null) return;
+        MoveCaretToInsertionPoint();
+        if (_caret.Paragraph is not { } p) return;
         IList<Block>? container = p.Parent switch
         {
             FlowDocument d => d.Blocks,
