@@ -135,6 +135,43 @@ public partial class RichEditor
             return;
         }
         if (!HasSelection) return;
+        // A cell block takes its cells with it — the whole table, whole rows (it spans every column) or whole columns
+        // (it spans every row); any other rectangle leaves its cells empty, as Delete does (as upstream, 2026-11-09).
+        if (CellBlockSelection() is { } cb)
+        {
+            var tb = cb.tb;
+            bool allRows = cb.r0 == 0 && cb.r1 == tb.Rows - 1, allCols = cb.c0 == 0 && cb.c1 == tb.Columns - 1;
+            if (allRows && allCols)
+            {
+                var copyTable = CopyAsync();
+                ClearObjectSelection();
+                if (tb.Parent is InlineTable it && it.Parent is Paragraph host) _selectedInlineTable = (host, it);
+                else _selectedBlock = tb;
+                DeleteSelectedObject(); // pushes its own undo checkpoint + AfterEdit
+                await copyTable;
+                return;
+            }
+            if (allRows || allCols)
+            {
+                var copyCells = CopyAsync();
+                PushUndo(null);
+                if (allCols)
+                {
+                    for (int r = cb.r1; r >= cb.r0; r--) tb.DeleteRow(r);
+                    UpdateParents(Document!);
+                    SetCaretToCell(CellCaretTarget(tb, Math.Min(cb.r0, tb.Rows - 1), 0));
+                }
+                else
+                {
+                    for (int c = cb.c1; c >= cb.c0; c--) tb.DeleteColumn(c);
+                    UpdateParents(Document!);
+                    SetCaretToCell(CellCaretTarget(tb, 0, Math.Min(cb.c0, tb.Columns - 1)));
+                }
+                AfterStructuralEdit(tb);
+                await copyCells;
+                return;
+            }
+        }
         var copy = CopyAsync();
         PushUndo(null);
         DeleteSelection();

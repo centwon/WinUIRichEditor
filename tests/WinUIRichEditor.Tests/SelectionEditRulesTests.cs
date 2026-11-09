@@ -171,6 +171,57 @@ public class SelectionEditRulesTests
         Assert.All(paras.SelectMany(x => x.Inlines.OfType<Run>()), r => Assert.Equal(700, r.FontWeight.Weight));
     });
 
+    // ---- cutting a cell block --------------------------------------------------------------------------
+
+    private static TableBlock Grid(int rows, int cols)
+    {
+        var t = new TableBlock(rows, cols);
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++)
+            {
+                t.Cells[r][c].Blocks.Clear();
+                t.Cells[r][c].Blocks.Add(P(((char)('a' + r * cols + c)).ToString()));
+            }
+        return t;
+    }
+
+    private static string CellText(TableBlock t, int r, int c) => TextOf(t.Cells[r][c].Para);
+
+    // Cut used to empty the cells of any block and leave the grid standing: whole rows, whole columns and the whole table
+    // now go with the cut, as in HWP; any other rectangle is still emptied.
+    [Theory]
+    [InlineData(1, 0, 1, 2, "rows")]
+    [InlineData(0, 2, 2, 2, "columns")]
+    [InlineData(0, 0, 2, 2, "table")]
+    [InlineData(0, 0, 1, 1, "contents")]
+    public void CuttingACellBlock_TakesWholeRowsColumnsOrTheTable(int r0, int c0, int r1, int c1, string kind) => UiThread.Run(() =>
+    {
+        var t = Grid(3, 3);
+        var ed = Editor(P("before"), t, P("after"));
+        Select(ed, t.Cells[r0][c0].Para, 0, t.Cells[r1][c1].Para, 1);
+        ed.CutAsync().GetAwaiter().GetResult();
+        switch (kind)
+        {
+            case "rows":
+                Assert.Equal(2, t.Rows);
+                Assert.Equal("g", CellText(t, 1, 0));
+                break;
+            case "columns":
+                Assert.Equal(2, t.Columns);
+                Assert.Equal("b", CellText(t, 0, 1));
+                break;
+            case "table":
+                Assert.DoesNotContain(ed.Document!.Blocks, b => b is TableBlock);
+                break;
+            default:
+                Assert.Equal((3, 3), (t.Rows, t.Columns));
+                Assert.Equal("", CellText(t, 0, 0));
+                Assert.Equal("", CellText(t, 1, 1));
+                Assert.Equal("c", CellText(t, 0, 2));
+                break;
+        }
+    });
+
     // ---- "treat as character" inside a cell -----------------------------------------------------------
 
     [Fact]
