@@ -730,7 +730,7 @@ public partial class RichEditor : ContentControl
         unchecked
         {
             long h = 1469598103934665603; // FNV-1a 64-bit offset basis
-            void Mix(long v) { h = (h ^ v) * 1099511628211; }
+            void Mix(long v) { h = (h ^ Avalanche(v)) * 1099511628211; }
             void MixStr(string? s) { if (s == null) { Mix(0); return; } foreach (char ch in s) Mix(ch); Mix(s.Length + 1); }
             // Full size-relevant fingerprint of a (possibly nested) table hosted by an inline table.
             // Runs only for paragraphs that actually host one, so the hot plain-paragraph path is untouched.
@@ -806,6 +806,21 @@ public partial class RichEditor : ContentControl
                 }
             }
             return h;
+        }
+    }
+
+    // SplitMix64's finalizer: every input bit reaches every output bit. FNV's step — xor, then multiply by an odd
+    // constant — only carries a difference UPWARD, so two values that differ only in their high bits (a double's
+    // NaN and 1.5, say) could cancel within one edit and the paragraph kept its old layout and height (upstream
+    // AvaloniaRichEditor PR #58, measured here: 2 of 28 line-spacing/heading pairs).
+    private static long Avalanche(long x)
+    {
+        unchecked
+        {
+            ulong z = (ulong)x;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+            return (long)(z ^ (z >> 31));
         }
     }
 }
