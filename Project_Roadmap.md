@@ -22,6 +22,13 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 | AOT | self-contained 게시 성공(2026-09-29): 네이티브 exe **15.2MB**, 게시 **74.7MB**(pdb 제외), CoreCLR·관리 dll 없음 |
 | 공개 표면 | **670**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 추가 + **개명 하나**(`TextForeground`→`DefaultForeground`, SemVer 예외로 CHANGELOG에 기록), Unshipped 비어 있음 |
 
+### 상류 미측정 항목 대조 (2026-11-08, 미릴리스)
+상류 로드맵에 "포트에 있는지 미측정"으로 남았던 셋을 쟀다. 라운드35(크기·깊이)는 이미 PR #62로 대조 끝(20건 중 14건 백포트) —
+상류 기록만 늦었다. 1d 호스트 직접 편집(`NotifyDocumentChanged`·`InsertText` undo)도 이미 들어와 있다(`HostModelMutationTests`).
+레이아웃 캐시 높이 오라클(상류 PR #58)의 두 결함: **문단 서명 상쇄는 포트에도 있었다**(28쌍 중 2쌍) → `Avalanche` 섞기로 수정.
+목록 토글 측정 누락은 없다(`AfterFormat`이 매번 `RelayoutToViewport`). `LayoutCacheBackportTests`, 반증 2/2(토글 쪽은
+재배치 호출을 빼면 빨강). 첫 측정이 공허했다 — 연속 보기 폭 1,264px에선 글머리표 여백이 줄 수를 안 바꿔 줌 4로 좁혀 잼.
+
 ### 호스트용 링크 API (2026-11-08, 미릴리스, 브랜치 `feat/hyperlink-host-api`)
 상류 PR #87(외부 기여, 메인테이너 수정 후 머지)과 같은 이름: `HasSelection`(기존 private을 공개), `GetHyperlinkAt(Point)`,
 `TrySetHyperlinkAt(Point, string?)`. `SetHyperlink(string?)`는 포트에 이미 있었다. 상류와 다른 점: 포트는 캔버스가 컨트롤 안
