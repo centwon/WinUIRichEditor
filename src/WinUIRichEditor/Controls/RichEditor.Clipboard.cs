@@ -135,6 +135,43 @@ public partial class RichEditor
             return;
         }
         if (!HasSelection) return;
+        // A cell block takes its cells with it — the whole table, whole rows (it spans every column) or whole columns
+        // (it spans every row); any other rectangle leaves its cells empty, as Delete does (as upstream, 2026-11-09).
+        if (CellBlockSelection() is { } cb)
+        {
+            var tb = cb.tb;
+            bool allRows = cb.r0 == 0 && cb.r1 == tb.Rows - 1, allCols = cb.c0 == 0 && cb.c1 == tb.Columns - 1;
+            if (allRows && allCols)
+            {
+                var copyTable = CopyAsync();
+                ClearObjectSelection();
+                if (tb.Parent is InlineTable it && it.Parent is Paragraph host) _selectedInlineTable = (host, it);
+                else _selectedBlock = tb;
+                DeleteSelectedObject(); // pushes its own undo checkpoint + AfterEdit
+                await copyTable;
+                return;
+            }
+            if (allRows || allCols)
+            {
+                var copyCells = CopyAsync();
+                PushUndo(null);
+                if (allCols)
+                {
+                    for (int r = cb.r1; r >= cb.r0; r--) tb.DeleteRow(r);
+                    UpdateParents(Document!);
+                    SetCaretToCell(CellCaretTarget(tb, Math.Min(cb.r0, tb.Rows - 1), 0));
+                }
+                else
+                {
+                    for (int c = cb.c1; c >= cb.c0; c--) tb.DeleteColumn(c);
+                    UpdateParents(Document!);
+                    SetCaretToCell(CellCaretTarget(tb, 0, Math.Min(cb.c0, tb.Columns - 1)));
+                }
+                AfterStructuralEdit(tb);
+                await copyCells;
+                return;
+            }
+        }
         var copy = CopyAsync();
         PushUndo(null);
         DeleteSelection();
@@ -359,8 +396,10 @@ public partial class RichEditor
         if (clipText != null && !Stale()) InsertPlainTextBlock(clipText);
     }
 
-    // Inserts plain text at the caret, mapping newlines to paragraph breaks. Falls back to the inline
-    // InsertText for single-line text (keeps its formatting-inheritance and undo-coalescing behavior).
+    // Inserts plain text at the caret, mapping newlines to paragraph breaks — each line a paragraph with the caret
+    // paragraph's format and the caret's character format (PlainLineParagraphs, the same rule as upstream's; they were
+    // plain body paragraphs, 2026-11-09). Falls back to the inline InsertText for single-line text (keeps its
+    // formatting-inheritance and undo-coalescing behavior).
     private void InsertPlainTextBlock(string text)
     {
         text = text.Replace("\r\n", "\n").Replace('\r', '\n');
@@ -368,11 +407,34 @@ public partial class RichEditor
         if (Document == null || IsReadOnly || _caret.Paragraph == null) return;
         PushUndo(null);
         if (HasSelection) DeleteSelection();
+        if (_caret.Paragraph is not { } p) return;
         var pd = new FlowDocument();
-        foreach (var line in text.Split('\n'))
-            pd.Blocks.Add(new Paragraph { Inlines = { new Run { Text = line } } });
-        InsertDocumentAtCaret(pd); // in-cell carets fall back to soft-'\n' plain text inside (see there)
+        foreach (var b in PlainLineParagraphs(text, p, _caret.Offset)) pd.Blocks.Add(b);
+        InsertDocumentAtCaret(pd);
         AfterEdit();
+    }
+
+    // Plain text of several lines as paragraphs to splice in at the caret: one per line, each with the format of the
+    // paragraph the caret is in and the character format typing there would use (TypingSource; an empty heading's
+    // preset) — so lines pasted into a list item are list items, as in Word. A link at the caret does not carry over.
+    // One rule for both controls (2026-11-09).
+    private static List<Block> PlainLineParagraphs(string text, Paragraph caretParagraph, int offset)
+    {
+        var (src, _, _, _) = TypingSource(caretParagraph, offset);
+        var blocks = new List<Block>();
+        foreach (var line in text.Split('\n'))
+        {
+            var p = new Paragraph();
+            p.CopyFormatFrom(caretParagraph);
+            var run = src != null ? (Run)src.Clone() : new Run();
+            if (src == null && HeadingStyle.IsHeading(caretParagraph.HeadingLevel)) HeadingStyle.ApplyPreset(run, caretParagraph.HeadingLevel);
+            run.Text = line;
+            run.NavigateUri = null;
+            run.Parent = p;
+            p.Inlines.Add(run);
+            blocks.Add(p);
+        }
+        return blocks;
     }
 
     // Application-private clipboard formats: the image's original encoded bytes (base64, so an in-editor
@@ -527,7 +589,9 @@ public partial class RichEditor
     // or a table cell's block list (rule #3: containers generalize) — so tables/dividers nest in cells.
     private void InsertBlockAtCaret(Block block)
     {
-        if (Document == null || _caret.Paragraph is not { } p) return;
+        if (Document == null) return;
+        MoveCaretToInsertionPoint();
+        if (_caret.Paragraph is not { } p) return;
         IList<Block>? container = p.Parent switch
         {
             FlowDocument d => d.Blocks,
@@ -923,9 +987,17 @@ public partial class RichEditor
         int idx = container.IndexOf(p);
         if (idx < 0) { InsertPlainNoUndo(PlainTextOf(pd)); return; }
 
+        // One rule for both controls (2026-11-08, upstream same day) — the same paste had saved as different JSON in the
+        // two: the first pasted paragraph joins the text before the caret and the last the text after it (this control
+        // left the last as a paragraph of its own: `Hello |World` + two paragraphs gave three lines); a side that is EMPTY
+        // takes the format of the pasted paragraph joining it; runs of equal format rejoin and nothing empty is left
+        // behind; the caret ends after the pasted content.
+        int caretAt = _caret.Offset;
+        bool headEmpty = caretAt == 0, tailEmpty = caretAt >= GetParagraphLength(p);
+
         // Split the caret paragraph: head stays (p), tail becomes a new paragraph inserted right after.
         // The tail is p's own continuation — carry the full paragraph format (see InsertBlockAtCaret).
-        int splitIdx = SplitInlinesAt(p, _caret.Offset);
+        int splitIdx = SplitInlinesAt(p, caretAt);
         var tail = p.CloneFormat();
         while (p.Inlines.Count > splitIdx)
         {
@@ -934,41 +1006,65 @@ public partial class RichEditor
             inl.Parent = tail;
             tail.Inlines.Add(inl);
         }
+
+        var middle = pasted.ToList();
+        bool headJoined = false;
+        if (middle[0] is Paragraph fp)
+        {
+            headJoined = true;
+            middle.RemoveAt(0);
+            if (headEmpty) { p.CopyFormatFrom(fp); p.Inlines.Clear(); }
+            foreach (var inl in fp.Inlines.ToList()) { inl.Parent = p; p.Inlines.Add(inl); }
+            TidyPasted(p);
+        }
+        int caretOff = 0;
+        bool caretInTail = false;
+        if (middle.Count > 0 && middle[^1] is Paragraph lp)
+        {
+            middle.RemoveAt(middle.Count - 1);
+            if (tailEmpty) { tail.CopyFormatFrom(lp); tail.Inlines.Clear(); }
+            int pos = 0;
+            foreach (var inl in lp.Inlines.ToList()) { inl.Parent = tail; tail.Inlines.Insert(pos++, inl); caretOff += InlineLen(inl); }
+            TidyPasted(tail);
+            caretInTail = true;
+        }
         if (tail.Inlines.Count == 0) tail.Inlines.Add(new Run { Text = "" });
         if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
-        tail.Parent = owner;
-        container.Insert(idx + 1, tail);
 
-        // Splice pasted blocks between head (p) and tail: the first pasted paragraph merges into head,
-        // the rest are inserted as blocks before tail. Caret lands at the start of the tail.
-        int insertAt = idx + 1; // tail is here; new blocks go before it
-        for (int i = 0; i < pasted.Count; i++)
-        {
-            var b = pasted[i];
-            if (i == 0 && b is Paragraph fp)
-            {
-                // The first pasted paragraph merges into the caret paragraph (p). If p was EMPTY (a
-                // blank line / fresh cell), adopt the pasted paragraph's own format — list, heading,
-                // alignment, indent, spacing — so pasting a bullet into an empty cell stays a bullet.
-                // When p already has content, keep p's format (the paste flows into existing text).
-                if (GetParagraphLength(p) == 0)
-                {
-                    p.CopyFormatFrom(fp);
-                    p.Inlines.Clear();
-                }
-                foreach (var inl in fp.Inlines.ToList()) { inl.Parent = p; p.Inlines.Add(inl); }
-                if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
-                TextRange.CoalesceRuns(p);
-            }
-            else
-            {
-                b.Parent = owner;
-                container.Insert(insertAt++, b);
-            }
-        }
-        _caret = new TextPointer(tail, 0);
-        CollapseSelectionToCaret();
+        int insertAt = idx + 1;
+        foreach (var b in middle) { b.Parent = owner; container.Insert(insertAt++, b); }
+        tail.Parent = owner;
+        container.Insert(insertAt, tail);
+        // An empty side left next to a pasted block is not text anyone wrote: drop it, and let the normalization in
+        // UpdateParents put back a paragraph only where a block needs one (the edges, between two blocks).
+        Block? lastBlock = middle.Count > 0 ? middle[^1] : null;
+        if (!headJoined && GetParagraphLength(p) == 0) container.Remove(p);
+        if (!caretInTail && GetParagraphLength(tail) == 0) container.Remove(tail);
         UpdateParents(Document);
+
+        var caretPara = tail;
+        if (!caretInTail && !container.Contains(tail))
+        {
+            // The paragraph after the last pasted block (the normalization guarantees one).
+            caretPara = p;
+            int li = lastBlock != null ? container.IndexOf(lastBlock) : -1;
+            for (int i = li + 1; i < container.Count; i++)
+                if (container[i] is Paragraph after) { caretPara = after; break; }
+            caretOff = 0;
+        }
+        _caret = new TextPointer(caretPara, caretOff);
+        CollapseSelectionToCaret();
+    }
+
+    // A pasted seam: drop empty runs when there is anything else (keep one when there is nothing), rejoin equal-format runs.
+    private static void TidyPasted(Paragraph p)
+    {
+        if (p.Inlines.Any(i => !(i is Run r && string.IsNullOrEmpty(r.Text))))
+            p.Inlines.RemoveAll(i => i is Run r && string.IsNullOrEmpty(r.Text));
+        else if (p.Inlines.Count > 1)
+            p.Inlines.RemoveRange(1, p.Inlines.Count - 1);
+        if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "", Parent = p });
+        TextRange.CoalesceRuns(p);
     }
 
     // Inserts plain text at the caret WITHOUT pushing an undo step — for fallback paths whose caller

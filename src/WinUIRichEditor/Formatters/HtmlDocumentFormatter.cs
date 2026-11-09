@@ -39,6 +39,10 @@ public static class HtmlDocumentFormatter
     private static readonly System.Net.Http.HttpClient Http = new()
     { Timeout = TimeSpan.FromSeconds(5), MaxResponseContentBufferSize = 20 * 1024 * 1024 };
     private static readonly TimeSpan RemoteImageBudget = TimeSpan.FromSeconds(5);
+    // Only the first this-many distinct remote pictures are fetched; the rest are skipped like a failed fetch. All are
+    // requested at once, and the pasted page chose how many: a page of a thousand <img> was a thousand simultaneous
+    // downloads (2026-11-08, upstream same day).
+    internal const int MaxRemoteImages = 64;
     [ThreadStatic] private static bool _blockLocalFileImages;
     [ThreadStatic] private static bool _blockRemoteImages;
     [ThreadStatic] private static bool _allowTempFileImages;
@@ -205,6 +209,7 @@ public static class HtmlDocumentFormatter
             .Select(n => Attr(n, "src"))
             .Where(s => s.StartsWith("http"))
             .Distinct()
+            .Take(MaxRemoteImages)
             .ToList();
         if (urls.Count == 0) return result;
 
@@ -550,8 +555,10 @@ public static class HtmlDocumentFormatter
     private static readonly System.Text.RegularExpressions.Regex RxFontWeight = new(@"(?<![\w-])font-weight\s*:\s*([^;]+)");
     private static readonly System.Text.RegularExpressions.Regex RxUnderline = new("text-decoration[^;]*underline");
     private static readonly System.Text.RegularExpressions.Regex RxLineThrough = new("text-decoration[^;]*line-through");
-    private static readonly System.Text.RegularExpressions.Regex RxColor = new("(?<![\\w-])color\\s*:\\s*([^;]+)");
-    private static readonly System.Text.RegularExpressions.Regex RxBackground = new("background(?:-color)?\\s*:\\s*([^;]+)");
+    // Colour and highlight are read at the start of a declaration only: matched anywhere, a `color:` inside a font family's
+    // quoted name was the text colour (2026-11-08, upstream same day).
+    private static readonly System.Text.RegularExpressions.Regex RxColor = new("(?:^|;)\\s*color\\s*:\\s*([^;]+)");
+    private static readonly System.Text.RegularExpressions.Regex RxBackground = new("(?:^|;)\\s*background(?:-color)?\\s*:\\s*([^;]+)");
     private static readonly System.Text.RegularExpressions.Regex RxFontFamily = new("font-family\\s*:\\s*([^;]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     private static readonly System.Text.RegularExpressions.Regex RxFontSize = new("font-size\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt|rem|em|%)?");
     private static readonly System.Text.RegularExpressions.Regex RxMarginLeft = new("margin-left\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(px|pt)?");
@@ -619,10 +626,9 @@ public static class HtmlDocumentFormatter
         if (string.IsNullOrEmpty(v)) return;
         var parts = v.Split(',');
         if (parts.Length != 3) return;
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        if (double.TryParse(parts[0], System.Globalization.NumberStyles.Float, inv, out double t)) p.MarginTop = t;
-        if (double.TryParse(parts[1], System.Globalization.NumberStyles.Float, inv, out double b)) p.MarginBottom = b;
-        if (double.TryParse(parts[2], System.Globalization.NumberStyles.Float, inv, out double r)) p.MarginRight = r;
+        if (TryFinite(parts[0], System.Globalization.NumberStyles.Float, out double t)) p.MarginTop = t;
+        if (TryFinite(parts[1], System.Globalization.NumberStyles.Float, out double b)) p.MarginBottom = b;
+        if (TryFinite(parts[2], System.Globalization.NumberStyles.Float, out double r)) p.MarginRight = r;
     }
 
     private static bool HasBlockOrMedia(HtmlNode n)
@@ -875,6 +881,14 @@ public static class HtmlDocumentFormatter
         return scheme is "javascript" or "vbscript" or "data" ? null : href;
     }
 
+    // double.TryParse takes "Infinity", "NaN" and 1e400 (and so a 400-digit number), and JSON cannot write any of them:
+    // one such value from a pasted page made every later save of the document throw (2026-11-08, upstream same day).
+    private static bool TryFinite(string? s, System.Globalization.NumberStyles style, out double v)
+        => double.TryParse(s, style, System.Globalization.CultureInfo.InvariantCulture, out v) && TryFinite(v, out v);
+    private static bool TryFinite(string? s, out double v)
+        => TryFinite(s, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, out v);
+    private static bool TryFinite(double d, out double v) { v = d; return double.IsFinite(d); }
+
     private static double ReadPx(HtmlNode node, string attr, string cssProp)
     {
         var a = Attr(node, attr).Trim();
@@ -883,7 +897,7 @@ public static class HtmlDocumentFormatter
         double mult = 1;
         if (a.EndsWith("pt", StringComparison.OrdinalIgnoreCase)) { mult = 96.0 / 72.0; a = a[..^2]; }
         else if (a.EndsWith("px", StringComparison.OrdinalIgnoreCase)) a = a[..^2];
-        if (double.TryParse(a, System.Globalization.CultureInfo.InvariantCulture, out var v)) return v * mult;
+        if (TryFinite(a, out var v) && TryFinite(v * mult, out var scaled)) return scaled;
         var style = Attr(node, "style");
         if (!string.IsNullOrEmpty(style))
         {
@@ -891,7 +905,7 @@ public static class HtmlDocumentFormatter
             // height, max-width as a size to force. (Code review 2026-11-01.)
             var m = System.Text.RegularExpressions.Regex.Match(style, "(?<![\\w-])" + cssProp + "\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)px",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture, out var px)) return px;
+            if (m.Success && TryFinite(m.Groups[1].Value, out var px)) return px;
         }
         return double.NaN;
     }
@@ -1069,15 +1083,14 @@ public static class HtmlDocumentFormatter
     {
         var v = ReadStyleValue(node, "line-height")?.Trim();
         if (string.IsNullOrEmpty(v) || v.Equals("normal", StringComparison.OrdinalIgnoreCase)) return;
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
         const System.Globalization.NumberStyles fl = System.Globalization.NumberStyles.Float;
         if (v.EndsWith("%", StringComparison.Ordinal)
-            && double.TryParse(v[..^1], fl, inv, out var pct) && pct > 0)
+            && TryFinite(v[..^1], fl, out var pct) && pct > 0)
             p.LineSpacing = pct / 100.0;
         else if (v.EndsWith("px", StringComparison.OrdinalIgnoreCase)
-            && double.TryParse(v[..^2], fl, inv, out var px) && px > 0)
+            && TryFinite(v[..^2], fl, out var px) && px > 0)
             p.LineHeight = px;
-        else if (double.TryParse(v, fl, inv, out var mult) && mult > 0)
+        else if (TryFinite(v, fl, out var mult) && mult > 0)
             p.LineSpacing = mult; // unitless multiplier
     }
 
@@ -1086,8 +1099,8 @@ public static class HtmlDocumentFormatter
         var style = Attr(node, "style").ToLowerInvariant();
         var m = RxMarginLeft.Match(style);
         if (!m.Success) m = RxPaddingLeft.Match(style);
-        if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0)
-            return m.Groups[2].Value == "pt" ? v * 96.0 / 72.0 : v;
+        if (m.Success && TryFinite(m.Groups[1].Value, out var v) && v > 0 && TryFinite(m.Groups[2].Value == "pt" ? v * 96.0 / 72.0 : v, out var px))
+            return px;
         return 0;
     }
 

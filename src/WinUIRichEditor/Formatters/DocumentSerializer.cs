@@ -13,7 +13,10 @@ using WinUIRichEditor.Documents;
 
 namespace WinUIRichEditor.Formatters;
 
-[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+// MaxDepth, read and write alike: the default 64 holds about 12 nested tables, but the HTML reader builds them as deep as
+// its DOM bound and the RTF reader to 32 levels — such a document opened and every save of it threw. 320 holds those
+// (upstream measured 258 at most) and 63 nested block tables, 2026-11-08.
+[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = 320,
     Converters = new[] { typeof(FiniteDoubleConverter) })]
 [JsonSerializable(typeof(FlowDocumentDto))]
 internal partial class DocumentJsonContext : JsonSerializerContext
@@ -24,7 +27,7 @@ internal partial class DocumentJsonContext : JsonSerializerContext
     // indented: indentation was half of every document. (Upstream 2026-10-01.)
     internal static DocumentJsonContext Wire { get; } = new(new JsonSerializerOptions
     {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = 320,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All),
     });
 }

@@ -232,6 +232,13 @@ public partial class RichEditor
     // walked, each clipped to its own doc range; hit-test geometry records during those walks (doc
     // space — the page translate lives in the transform) and persists until relayout, so no page is
     // ever walked just for geometry.
+    // Each page walks only the blocks that overlap its slice by more than SliceEdge: a table, picture or divider that starts
+    // at the slice's end belongs to the next page (it moved there whole), and one that ends at the slice's top to the previous
+    // one. Walked here, it left its edge as a 1-px line on this page and its selection frame in the room it left (2026-11-08).
+    // The walk is block by block, so a paragraph that crosses the break is still drawn (and clipped).
+    private const double SliceEdge = 0.5;
+    private const double ChromeOutset = 8; // a selection frame and its handles past the object's edge
+
     private void DrawPagedDocument(CanvasDrawingSession ds, Rect region)
     {
         var breaks = EnsurePageBreaks();
@@ -255,20 +262,24 @@ public partial class RichEditor
 
             double viewContentLeft = PageDeskX + PagePadLeft;
             double viewContentTop = pageTop + PagePadTop;
-            var clip = new Rect(viewContentLeft, viewContentTop, PaperContentWidth, pageContentH);
+            double sliceH = PageSliceHeight(breaks, i);
+            var clip = new Rect(viewContentLeft, viewContentTop, PaperContentWidth, sliceH);
             using (ds.CreateLayer(1f, clip))
             {
                 var saved = ds.Transform; // the zoom base; compose so the page translate happens in logical units
                 ds.Transform = System.Numerics.Matrix3x2.CreateTranslation(
                     (float)(viewContentLeft - DocContentLeft),
                     (float)(viewContentTop - breaks[i])) * saved; // map this page's doc-top to the content box
-                DrawContentWalk(ds, breaks[i] - 1, breaks[i] + pageContentH + 1);
+                DrawContentWalk(ds, breaks[i] + SliceEdge, breaks[i] + sliceH - SliceEdge);
                 ds.Transform = saved;
             }
             // A selected picture's or table's border lies OUTSIDE it, and one on the content box's edge lost that side
             // to the content clip. Drawn here under the PAPER's clip instead (see FlushOutsideChrome).
+            // Clipped to the paper, but only down to a little past this page's slice: below it is the room a moved object
+            // left, or the next page's part of a split table.
             if (_outsideChrome.Count > 0)
-                using (ds.CreateLayer(1f, pageRect))
+                using (ds.CreateLayer(1f, new Rect(pageRect.X, pageRect.Y, pageRect.Width,
+                           Math.Min(pageRect.Height, viewContentTop + sliceH + ChromeOutset - pageRect.Y))))
                 {
                     var saved = ds.Transform;
                     ds.Transform = System.Numerics.Matrix3x2.CreateTranslation(

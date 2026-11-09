@@ -321,45 +321,33 @@ public partial class RichEditor
         if (marker is { } m0 && SelectedParagraphs().DefaultIfEmpty(_caret.Paragraph)
                 .All(p => p.ListType == kind && p.ListMarker == m0 && !p.Inlines.Any(i => i is Run r && r.Text?.Contains('\n') == true))) return;
         PushUndo(null);
-        bool turningOff = marker == null && _caret.Paragraph.ListType == kind;
+        // Every selected paragraph at any depth (just the caret's when there's no selection). One rule for the
+        // direction, in and out of tables alike: a style pick always turns the list on; the plain bullet/number
+        // toggle turns it on unless EVERY selected paragraph already has this kind (outside a table the caret's
+        // paragraph used to decide). A cell paragraph is set in place — its soft line breaks stay one list item,
+        // and the splitting path below splices Document.Blocks only — so a selection crossing a table lists the
+        // cells it crosses too (the top-level-only path skipped them).
+        var selected = SelectedParagraphs().ToList();
+        if (selected.Count == 0) selected.Add(_caret.Paragraph);
+        bool turningOff = marker == null && selected.All(p => p.ListType == kind);
         void ApplyMarker(Paragraph par) { if (marker.HasValue) par.ListMarker = marker.Value; }
 
-        // Caret inside a table cell — with a rectangular cell-block selection, with a plain selection
-        // spanning several paragraphs of ONE cell, or with no selection at all. All three set the list
-        // flag in place on EVERY selected paragraph: the top-level newline-splitting/reindexing path
-        // below only handles Document.Blocks paragraphs (a cell paragraph isn't there, so
-        // SplitByNewlines' RemoveAt/Insert would no-op and the toggle would silently do nothing), and a
-        // cell paragraph's soft line breaks stay one list item anyway.
-        // Collecting via SelectedParagraphs is what makes the multi-paragraph-in-one-cell case work —
-        // that isn't a CellBlockSelection (both endpoints are in the same cell), so it used to fall
-        // through to a branch that only ever touched the CARET paragraph and left the rest unbulleted.
-        // Toggle is group-based: turn all off only when every selected paragraph already has this kind.
-        if (CellBlockSelection() != null || (_caret.Paragraph is { } cp0 && FindCell(cp0) is not null))
+        if (turningOff)
         {
-            var cellParas = SelectedParagraphs().ToList();
-            if (cellParas.Count == 0) cellParas.Add(_caret.Paragraph);
-            bool off = marker == null && cellParas.All(p => p.ListType == kind);
-            foreach (var p in cellParas)
-            {
-                if (off) ClearList(p);
-                else { p.ListType = kind; ApplyMarker(p); }
-            }
+            foreach (var p in selected) ClearList(p);
             UpdateParents(Document);
             AfterFormat();
             return;
         }
-
-        var targets = SelectedTopLevelParagraphs();
+        var targets = new List<Paragraph>();
+        foreach (var p in selected)
+        {
+            if (Document.Blocks.Contains(p)) { targets.Add(p); continue; }
+            p.ListType = kind;
+            ApplyMarker(p);
+        }
         if (targets.Count == 0)
         {
-            if (turningOff) ClearList(_caret.Paragraph);
-            else { _caret.Paragraph.ListType = kind; ApplyMarker(_caret.Paragraph); }
-            AfterFormat();
-            return;
-        }
-        if (turningOff)
-        {
-            foreach (var tp in targets) ClearList(tp);
             UpdateParents(Document);
             AfterFormat();
             return;
@@ -396,25 +384,6 @@ public partial class RichEditor
         if (nCp != null) _caret = nCp;
         UpdateParents(Document);
         AfterFormat();
-    }
-
-    private List<Paragraph> SelectedTopLevelParagraphs()
-    {
-        var result = new List<Paragraph>();
-        if (Document == null) return result;
-        var all = AllParagraphs();
-        int si = _selStart.Paragraph != null ? all.IndexOf(_selStart.Paragraph) : -1;
-        int ei = _selEnd.Paragraph != null ? all.IndexOf(_selEnd.Paragraph) : -1;
-        if (si < 0 || ei < 0)
-        {
-            if (_caret.Paragraph != null && Document.Blocks.Contains(_caret.Paragraph))
-                result.Add(_caret.Paragraph);
-            return result;
-        }
-        if (si > ei) (si, ei) = (ei, si);
-        for (int i = si; i <= ei; i++)
-            if (Document.Blocks.Contains(all[i])) result.Add(all[i]);
-        return result;
     }
 
     private List<Paragraph> SplitByNewlines(Paragraph p)

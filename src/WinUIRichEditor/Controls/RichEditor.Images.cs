@@ -326,6 +326,8 @@ public partial class RichEditor
         if (_caret.Paragraph is not { } p) return;
 
         if (pushUndo) PushUndo(null);
+        MoveCaretToInsertionPoint(); // after a selection, which stays; a paste has deleted it already
+        p = _caret.Paragraph ?? p;
 
         var (nw, nh) = ImageInfo.GetPixelSize(bytes);
         double w = displayW > 0 ? displayW : (nw > 0 ? nw : 80);
@@ -352,8 +354,6 @@ public partial class RichEditor
     // "Adjacent" and "same container" are the whole point: resolving the index against Document.Blocks
     // returned -1 for an image inside a table cell, so "글자처럼 취급" on a cell image did nothing at all
     // — and the image menu offers that toggle for cell images, which are selectable and resizable.
-    // (ConvertTableBlockToInline keeps hard-coding Document.Blocks on purpose: its menu entry is gated
-    // on `tb.Parent is FlowDocument`, so a nested table is never offered the toggle in the first place.)
     internal void ConvertImageBlockToInline(ImageBlock src)
     {
         if (Document == null || src.RawBytes is not { } bytes) return;

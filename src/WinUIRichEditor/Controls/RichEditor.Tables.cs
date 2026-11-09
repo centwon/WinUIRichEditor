@@ -451,24 +451,59 @@ public partial class RichEditor
     // Tab/Shift+Tab move between table cells in document order; outside a table, on a list item they
     // change the nesting level (Word/HWP behavior), otherwise Tab inserts spaces.
     // Tab past the document's last cell appends a row to the enclosing top-level table.
+    // Shift+Tab outside a table and a list: takes back up to four spaces before the caret (what Tab typed), else
+    // outdents the paragraph — as upstream does; this used to do nothing.
+    private void ShiftTabOutsideTable()
+    {
+        if (_caret.Paragraph is { } p && !HasSelection)
+        {
+            string plain = BuildPlain(p);
+            int off = Math.Clamp(_caret.Offset, 0, plain.Length);
+            int start = off;
+            while (start > 0 && off - start < 4 && plain[start - 1] == ' ') start--;
+            if (start < off)
+            {
+                PushUndo(null);
+                DeleteLocalText(p, start, off - start);
+                _caret = new TextPointer(p, start);
+                CollapseSelectionToCaret();
+                AfterEdit();
+                return;
+            }
+        }
+        Indent(-20);
+    }
+
+    // One Tab step over a whole paragraph: a list item one level deeper (shallower, 0–8), any other paragraph one indent
+    // step (20, 0–400) further in (out).
+    private static int SteppedListLevel(Paragraph p, bool outdent) => Math.Clamp(p.ListLevel + (outdent ? -1 : 1), 0, 8);
+    private static double SteppedIndent(Paragraph p, bool outdent) => Math.Clamp(p.Indent + (outdent ? -20 : 20), 0, 400);
+    private static bool StepIndentChanges(Paragraph p, bool outdent)
+        => p.IsListItem ? SteppedListLevel(p, outdent) != p.ListLevel : SteppedIndent(p, outdent) != p.Indent;
+
     private void HandleTab(bool shift)
     {
         var loc = _caret.Paragraph != null ? FindCell(_caret.Paragraph) : null;
         if (loc == null)
         {
-            // List item: Tab demotes (deeper level), Shift+Tab promotes. Cells keep cell-first priority.
-            if (_caret.Paragraph is { IsListItem: true } lp)
+            // Several selected paragraphs: every one of them steps in (out) — a list item a level, any other an indent
+            // step — and nothing is deleted. A list item alone steps its level, as before. Only the CARET's item used to
+            // move, and without a list the key typed four spaces over the selection. Cells keep cell-first priority.
+            var paras = SelectedParagraphs().ToList();
+            if (paras.Count > 1 || _caret.Paragraph is { IsListItem: true })
             {
-                int nl = Math.Clamp(lp.ListLevel + (shift ? -1 : 1), 0, 8);
-                if (nl != lp.ListLevel)
+                if (paras.Count == 0) paras.Add(_caret.Paragraph!);
+                if (paras.Any(p => StepIndentChanges(p, shift))) // no undo step that undoes nothing
                 {
                     PushUndo(null);
-                    lp.ListLevel = nl;
+                    foreach (var p in paras)
+                        if (p.IsListItem) p.ListLevel = SteppedListLevel(p, shift);
+                        else p.Indent = SteppedIndent(p, shift);
                     AfterFormat();
                 }
                 return;
             }
-            if (shift) return; // Shift+Tab outside lists/cells: nothing to outdent
+            if (shift) { ShiftTabOutsideTable(); return; }
             // Tab completes the token before it the way a typed space does — AutoLinkOnType's contract
             // names space, tab and Enter. The key inserts four spaces and InsertText auto-links only a single
             // typed whitespace, so Tab never linked (measured). The link joins the spaces' undo group: their
@@ -946,6 +981,29 @@ public partial class RichEditor
         var (ecs, ers) = tb.SpanOf(e.r, e.c);
         int r0 = Math.Min(s.r, e.r), c0 = Math.Min(s.c, e.c);
         int r1 = Math.Max(s.r + srs - 1, e.r + ers - 1), c1 = Math.Max(s.c + scs - 1, e.c + ecs - 1);
+        return GrowToMerges(tb, r0, c0, r1, c1);
+    }
+
+    // The cell block's box grown until no merged cell sticks out of it — the box of the two corner cells, grown by
+    // every merge reaching into it, again and again. Growing only by the corner cells' spans let a merge anchored outside
+    // reach in, and the two controls painted, cleared and formatted different cells there (2026-11-09: one rule).
+    private static (int r0, int c0, int r1, int c1) GrowToMerges(TableBlock tb, int r0, int c0, int r1, int c1)
+    {
+        r0 = Math.Max(0, r0); c0 = Math.Max(0, c0);
+        r1 = Math.Min(tb.Rows - 1, r1); c1 = Math.Min(tb.Columns - 1, c1);
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            for (int r = r0; r <= r1; r++)
+                for (int c = c0; c <= c1; c++)
+                {
+                    var (ar, ac) = tb.AnchorOf(r, c);
+                    var (cs, rs) = tb.SpanOf(ar, ac);
+                    int nr0 = Math.Min(r0, ar), nc0 = Math.Min(c0, ac);
+                    int nr1 = Math.Min(tb.Rows - 1, Math.Max(r1, ar + rs - 1)), nc1 = Math.Min(tb.Columns - 1, Math.Max(c1, ac + cs - 1));
+                    if (nr0 != r0 || nc0 != c0 || nr1 != r1 || nc1 != c1) { (r0, c0, r1, c1) = (nr0, nc0, nr1, nc1); grew = true; }
+                }
+        }
         return (r0, c0, r1, c1);
     }
 
@@ -968,24 +1026,25 @@ public partial class RichEditor
 
     // ---- block <-> inline table toggle (HWP "treat as character") ----------
 
-    // Converts a top-level block table into an inline table embedded in an adjacent paragraph.
+    // Converts a block table into an inline table embedded in the paragraph next to it in its OWN list — a table nested
+    // in a cell converts within its cell (this was top-level only, and the menu offered nothing for a table in a cell).
     internal void ConvertTableBlockToInline(TableBlock tb)
     {
-        if (Document == null) return;
-        int idx = Document.Blocks.IndexOf(tb);
+        if (Document == null || BlockContainerOf(tb) is not { } container) return;
+        int idx = container.IndexOf(tb);
         if (idx < 0) return;
 
         Paragraph? anchor = null;
         bool atEnd = true;
-        if (idx > 0 && Document.Blocks[idx - 1] is Paragraph prev) anchor = prev;
+        if (idx > 0 && container[idx - 1] is Paragraph prev) anchor = prev;
         else
-            for (int i = idx + 1; i < Document.Blocks.Count && anchor == null; i++)
-                if (Document.Blocks[i] is Paragraph next) { anchor = next; atEnd = false; }
+            for (int i = idx + 1; i < container.Count && anchor == null; i++)
+                if (container[i] is Paragraph next) { anchor = next; atEnd = false; }
         if (anchor == null) return;
 
         PushUndo(null);
         var it = new InlineTable { Table = (TableBlock)tb.Clone() };
-        Document.Blocks.Remove(tb);
+        container.Remove(tb);
         if (atEnd) anchor.Inlines.Add(it);
         else anchor.Inlines.Insert(0, it);
         if (ReferenceEquals(_selectedBlock, tb)) _selectedBlock = null;

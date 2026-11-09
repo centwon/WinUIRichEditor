@@ -319,6 +319,20 @@ public partial class RichEditor
 
     private void OnCanvasPointerPressed(object sender, PointerRoutedEventArgs e) => PointerPressedCore(StepFrom(e));
 
+    // A row or picture resize measures the pointer's travel in view space (zoom removed), not document space: in page view a
+    // row or picture that grows past the page moves to the next one, the page breaks move with it, and the same screen
+    // point maps to another document Y — the travel shrank, the row fitted again and came back, and the next move pushed it
+    // over: the page flickered while dragging (2026-11-08, upstream same day). The press-time helpers keep their document
+    // points (the tests drive them); a real press re-bases their starting point here.
+    private Point SurfacePoint(Point viewPos) => new(viewPos.X / EffectiveZoom, viewPos.Y / EffectiveZoom);
+
+    private void MeasureResizeOnSurface(Point viewPos)
+    {
+        var p = SurfacePoint(viewPos);
+        if (_resizingRow) _rowResizeStartY = p.Y;
+        if (_resizingImage != null || _resizingInline != null) { _resizeStartX = p.X; _resizeStartY = p.Y; }
+    }
+
     /// <summary>The press, driven by a <see cref="PointerStep"/> so a test can run a whole gesture in
     /// order (see RichEditor.PointerPipeline.cs). The handler above only adapts the event.</summary>
     internal void PointerPressedCore(PointerStep s)
@@ -329,11 +343,11 @@ public partial class RichEditor
         if (s.RightButton) return;
         var ptp = ViewToDoc(s.ViewPos); // doc space (identity unless paged)
         if (TableDrawPointerPressed(ptp, s)) return;  // "draw table" mode: drag from the caret to size it
-        if (BeginResizeDragAt(ptp)) { s.Capture.Capture(); return; } // picture handle / table boundary
+        if (BeginResizeDragAt(ptp)) { MeasureResizeOnSurface(s.ViewPos); s.Capture.Capture(); return; } // picture handle / table boundary
         // Table left/top border -> select the whole table, and arm dragging it (RichEditor.DragBlock.cs).
         if (TrySelectTableBlock(ptp)) { ArmObjectDrag(_selectedBlock, ptp, s); return; }
         if (TrySelectInlineTable(ptp)) { ArmObjectDrag(_selectedInlineTable?.it, ptp, s); return; }
-        if (TryBeginImageInteraction(ptp, s)) return; // image resize handle or selection
+        if (TryBeginImageInteraction(ptp, s)) { MeasureResizeOnSurface(s.ViewPos); return; } // image resize handle or selection
         ClearObjectSelection(); // any other press clears an image selection
         var tp = GetPositionFromPoint(ptp);
         if (tp == null) return;
@@ -424,8 +438,8 @@ public partial class RichEditor
         var pt = ViewToDoc(vpos);                         // doc space (identity unless paged)
         if (TableDrawPointerMoved(pt)) return;        // "draw table" mode: extend the rubber-band
         if (_resizingColumn) { ResizeColumn(pt); return; }
-        if (_resizingRow) { ResizeRow(pt); return; }
-        if (_resizingImage != null || _resizingInline != null) { TryResizeImage(pt); return; }
+        if (_resizingRow) { ResizeRow(SurfacePoint(vpos)); return; }
+        if (_resizingImage != null || _resizingInline != null) { TryResizeImage(SurfacePoint(vpos)); return; }
         if (_dragObject != null) { DragObjectMoved(pt, s.Ctrl); return; }
         if (_dragTextArmed) { DragTextMoved(pt); return; }
         UpdateHoverCursor(pt, s.Ctrl);
@@ -845,6 +859,48 @@ public partial class RichEditor
         finally { deferral.Complete(); }
     }
 
+    // A key with an object selected (a picture, or a table selected as an object): Delete/Backspace removes it; Ctrl+C/X
+    // copy and cut it; an arrow steps out of a selected block to the adjacent paragraph; any other (non-modifier) key
+    // clears it. True when the key is used up here.
+    private bool HandleObjectSelectionKey(VirtualKey key, bool ctrl, bool shift)
+    {
+        if (!HasBlockSelection) return false;
+        if (key is VirtualKey.Delete or VirtualKey.Back)
+        {
+            if (!IsReadOnly) DeleteSelectedObject();
+            return true;
+        }
+        // Copy/Cut act on the object itself — must run before the "clear on any other key" below, which
+        // would otherwise deselect the object before the clipboard sees it. `!shift` matters: these
+        // match on the bare key, so without it Ctrl+SHIFT+X (strikethrough) was swallowed here and cut
+        // the object instead — the same defect the original hit on its plain-text cut branch.
+        if (ctrl && !shift && key == VirtualKey.C) { _ = CopyAsync(); return true; }
+        if (ctrl && !shift && key == VirtualKey.X) { if (!IsReadOnly) _ = CutAsync(); return true; }
+        // Block caret: an arrow steps out of the selected top-level object to the adjacent paragraph.
+        if (_selectedBlock is { } selBlk
+            && key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down)
+        {
+            ExitBlockSelection(selBlk, forward: key is VirtualKey.Right or VirtualKey.Down);
+            return true;
+        }
+        if (key is not (VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu))
+        {
+            // Ctrl+←/→ go on by a word from right after a selected inline picture or table, as upstream (2026-11-09) —
+            // they moved from the caret, which a click on the object leaves where it was, maybe far away.
+            if (ctrl && key is VirtualKey.Left or VirtualKey.Right)
+            {
+                if (_selectedInline is { } si && si.p.Inlines.IndexOf(si.img) is int ii and >= 0)
+                    _caret = new TextPointer(si.p, si.p.Inlines.Take(ii + 1).Sum(InlineLen));
+                else if (_selectedInlineTable is { } st && st.host.Inlines.IndexOf(st.it) is int ti and >= 0)
+                    _caret = new TextPointer(st.host, st.host.Inlines.Take(ti + 1).Sum(InlineLen));
+                CollapseSelectionToCaret();
+            }
+            ClearObjectSelection();
+            InvalidateCanvas();
+        }
+        return false;
+    }
+
     private void OnEditorKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Control && DropPreviewActive) OnDragModifierChanged(); // copy mark follows Ctrl
@@ -856,31 +912,7 @@ public partial class RichEditor
         // Ctrl+Alt shortcut (the heading keys took ² and ³) or the object Copy below (which took ć). See AltGrKeys.
         if (AltGrKeys.IsTyping(ctrl, alt, () => AltGrKeys.TextForCtrlAlt(e.Key, shift))) return;
 
-        // A selected image (block or inline): Delete/Backspace removes it; any other (non-modifier) key clears it.
-        if (HasBlockSelection)
-        {
-            if (e.Key is VirtualKey.Delete or VirtualKey.Back)
-            {
-                if (!IsReadOnly) DeleteSelectedObject();
-                e.Handled = true;
-                return;
-            }
-            // Copy/Cut act on the object itself — must run before the "clear on any other key" below, which
-            // would otherwise deselect the object before the clipboard sees it. `!shift` matters: these
-            // match on the bare key, so without it Ctrl+SHIFT+X (strikethrough) was swallowed here and cut
-            // the object instead — the same defect the original hit on its plain-text cut branch.
-            if (ctrl && !shift && e.Key == VirtualKey.C) { _ = CopyAsync(); e.Handled = true; return; }
-            if (ctrl && !shift && e.Key == VirtualKey.X) { if (!IsReadOnly) _ = CutAsync(); e.Handled = true; return; }
-            // Block caret: an arrow steps out of the selected top-level object to the adjacent paragraph.
-            if (_selectedBlock is { } selBlk
-                && e.Key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down)
-            {
-                ExitBlockSelection(selBlk, forward: e.Key is VirtualKey.Right or VirtualKey.Down);
-                e.Handled = true;
-                return;
-            }
-            if (e.Key is not (VirtualKey.Control or VirtualKey.Shift or VirtualKey.Menu)) { ClearObjectSelection(); InvalidateCanvas(); }
-        }
+        if (HandleObjectSelectionKey(e.Key, ctrl, shift)) { e.Handled = true; return; }
 
         if (_caret.Paragraph == null) return;
 

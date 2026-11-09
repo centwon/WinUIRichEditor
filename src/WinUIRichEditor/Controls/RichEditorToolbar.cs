@@ -172,8 +172,8 @@ public partial class RichEditorToolbar : UserControl
     // matching the original AvaloniaRichEditor toolbar. Internal: the editor's cell-background
     // context-menu palette reuses it so all color pickers offer the same swatches.
     /// <summary>The color palette (hex strings) shared by the toolbar's text/highlight pickers and the editor's cell background context menu. Hosts can replace this array.
-    /// <para>Read when a color flyout is built, so assign it before the toolbar is created (see
-    /// <see cref="FontSizes"/> — any point works). Entries are parsed as <c>#RRGGBB</c> or
+    /// <para>Read when a color picker first opens, so assign it before then (an opened picker keeps its
+    /// swatches). Entries are parsed as <c>#RRGGBB</c> or
     /// <c>#AARRGGBB</c>; an entry that does not parse renders as BLACK rather than throwing, so a typo
     /// shows up as an unexpected swatch, not a crash.</para></summary>
     /// <exception cref="ArgumentNullException"><paramref name="value"/> is null.</exception>
@@ -326,6 +326,11 @@ public partial class RichEditorToolbar : UserControl
             case ContentControl cc: ClearFocusOnInteraction(cc.Content, depth + 1); return;
         }
     }
+
+    // Builds a picker's panel the first time it opens: the colour palettes and the 80-cell table grid were made with every
+    // strip build, and kept, though most are never opened (2026-11-09 — as the upstream toolbar).
+    private static void ContentOnFirstOpen(Flyout flyout, Func<UIElement> build)
+        => flyout.Opening += (_, _) => flyout.Content ??= build();
 
     private UIElement Build()
     {
@@ -515,6 +520,8 @@ public partial class RichEditorToolbar : UserControl
     {
         var flyout = new Flyout { FlyoutPresenterStyle = TightFlyoutPresenter() };
         ReturnsFocus(flyout); // the popup takes focus while open; give it back on close
+        ContentOnFirstOpen(flyout, () =>
+        {
         var root = new StackPanel { Spacing = 4, Padding = new Thickness(2) };
         var label = new TextBlock { Text = "1 × 1", HorizontalAlignment = HorizontalAlignment.Center, FontSize = 12 };
         var grid = new Grid();
@@ -554,7 +561,8 @@ public partial class RichEditorToolbar : UserControl
         Highlight(0, 0);
         root.Children.Add(grid);
         root.Children.Add(label);
-        flyout.Content = root;
+        return root;
+        });
         return flyout;
     }
 
@@ -1027,6 +1035,8 @@ public partial class RichEditorToolbar : UserControl
             flyout.Hide();
         }
 
+        ContentOnFirstOpen(flyout, () =>
+        {
         // 8-column palette: fixed-size swatches in a width-capped wrap panel wrap to 5 rows of 8.
         var grid = new ToolbarWrapPanel { Width = 8 * 24, HorizontalSpacing = 0, VerticalSpacing = 0 };
         foreach (var hex in Palette)
@@ -1060,7 +1070,8 @@ public partial class RichEditorToolbar : UserControl
         hexRow.Children.Add(applyBtn);
         panel.Children.Add(hexRow);
 
-        flyout.Content = panel;
+        return panel;
+        });
         btn.Flyout = flyout;
         return btn;
     }

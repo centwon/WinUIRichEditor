@@ -246,6 +246,23 @@ public class ControlHostSurfaceTests
         ed.DefaultForeground = new LinearGradientBrush();
         Assert.Equal(Colors.Black, Get("EffectiveTextColor"));
 
+        // On the white paper — page view with page boundaries, printing — automatic text is black whatever the host's
+        // colour (2026-11-09, as the upstream control); a light DefaultForeground drew faint text there.
+        ed.DefaultForeground = new SolidColorBrush(red);
+        ed.PageSize = RichEditorPageSize.A4;
+        Assert.Equal(red, Get("EffectiveTextColor")); // continuous view: still the host's canvas
+        ed.ViewMode = RichEditorViewMode.Page;
+        Assert.Equal(Colors.Black, Get("EffectiveTextColor"));
+        ed.ShowPageBoundaries = false; // a fixed-width column on the host's canvas, no paper
+        Assert.Equal(red, Get("EffectiveTextColor"));
+        var printMode = ED.GetField("_printMode", NP)!;
+        printMode.SetValue(ed, true);
+        Assert.Equal(Colors.Black, Get("EffectiveTextColor"));
+        printMode.SetValue(ed, false);
+        ed.ShowPageBoundaries = true;
+        ed.ViewMode = RichEditorViewMode.Continuous;
+        ed.PageSize = RichEditorPageSize.Continuous;
+
         var canvas = ED.GetField("_canvas", NP)!.GetValue(ed)!;
         Windows.UI.Color Clear() => (Windows.UI.Color)canvas.GetType().GetProperty("ClearColor")!.GetValue(canvas)!;
         ed.CanvasBackground = new SolidColorBrush(red);

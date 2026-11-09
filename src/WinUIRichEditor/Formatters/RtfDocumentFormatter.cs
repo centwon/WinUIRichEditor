@@ -205,7 +205,8 @@ internal sealed class RtfParser
         // \slmult is Word's multiple of the natural line (≈1.2 × the size); LineSpacing is HWP's ratio of
         // the size, so ratio = N/240 × 1.2 = N/200 (the writer's inverse).
         if (_slMult) { _para.LineSpacing = _slTwips / 200.0; _para.LineHeight = double.NaN; }
-        else { _para.LineHeight = Math.Abs(_slTwips) / 15.0; _para.LineSpacing = double.NaN; } // "at least" ≈ exact
+        // In double: Math.Abs(int.MinValue) throws, and one \sl-2147483648 emptied the whole document (2026-11-08).
+        else { _para.LineHeight = Math.Abs((double)_slTwips) / 15.0; _para.LineSpacing = double.NaN; } // "at least" ≈ exact
     }
 
     // A cell is a TableCell, not just its paragraph: Word writes a table inside a cell as nested rows,
@@ -953,6 +954,9 @@ internal sealed class RtfParser
             return;
         }
         _paraBottomBorder = false;
+        // A blank line holds one empty run, as the editor's own empty paragraphs do: with none, a blank line the editor
+        // added and saved came back different (2026-11-08, upstream same day).
+        if (_para.Inlines.Count == 0) _para.Inlines.Add(new Run { Text = "" });
         _doc.Blocks.Add(_para);
         _para = new Paragraph();
     }
@@ -1733,13 +1737,16 @@ internal sealed class RtfWriter
     {
         // Hyperlink as a real field: {\field{\*\fldinst{HYPERLINK "url"}}{\fldrslt {...}}} — Word/HWP
         // then keep the target address (the bare \ul form only looked like a link).
-        bool link = !string.IsNullOrEmpty(r.NavigateUri);
+        // A script link does not leave, whatever put it in the document — the HTML writer's rule — and a quote would end the
+        // field's address early (Word reads what follows as switches; this reader cut the address there). 2026-11-08.
+        string? href = string.IsNullOrEmpty(r.NavigateUri) ? null : HtmlDocumentFormatter.SafeHref(r.NavigateUri);
+        bool link = href != null;
         if (link)
-            _body.Append(@"{\field{\*\fldinst{HYPERLINK """).Append(EscapeText(r.NavigateUri!)).Append("\"}}{\\fldrslt ");
+            _body.Append(@"{\field{\*\fldinst{HYPERLINK """).Append(EscapeText(href!.Replace("\"", "%22"))).Append("\"}}{\\fldrslt ");
         _body.Append('{');
         if (r.FontWeight.IsBold()) _body.Append(@"\b");
         if (r.FontStyle == FontStyle.Italic) _body.Append(@"\i");
-        if (r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || !string.IsNullOrEmpty(r.NavigateUri)) _body.Append(@"\ul");
+        if (r.TextDecorations.HasFlag(TextDecorationFlags.Underline) || link) _body.Append(@"\ul");
         if (r.TextDecorations.HasFlag(TextDecorationFlags.Strikethrough)) _body.Append(@"\strike");
         int f = FontIndex(r.FontFamily);
         if (f > 0) _body.Append($@"\f{f}");
