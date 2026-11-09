@@ -222,6 +222,22 @@ public class SelectionEditRulesTests
         }
     });
 
+    // A merged cell reaching into a cell block from outside it: the block grows over the whole merge, and whatever that
+    // brings in. The block was the box of its two corner cells only, and Delete left the merge and the cells beside it in
+    // the rows it spans — upstream cleared the merge but not those cells.
+    [Fact]
+    public void ACellBlock_GrowsOverAMergeReachingIntoIt() => UiThread.Run(() =>
+    {
+        var t = Grid(3, 3);
+        t.SetSpan(0, 1, 1, 2); // (0,1) merged down over (1,1)
+        var ed = Editor(P("before"), t, P("after"));
+        Select(ed, t.Cells[1][0].Para, 0, t.Cells[1][2].Para, 1);
+        Call(ed, "DeleteCellBlockContent");
+        foreach (var (r, c) in new[] { (0, 0), (0, 1), (0, 2), (1, 0), (1, 2) })
+            Assert.Equal("", CellText(t, r, c));
+        Assert.Equal("g", CellText(t, 2, 0));
+    });
+
     // ---- a Ctrl chord with an object selected ------------------------------------------------------------
 
     [Fact]
