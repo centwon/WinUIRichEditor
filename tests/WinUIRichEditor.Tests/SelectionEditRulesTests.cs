@@ -154,6 +154,23 @@ public class SelectionEditRulesTests
         Assert.False(ed.HasSelection);
     });
 
+    // ---- several lines of plain text pasted ----------------------------------------------------------------
+
+    [Fact]
+    public void PlainLines_IntoAListItem_AreListItems_WithTheCaretsCharacterFormat() => UiThread.Run(() =>
+    {
+        // They were plain body paragraphs: the list and the bold were lost on every line but the first.
+        var p = new Paragraph { ListType = ListKind.Bullet };
+        p.Inlines.Add(new Run { Text = "item one", FontWeight = new Windows.UI.Text.FontWeight { Weight = 700 } });
+        var ed = Editor(p);
+        Caret(ed, p, 4);
+        Call(ed, "InsertPlainTextBlock", "x\ny\nz");
+        var paras = ed.Document!.Blocks.OfType<Paragraph>().ToList();
+        Assert.Equal(new[] { "itemx", "y", "z one" }, paras.Select(TextOf));
+        Assert.All(paras, x => Assert.Equal(ListKind.Bullet, x.ListType));
+        Assert.All(paras.SelectMany(x => x.Inlines.OfType<Run>()), r => Assert.Equal(700, r.FontWeight.Weight));
+    });
+
     // ---- "treat as character" inside a cell -----------------------------------------------------------
 
     [Fact]

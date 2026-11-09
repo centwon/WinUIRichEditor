@@ -359,8 +359,10 @@ public partial class RichEditor
         if (clipText != null && !Stale()) InsertPlainTextBlock(clipText);
     }
 
-    // Inserts plain text at the caret, mapping newlines to paragraph breaks. Falls back to the inline
-    // InsertText for single-line text (keeps its formatting-inheritance and undo-coalescing behavior).
+    // Inserts plain text at the caret, mapping newlines to paragraph breaks — each line a paragraph with the caret
+    // paragraph's format and the caret's character format (PlainLineParagraphs, the same rule as upstream's; they were
+    // plain body paragraphs, 2026-11-09). Falls back to the inline InsertText for single-line text (keeps its
+    // formatting-inheritance and undo-coalescing behavior).
     private void InsertPlainTextBlock(string text)
     {
         text = text.Replace("\r\n", "\n").Replace('\r', '\n');
@@ -368,11 +370,34 @@ public partial class RichEditor
         if (Document == null || IsReadOnly || _caret.Paragraph == null) return;
         PushUndo(null);
         if (HasSelection) DeleteSelection();
+        if (_caret.Paragraph is not { } p) return;
         var pd = new FlowDocument();
-        foreach (var line in text.Split('\n'))
-            pd.Blocks.Add(new Paragraph { Inlines = { new Run { Text = line } } });
-        InsertDocumentAtCaret(pd); // in-cell carets fall back to soft-'\n' plain text inside (see there)
+        foreach (var b in PlainLineParagraphs(text, p, _caret.Offset)) pd.Blocks.Add(b);
+        InsertDocumentAtCaret(pd);
         AfterEdit();
+    }
+
+    // Plain text of several lines as paragraphs to splice in at the caret: one per line, each with the format of the
+    // paragraph the caret is in and the character format typing there would use (TypingSource; an empty heading's
+    // preset) — so lines pasted into a list item are list items, as in Word. A link at the caret does not carry over.
+    // One rule for both controls (2026-11-09).
+    private static List<Block> PlainLineParagraphs(string text, Paragraph caretParagraph, int offset)
+    {
+        var (src, _, _, _) = TypingSource(caretParagraph, offset);
+        var blocks = new List<Block>();
+        foreach (var line in text.Split('\n'))
+        {
+            var p = new Paragraph();
+            p.CopyFormatFrom(caretParagraph);
+            var run = src != null ? (Run)src.Clone() : new Run();
+            if (src == null && HeadingStyle.IsHeading(caretParagraph.HeadingLevel)) HeadingStyle.ApplyPreset(run, caretParagraph.HeadingLevel);
+            run.Text = line;
+            run.NavigateUri = null;
+            run.Parent = p;
+            p.Inlines.Add(run);
+            blocks.Add(p);
+        }
+        return blocks;
     }
 
     // Application-private clipboard formats: the image's original encoded bytes (base64, so an in-editor
