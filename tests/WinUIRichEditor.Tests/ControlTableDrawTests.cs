@@ -211,9 +211,15 @@ public class ControlTableDrawTests
                     int o = ((int)y * (int)rt.SizeInPixels.Width + (int)x) * 4;
                     return px[o] - px[o + 2] > 15;
                 }
-                Assert.True(press.X > docStart.X + 60 && press.Y > docStart.Y + 20, "page view should move the content on screen");
-                Assert.True(Tinted(press.X + 30, press.Y + 10), "no rubber band under the middle of the drag");
-                Assert.False(Tinted(docStart.X + 30, docStart.Y + 10), "the band is drawn at its document position, not its page's");
+                // Compared through DocToView, not fixed offsets: on a smaller host (CI) the view may be zoomed, which scales
+                // every on-screen distance.
+                var docMid = new Point(docStart.X + 30, docStart.Y + 10);
+                var mid = (Point)Call(ed, "DocToView", docMid)!;
+                var end = (Point)Call(ed, "DocToView", new Point(docStart.X + 60, docStart.Y + 20))!;
+                Assert.True(press != docStart, "page view should move the content on screen");
+                Assert.True(Tinted(mid.X, mid.Y), "no rubber band under the middle of the drag");
+                if (!new Rect(press, end).Contains(docMid)) // the document position is off the drawn band
+                    Assert.False(Tinted(docMid.X, docMid.Y), "the band is drawn at its document position, not its page's");
             }
             finally
             {
