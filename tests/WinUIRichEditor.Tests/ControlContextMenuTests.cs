@@ -144,7 +144,8 @@ public class ControlContextMenuTests
     public void TheTableMenu_IsTheSameItemsInTheSameOrder_AsUpstreams(bool nested) => UiThread.Run(() =>
     {
         var (ed, tb) = TableEditor(nested);
-        Assert.Equal(TableMenuLabels(inlineToggle: !nested), Labels(ed.BuildTableMenu(tb, 0, 0, () => { }, () => { })));
+        // A table in a cell has 글자처럼 취급 too: it converts within its cell.
+        Assert.Equal(TableMenuLabels(inlineToggle: true), Labels(ed.BuildTableMenu(tb, 0, 0, () => { }, () => { })));
     });
 
     private static void F5(RichEditor ed)
@@ -463,7 +464,7 @@ public class ControlContextMenuTests
     });
 
     // A table nested in a cell has a border too (2026-09-13 — it had none): a right-click there selects it as
-    // an object and opens the table's menu — without 글자처럼 취급, which converts top-level tables only — and
+    // an object and opens the table's menu — with 글자처럼 취급, which converts it within its cell — and
     // Copy takes it. Where its band overlaps its outer table's (a cell's padding apart), the INNER table wins.
     // Now that it can be selected, an arrow steps out of it within its cell, and deleting it leaves the caret
     // in that cell — not inside the removed table, where it was.
@@ -494,7 +495,7 @@ public class ControlContextMenuTests
             TextPointer CaretNow() => (TextPointer)typeof(RichEditor).GetField("_caret", NP)!.GetValue(ed)!;
 
             var menu = ed.BuildContextMenuAt(both);
-            Assert.Equal(TableMenuLabels(inlineToggle: false), Labels(menu)); // a table in a cell: no 글자처럼 취급
+            Assert.Equal(TableMenuLabels(inlineToggle: true), Labels(menu)); // a table in a cell: 글자처럼 취급 too
             Assert.Same(inner, Selected());
             typeof(RichEditor).GetField("_internalClipboardDoc", NP)!.SetValue(ed, null);
             Invoke(menu.Items.OfType<MenuFlyoutItem>().Single(i => i.Text == Loc("Copy")));

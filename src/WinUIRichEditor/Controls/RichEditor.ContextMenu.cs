@@ -772,9 +772,8 @@ public partial class RichEditor
         // with the toolbar pickers) is the edit surface — on the cell block, else the cell (CellBackgroundTargets).
         Add(Loc("CellBackground"), () => ShowCellBackgroundPalette(tb, r, c), CellBackgroundTargets(tb, r, c).Any());
         items.Add(MarginMenu(tb));
-        // 글자처럼 취급 converts a TOP-LEVEL table (ConvertTableBlockToInline anchors to the paragraphs around it) or
-        // an inline one back; a table in a cell is offered no toggle that would do nothing.
-        if (tb.Parent is FlowDocument)
+        // 글자처럼 취급 converts a block table — top-level, or nested in a cell (within its cell) — or an inline one back.
+        if (tb.Parent is FlowDocument or TableCell)
         {
             var t = new ToggleMenuFlyoutItem { Text = Loc("InlineWithText"), IsChecked = false, FontSize = MenuFontSize };
             t.Click += (_, _) => ConvertTableBlockToInline(tb);

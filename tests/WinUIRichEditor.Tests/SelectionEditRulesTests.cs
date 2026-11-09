@@ -38,6 +38,81 @@ public class SelectionEditRulesTests
         T.GetField("_caret", NP)!.SetValue(ed, new TextPointer(b, bo));
     }
 
+    private static void Call(RichEditor ed, string name, params object?[] args)
+    {
+        try { T.GetMethod(name, NP)!.Invoke(ed, args); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
+
+    private static string TextOf(Paragraph p) => string.Concat(p.Inlines.OfType<Run>().Select(r => r.Text));
+
+    // ---- Tab over paragraphs ------------------------------------------------------------------------
+
+    [Fact]
+    public void Tab_OverSeveralParagraphs_IndentsEachAndKeepsTheText() => UiThread.Run(() =>
+    {
+        // Only the caret's list item moved, and without a list the key typed four spaces over the selection. Now each
+        // paragraph steps in: a list item a level, any other an indent step; Shift+Tab steps them back.
+        var a = P("first");
+        var b = P("second");
+        var ed = Editor(a, b);
+        a.ListType = ListKind.Bullet;
+        Select(ed, a, 1, b, 3);
+        Call(ed, "HandleTab", false);
+        Assert.Equal("first", TextOf(a));
+        Assert.Equal("second", TextOf(b));
+        Assert.Equal(1, a.ListLevel);
+        Assert.Equal(0, a.Indent);
+        Assert.Equal(20, b.Indent);
+
+        Call(ed, "HandleTab", true);
+        Assert.Equal(0, a.ListLevel);
+        Assert.Equal(0, b.Indent);
+    });
+
+    [Fact]
+    public void ShiftTab_TakesBackTheSpacesTabTyped_ElseOutdents() => UiThread.Run(() =>
+    {
+        // Shift+Tab outside a list did nothing.
+        var a = P("ab");
+        var ed = Editor(a);
+        Caret(ed, a, 2);
+        Call(ed, "HandleTab", false);
+        Assert.Equal("ab    ", TextOf(a));
+        Call(ed, "HandleTab", true);
+        Assert.Equal("ab", TextOf(a));
+
+        a.Indent = 40;
+        Call(ed, "HandleTab", true);
+        Assert.Equal(20, a.Indent);
+    });
+
+    // ---- "treat as character" inside a cell -----------------------------------------------------------
+
+    [Fact]
+    public void ATableInACell_ConvertsToInline_WithinItsCell_AndBack() => UiThread.Run(() =>
+    {
+        var outer = new TableBlock(1, 1);
+        var nested = new TableBlock(1, 1);
+        var cell = outer.Cells[0][0];
+        cell.Blocks.Clear();
+        var a = P("cell");
+        cell.Blocks.Add(a);
+        cell.Blocks.Add(nested);
+        cell.Blocks.Add(P(""));
+        var ed = Editor(P("top"), outer, P("end"));
+        Call(ed, "ConvertTableBlockToInline", nested);
+        Assert.DoesNotContain(cell.Blocks, x => x is TableBlock);
+        var it = Assert.Single(a.Inlines.OfType<InlineTable>());
+
+        Call(ed, "ConvertInlineTableToBlock", a, it);
+        Assert.DoesNotContain(a.Inlines, i => i is InlineTable);
+        Assert.Single(cell.Blocks.OfType<TableBlock>());
+    });
+
     // ---- list toggle: one rule ----------------------------------------------------------------------
 
     [Fact]
