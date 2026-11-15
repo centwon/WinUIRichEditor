@@ -137,6 +137,7 @@ public partial class RichEditor
     private void InsertTableDrawn(int rows, int cols, double totalWidth, double totalHeight)
     {
         if (Document == null || IsReadOnly || !AllowTables || !CaretCanHostBlock) return;
+        if (_caret.Paragraph is { } cp && TableNesting.DepthAt(cp) >= TableNesting.Max) return;
         PushUndo(null);
         var tb = new TableBlock(rows, cols);
         double w = Math.Max(20, totalWidth / cols);

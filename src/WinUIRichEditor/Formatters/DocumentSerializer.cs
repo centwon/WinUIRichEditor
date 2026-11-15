@@ -93,10 +93,10 @@ public static class DocumentSerializer
                 Header = string.IsNullOrEmpty(ps.Header) ? null : ps.Header,
                 Footer = string.IsNullOrEmpty(ps.Footer) ? null : ps.Footer,
                 ShowPageNumbers = ps.ShowPageNumbers,
-                MarginLeft = ps.Margin.Left == PageSetup.DefaultMargin.Left ? null : ps.Margin.Left,
-                MarginTop = ps.Margin.Top == PageSetup.DefaultMargin.Top ? null : ps.Margin.Top,
-                MarginRight = ps.Margin.Right == PageSetup.DefaultMargin.Right ? null : ps.Margin.Right,
-                MarginBottom = ps.Margin.Bottom == PageSetup.DefaultMargin.Bottom ? null : ps.Margin.Bottom,
+                MarginLeft = Unless(ps.Margin.Left, PageSetup.DefaultMargin.Left),
+                MarginTop = Unless(ps.Margin.Top, PageSetup.DefaultMargin.Top),
+                MarginRight = Unless(ps.Margin.Right, PageSetup.DefaultMargin.Right),
+                MarginBottom = Unless(ps.Margin.Bottom, PageSetup.DefaultMargin.Bottom),
             };
         return dto;
     }
@@ -213,7 +213,7 @@ public static class DocumentSerializer
                 return new BlockDto
                 {
                     Type = "Divider",
-                    MarginTop = double.IsNaN(dv.MarginTop) ? null : dv.MarginTop, // see the table branch
+                    MarginTop = NanToNull(dv.MarginTop), // see the table branch
                     MarginBottom = Unless(dv.MarginBottom, 0),
                 };
             case ImageBlock img:
@@ -225,7 +225,7 @@ public static class DocumentSerializer
                     Height = NanToNull(img.Height),
                     Alt = img.AltText,
                     Indent = Unless(img.Indent, 0),
-                    MarginTop = double.IsNaN(img.MarginTop) ? null : img.MarginTop, // see the table branch
+                    MarginTop = NanToNull(img.MarginTop), // see the table branch
                     MarginBottom = Unless(img.MarginBottom, 10)
                 };
             case TableBlock tb:
@@ -237,10 +237,10 @@ public static class DocumentSerializer
                     Indent = Unless(tb.Indent, 0),
                     // NaN is "let the editor choose the gap" (Block.AutoTopMargin) and JSON has no NaN: it goes
                     // out as no field at all, and comes back as NaN on the next read.
-                    MarginTop = double.IsNaN(tb.MarginTop) ? null : tb.MarginTop,
+                    MarginTop = NanToNull(tb.MarginTop),
                     MarginBottom = Unless(tb.MarginBottom, 10),
-                    ColumnWidths = new List<double>(tb.ColumnWidths),
-                    RowHeights = tb.RowHeights.Count > 0 ? new List<double>(tb.RowHeights) : null,
+                    ColumnWidths = SanitizeFiniteList(tb.ColumnWidths, 100),
+                    RowHeights = tb.RowHeights.Count > 0 ? SanitizeFiniteList(tb.RowHeights, 0) : null,
                     Cells = new List<List<BlockDto>>()
                 };
                 foreach (var row in tb.Cells)
@@ -403,8 +403,12 @@ public static class DocumentSerializer
                 tb.Cells.Clear();
                 tb.ColumnWidths.Clear();
                 tb.RowHeights.Clear();
-                if (d.ColumnWidths != null) tb.ColumnWidths.AddRange(d.ColumnWidths);
-                if (d.RowHeights != null) tb.RowHeights.AddRange(d.RowHeights);
+                if (d.ColumnWidths != null)
+                    foreach (var cw in d.ColumnWidths)
+                        tb.ColumnWidths.Add(double.IsFinite(cw) && cw > 0 ? cw : 100);
+                if (d.RowHeights != null)
+                    foreach (var rh in d.RowHeights)
+                        tb.RowHeights.Add(double.IsFinite(rh) && rh >= 0 ? rh : 0);
                 if (d.Cells != null)
                     foreach (var rowD in d.Cells)
                     {
@@ -570,11 +574,22 @@ public static class DocumentSerializer
 
     // ---- helpers ----
 
-    private static double? NanToNull(double v) => double.IsNaN(v) ? (double?)null : v;
+    private static double? NanToNull(double v) => !double.IsFinite(v) ? (double?)null : v;
 
-    // `value`, or null (not written) when it is what every reader assumes for an absent field.
+    // `value`, or null (not written) when it is what every reader assumes for an absent field (or non-finite).
+    private static double? Unless(double value, double absent)
+        => !double.IsFinite(value) || value == absent ? null : value;
+
     private static T? Unless<T>(T value, T absent) where T : struct
         => EqualityComparer<T>.Default.Equals(value, absent) ? null : value;
+
+    private static List<double> SanitizeFiniteList(IReadOnlyList<double> list, double fallback)
+    {
+        var res = new List<double>(list.Count);
+        for (int i = 0; i < list.Count; i++)
+            res.Add(double.IsFinite(list[i]) ? list[i] : fallback);
+        return res;
+    }
 
     private static bool HasMerge(TableBlock tb)
     {

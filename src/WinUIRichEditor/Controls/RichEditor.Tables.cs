@@ -657,6 +657,7 @@ public partial class RichEditor
     public void InsertTable(int rows, int cols)
     {
         if (Document == null || IsReadOnly || !AllowTables || rows < 1 || cols < 1 || !CaretCanHostBlock) return;
+        if (_caret.Paragraph is { } cp && TableNesting.DepthAt(cp) >= TableNesting.Max) return;
         PushUndo(null);
         var tb = new TableBlock(rows, cols);
 
@@ -1040,7 +1041,7 @@ public partial class RichEditor
         else
             for (int i = idx + 1; i < container.Count && anchor == null; i++)
                 if (container[i] is Paragraph next) { anchor = next; atEnd = false; }
-        if (anchor == null) return;
+        if (anchor == null || !TableNesting.Fits(anchor, tb)) return;
 
         PushUndo(null);
         var it = new InlineTable { Table = (TableBlock)tb.Clone() };
