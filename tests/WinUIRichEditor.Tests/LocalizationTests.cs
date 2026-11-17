@@ -75,4 +75,25 @@ public class LocalizationTests
         }
         return null;
     }
+
+    // A built-in table missing a key silently shows English in that menu item; extra keys are typos.
+    [Theory]
+    [InlineData("ko")]
+    [InlineData("es")]
+    public void BuiltInLanguage_HasSameKeysAsEnglish(string language)
+    {
+        var en = RichEditorLocalization.Tables["en"].Keys;
+        var other = RichEditorLocalization.Tables[language].Keys;
+        Assert.Empty(System.Linq.Enumerable.Except(en, other));
+        Assert.Empty(System.Linq.Enumerable.Except(other, en));
+    }
+
+    // Spanish is built in, as upstream (AvaloniaRichEditor 1.x) has it.
+    [Fact]
+    public void Spanish_IsBuiltIn() => WithLanguage(() =>
+    {
+        RichEditorLocalization.Language = "es";
+        Assert.Equal("Copiar", RichEditorLocalization.GetString("Copy"));
+        Assert.Equal("Ajustar al ancho", RichEditorLocalization.GetString("FitWidth"));
+    });
 }

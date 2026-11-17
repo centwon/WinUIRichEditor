@@ -108,7 +108,7 @@ brings — which broke framework-dependent apps. Fixed in 0.9.1.)
   (`AllowImages` / `AllowTables` / `AllowRichPaste`). Toolbar density via **`ToolbarLevel`** (Minimal / Normal / Maximum)
 - **Word-standard keyboard shortcuts** from a single table, **public** as `RichEditorShortcuts.All`/`Display(id)` —
   shown in menu hints + toolbar tooltips, readable by a host's own UI
-- **Localization** (KO / EN, host-extensible) via `RichEditorLocalization`; **accessibility** peer (`IValueProvider`)
+- **Localization** (KO / EN / ES, host-extensible) via `RichEditorLocalization`; **accessibility** peer (`IValueProvider`)
 - Change events (`TextChanged` / `SelectionChanged` / `DocumentChanged`) and appearance DPs
   (`SelectionBrush` / `CaretBrush`)
 

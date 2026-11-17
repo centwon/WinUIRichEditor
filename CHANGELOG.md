@@ -6,6 +6,13 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 추가 — 내장 스페인어(es) (상류 centwon/AvaloniaRichEditor#91과 같은 표, 2026-11-17)
+
+- `RichEditorLocalization`에 스페인어 표. 상류 기여(NobilisSolace)의 번역을 그대로 쓰고, 포트에만 있는 `FitWidth`는 "Ajustar al ancho".
+  두 곳은 상류와 다르게 손봄: `CharacterFormat`은 글꼴 이름 칸(`FontFamily` "Fuente")과 겹치지 않게 "Formato de fuente",
+  `ImageLimitWarning`은 다른 언어처럼 `⚠`를 붙임.
+- 내장 표(ko·es)의 키가 영어 표와 같은지 확인하는 테스트 `BuiltInLanguage_HasSameKeysAsEnglish` — 그래서 `Tables`가 internal.
+
 ### 바뀜 — 선택·편집 규칙을 상류와 같게 (2026-11-09)
 
 - 목록 토글: 표 밖에서도 섞인 선택은 모두 켜고 전부 이 종류일 때만 끈다(표 밖은 캐럿 문단이 정했다). 표를 건너는 선택은 그 안
