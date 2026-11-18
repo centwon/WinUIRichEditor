@@ -579,7 +579,12 @@ public class TableBlock : Block
         var sub = Skeleton(rows, cols);
 
         for (int c = c0; c <= c1; c++) sub.ColumnWidths.Add(c < ColumnWidths.Count ? ColumnWidths[c] : 100);
-        for (int r = r0; r <= r1; r++) sub.RowHeights.Add(r < RowHeights.Count ? RowHeights[r] : 0);
+        // Row heights only when one of these rows has one set: all-zero heights are "none" (as upstream), and
+        // written out they made the saved table differ.
+        bool anySet = false;
+        for (int r = r0; r <= r1; r++) if (r < RowHeights.Count && RowHeights[r] > 0) { anySet = true; break; }
+        if (anySet)
+            for (int r = r0; r <= r1; r++) sub.RowHeights.Add(r < RowHeights.Count ? RowHeights[r] : 0);
 
         // Clone every cell (anchor or covered) into place as a plain 1×1 cell first. Rows are BUILT here
         // rather than assigned into a pre-made grid — see Skeleton for why there is no grid to assign into.
