@@ -425,7 +425,7 @@ public static class RichEditorLocalization
             ["UnmergeCells"] = "Separar celdas",
             ["CellVerticalAlign"] = "Alineación vertical de celda",
             ["VAlignTop"] = "Arriba",
-            ["VAlignCenter"] = "Middle", // vertical alignment (Excel/CSS); converged with upstream
+            ["VAlignCenter"] = "En medio",
             ["VAlignBottom"] = "Abajo",
             ["SelectCell"] = "Seleccionar celda",
             ["DeleteTable"] = "Eliminar tabla",
