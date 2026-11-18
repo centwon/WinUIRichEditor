@@ -606,13 +606,11 @@ public partial class RichEditor
     private void FillTableCellsFromTsv(TableBlock tb, int startR, int startC, int maxR, int maxC, List<string> lines, bool expandIfNeeded)
     {
         int needRows = startR + lines.Count;
-        int needCols = startC + lines.Max(l => l.Split('\t').Length);
         if (expandIfNeeded)
         {
-            needCols = Math.Min(TableBlock.MaxImportColumns, needCols);
-            needRows = Math.Min(needRows, TableBlock.MaxImportCells / Math.Max(1, Math.Max(tb.Columns, needCols)));
+            // Rows are added; columns past the table's right edge are dropped (as upstream).
+            needRows = Math.Min(needRows, TableBlock.MaxImportCells / Math.Max(1, tb.Columns));
             while (tb.Rows < needRows) tb.InsertRow(tb.Rows);
-            while (tb.Columns < needCols) tb.InsertColumn(tb.Columns);
             maxR = tb.Rows - 1;
             maxC = tb.Columns - 1;
         }

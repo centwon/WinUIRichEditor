@@ -6,6 +6,11 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 바뀜 — 셀 안 TSV 붙여넣기는 열을 늘리지 않는다 (상류 centwon/AvaloniaRichEditor#92와 같게, 2026-11-18)
+
+- 캐럿이 표 셀에 있을 때 TSV(엑셀 범위 등)를 붙이면 표를 채우고 모자란 행만 더한다. 표 오른쪽 끝을 넘는 열은 버린다
+  (열을 덧붙여 표 폭이 바뀌었다). 테스트 `TsvCellFillTests`, 반증 완료(되돌리면 열 3).
+
 ### 추가 — 내장 스페인어(es) (상류 centwon/AvaloniaRichEditor#91과 같은 표, 2026-11-17)
 
 - `RichEditorLocalization`에 스페인어 표. 상류 기여(NobilisSolace)의 번역을 그대로 쓰고, 포트에만 있는 `FitWidth`는 "Ajustar al ancho".
