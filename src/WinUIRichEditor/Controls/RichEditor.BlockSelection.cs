@@ -392,6 +392,7 @@ public partial class RichEditor
             for (int i = 0; i < idx; i++) off += InlineLen(p.Inlines[i]);
             p.Inlines.RemoveAt(idx);
             if (p.Inlines.Count == 0) p.Inlines.Add(new Run { Text = "" });
+            TextRange.CoalesceRuns(p); // the runs on either side may now be one (as upstream)
             _caret = new TextPointer(p, Math.Min(off, GetParagraphLength(p)));
             CollapseSelectionToCaret();
         }
