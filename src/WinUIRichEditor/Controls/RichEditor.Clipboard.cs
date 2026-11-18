@@ -385,7 +385,6 @@ public partial class RichEditor
         {
             if (Stale()) return;
             PushUndo(null);
-            if (HasSelection) DeleteSelection();
             InsertTableFromTsv(clipText!);
             AfterEdit();
             return;
@@ -565,14 +564,34 @@ public partial class RichEditor
         return anyMultiCell;
     }
 
-    private void InsertTableFromTsv(string text)
+    internal void InsertTableFromTsv(string text)
     {
         if (Document == null) return;
         var lines = new List<string>(text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'));
-        while (lines.Count > 1 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
+        lines.RemoveAll(l => l.Length == 0);
+        if (lines.Count == 0) return;
 
-        int cols = 1;
-        foreach (var l in lines) cols = Math.Max(cols, l.Split('\t').Length);
+        int cols = Math.Min(TableBlock.MaxImportColumns, lines.Max(l => l.Split('\t').Length));
+        int rows = Math.Min(lines.Count, TableBlock.MaxImportCells / Math.Max(1, cols));
+        if (rows < lines.Count) lines.RemoveRange(rows, lines.Count - rows);
+
+        if (CellBlockSelection() is { } cb)
+        {
+            FillTableCellsFromTsv(cb.tb, cb.r0, cb.c0, cb.r1, cb.c1, lines, expandIfNeeded: false);
+            return;
+        }
+        if (HasSelection) DeleteSelection();
+        if (_caret.Paragraph is { } cp && FindCell(cp) is { } cellLoc)
+        {
+            var (ar, ac) = cellLoc.tb.AnchorOf(cellLoc.r, cellLoc.c);
+            FillTableCellsFromTsv(cellLoc.tb, ar, ac, cellLoc.tb.Rows - 1, cellLoc.tb.Columns - 1, lines, expandIfNeeded: true);
+            return;
+        }
+        if (_caret.Paragraph is { } caretP && TableNesting.DepthAt(caretP) >= TableNesting.Max)
+        {
+            InsertPlainNoUndo(text);
+            return;
+        }
 
         var tb = new TableBlock(lines.Count, cols);
         for (int r = 0; r < lines.Count; r++)
@@ -584,6 +603,48 @@ public partial class RichEditor
         InsertBlockAtCaret(tb);
     }
 
+    private void FillTableCellsFromTsv(TableBlock tb, int startR, int startC, int maxR, int maxC, List<string> lines, bool expandIfNeeded)
+    {
+        int needRows = startR + lines.Count;
+        int needCols = startC + lines.Max(l => l.Split('\t').Length);
+        if (expandIfNeeded)
+        {
+            needCols = Math.Min(TableBlock.MaxImportColumns, needCols);
+            needRows = Math.Min(needRows, TableBlock.MaxImportCells / Math.Max(1, Math.Max(tb.Columns, needCols)));
+            while (tb.Rows < needRows) tb.InsertRow(tb.Rows);
+            while (tb.Columns < needCols) tb.InsertColumn(tb.Columns);
+            maxR = tb.Rows - 1;
+            maxC = tb.Columns - 1;
+        }
+
+        Paragraph? lastPara = null;
+        for (int dr = 0; dr < lines.Count; dr++)
+        {
+            int r = startR + dr;
+            if (r > maxR || r >= tb.Rows) break;
+            var parts = lines[dr].Split('\t');
+            for (int dc = 0; dc < parts.Length; dc++)
+            {
+                int c = startC + dc;
+                if (c > maxC || c >= tb.Columns) break;
+                var (ar, ac) = tb.AnchorOf(r, c);
+                if (ar != r || ac != c) continue;
+                var cell = tb.Cells[r][c];
+                cell.Blocks.Clear();
+                var p = new Paragraph { Parent = cell, Inlines = { new Run { Text = parts[dc] } } };
+                cell.Blocks.Add(p);
+                lastPara = p;
+            }
+        }
+        if (Document != null) UpdateParents(Document);
+        InvalidateTableMeasure(tb);
+        if (lastPara != null)
+        {
+            _caret = new TextPointer(lastPara, GetParagraphLength(lastPara));
+            CollapseSelectionToCaret();
+        }
+    }
+
     // Inserts a block (table/image/divider) at the caret, splitting the caret paragraph so the block
     // lands between the head and the remainder. Works in any block container — top-level Document.Blocks
     // or a table cell's block list (rule #3: containers generalize) — so tables/dividers nest in cells.
@@ -592,6 +653,7 @@ public partial class RichEditor
         if (Document == null) return;
         MoveCaretToInsertionPoint();
         if (_caret.Paragraph is not { } p) return;
+        if (!TableNesting.Fits(p, block)) return;
         IList<Block>? container = p.Parent switch
         {
             FlowDocument d => d.Blocks,
@@ -739,10 +801,18 @@ public partial class RichEditor
                 doc.Blocks.Add(CloneParagraphRange(sp, range.Start.Offset, range.End.Offset));
                 return doc;
             }
-            // A selection confined to a single table cell is intra-cell text, not a table copy.
+            // A selection confined to a single table cell: keep intra-cell block structure (paragraphs, images, dividers, nested tables).
             if (b is TableBlock && FindCell(sp) is { } sc && FindCell(ep) is { } ec
                 && ReferenceEquals(sc.tb, ec.tb) && sc.r == ec.r && sc.c == ec.c)
+            {
+                var cellBlocks = sc.tb.Cells[sc.r][sc.c].Blocks;
+                if (TrimBlockSlice(cellBlocks, sp, ep, spans) is { Count: > 0 } slice)
+                {
+                    foreach (var sb in slice) doc.Blocks.Add(sb);
+                    return doc;
+                }
                 return FlattenSelection(parts, range);
+            }
             // A table the selection runs through: its structure, with the covered text.
             if (b is TableBlock tb) { doc.Blocks.Add(TrimTable(tb, spans)); return doc; }
             if (b.Clone() is Block whole) doc.Blocks.Add(whole);
@@ -764,6 +834,31 @@ public partial class RichEditor
             else if (b.Clone() is Block whole) doc.Blocks.Add(whole);
         }
         return doc;
+    }
+
+    private static List<Block>? TrimBlockSlice(IList<Block> blocks, Paragraph sp, Paragraph ep, Dictionary<Paragraph, (int From, int To)> spans)
+    {
+        int sbi = -1, ebi = -1;
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            if (sbi < 0 && BlockContains(blocks[i], sp)) sbi = i;
+            if (BlockContains(blocks[i], ep)) ebi = i;
+        }
+        if (sbi < 0 || ebi < 0 || sbi >= ebi) return null;
+        var res = new List<Block>();
+        for (int k = sbi; k <= ebi; k++)
+        {
+            var blk = blocks[k];
+            bool between = k > sbi && k < ebi;
+            if (!between && blk is Paragraph para)
+            {
+                var (from, to) = spans.TryGetValue(para, out var sp2) ? sp2 : (0, 0);
+                res.Add(TrimParagraph(para, from, to, spans, embedPartialTables: true));
+            }
+            else if (!between && blk is TableBlock etb) res.Add(TrimTable(etb, spans));
+            else if (blk.Clone() is Block whole) res.Add(whole);
+        }
+        return res;
     }
 
     // The covered paragraphs in position order, each trimmed to its part with its paragraph format — the structure
@@ -960,6 +1055,7 @@ public partial class RichEditor
     {
         if (Document == null || _caret.Paragraph == null) return;
         var p = _caret.Paragraph;
+        TableNesting.Flatten(pd.Blocks, Math.Max(0, TableNesting.Max - TableNesting.DepthAt(p)));
         var pasted = pd.Blocks;
         if (pasted.Count == 0) return;
 

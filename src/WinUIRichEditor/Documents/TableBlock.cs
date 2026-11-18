@@ -359,43 +359,107 @@ public class TableBlock : Block
             for (int c = c0; c <= c1; c++) { ColSpans[r][c] = 1; RowSpans[r][c] = 1; }
 
         var anchorCell = Cells[r0][c0];
-        // The anchor cell's OWN first paragraph. Para descends into a leading nested table, so the merged text went
-        // into that table's first cell instead of the cell being merged into (upstream round 35; measured here too).
-        var anchorPara = anchorCell.Blocks.OfType<Paragraph>().FirstOrDefault();
-        if (anchorPara == null)
-        {
-            anchorPara = new Paragraph { Inlines = { new Run { Text = "" } }, Parent = anchorCell };
-            anchorCell.Blocks.Add(anchorPara);
-        }
-        for (int r = r0; r <= r1; r++)
-            for (int c = c0; c <= c1; c++)
+        bool singleParaJoin = anchorCell.Blocks.Count == 1 && anchorCell.Blocks[0] is Paragraph;
+        for (int r = r0; r <= r1 && singleParaJoin; r++)
+            for (int c = c0; c <= c1 && singleParaJoin; c++)
             {
                 if (r == r0 && c == c0) continue;
-                var src = Cells[r][c];
-                foreach (var blk in src.Blocks)
-                {
-                    if (blk is Paragraph sp)
-                    {
-                        bool hasContent = false;
-                        foreach (var inl in sp.Inlines)
-                            if (inl is not Run run || !string.IsNullOrEmpty(run.Text)) { hasContent = true; break; }
-                        if (!hasContent) continue;
-                        anchorPara.Inlines.Add(new Run { Text = " ", Parent = anchorPara });
-                        foreach (var inl in sp.Inlines) { inl.Parent = anchorPara; anchorPara.Inlines.Add(inl); }
-                        sp.Inlines.Clear();
-                    }
-                    else
-                    {
-                        blk.Parent = anchorCell;
-                        anchorCell.Blocks.Add(blk);
-                    }
-                }
-                src.Blocks.Clear();
-                src.Blocks.Add(new Paragraph { Parent = src, Inlines = { new Run { Text = "" } } });
+                var cell = Cells[r][c];
+                if (cell.Blocks.Count(b => b is Paragraph) > 1
+                    || (cell.Blocks.Count > 0 && cell.Blocks[0] is not Paragraph))
+                    singleParaJoin = false;
             }
+
+        if (singleParaJoin)
+        {
+            var anchorPara = (Paragraph)anchorCell.Blocks[0];
+            bool anchorHasContent = ParagraphHasContent(anchorPara);
+            for (int r = r0; r <= r1; r++)
+                for (int c = c0; c <= c1; c++)
+                {
+                    if (r == r0 && c == c0) continue;
+                    var src = Cells[r][c];
+                    foreach (var blk in src.Blocks)
+                    {
+                        if (blk is Paragraph sp)
+                        {
+                            if (!ParagraphHasContent(sp)) continue;
+                            if (anchorHasContent)
+                                anchorPara.Inlines.Add(new Run { Text = " ", Parent = anchorPara });
+                            else
+                                anchorPara.Inlines.Clear();
+                            foreach (var inl in sp.Inlines) { inl.Parent = anchorPara; anchorPara.Inlines.Add(inl); }
+                            sp.Inlines.Clear();
+                            anchorHasContent = true;
+                        }
+                        else
+                        {
+                            blk.Parent = anchorCell;
+                            anchorCell.Blocks.Add(blk);
+                        }
+                    }
+                    src.Blocks.Clear();
+                    src.Blocks.Add(new Paragraph { Parent = src, Inlines = { new Run { Text = "" } } });
+                }
+        }
+        else
+        {
+            bool anchorEmpty = IsCellEmptyContent(anchorCell);
+            for (int r = r0; r <= r1; r++)
+                for (int c = c0; c <= c1; c++)
+                {
+                    if (r == r0 && c == c0) continue;
+                    var src = Cells[r][c];
+                    if (IsCellEmptyContent(src))
+                    {
+                        src.Blocks.Clear();
+                        src.Blocks.Add(new Paragraph { Parent = src, Inlines = { new Run { Text = "" } } });
+                        continue;
+                    }
+                    if (anchorEmpty)
+                    {
+                        anchorCell.Blocks.Clear();
+                        anchorEmpty = false;
+                    }
+                    else if (anchorCell.Blocks.Count >= 2
+                             && anchorCell.Blocks[^1] is Paragraph filler && !ParagraphHasContent(filler)
+                             && anchorCell.Blocks[^2] is not Paragraph)
+                    {
+                        anchorCell.Blocks.RemoveAt(anchorCell.Blocks.Count - 1);
+                    }
+                    var moved = src.Blocks.ToList();
+                    src.Blocks.Clear();
+                    foreach (var m in moved)
+                    {
+                        if (m is Paragraph mp && !ParagraphHasContent(mp) && moved.Count > 1) continue;
+                        m.Parent = anchorCell;
+                        anchorCell.Blocks.Add(m);
+                    }
+                    src.Blocks.Add(new Paragraph { Parent = src, Inlines = { new Run { Text = "" } } });
+                }
+            if (anchorCell.Blocks.Count == 0)
+                anchorCell.Blocks.Add(new Paragraph { Parent = anchorCell, Inlines = { new Run { Text = "" } } });
+        }
         ColSpans[r0][c0] = c1 - c0 + 1;
         RowSpans[r0][c0] = r1 - r0 + 1;
         StampCovered(r0, c0, c1 - c0 + 1, r1 - r0 + 1);
+    }
+
+    private static bool ParagraphHasContent(Paragraph p)
+    {
+        foreach (var inl in p.Inlines)
+            if (inl is not Run run || !string.IsNullOrEmpty(run.Text)) return true;
+        return false;
+    }
+
+    private static bool IsCellEmptyContent(TableCell cell)
+    {
+        foreach (var b in cell.Blocks)
+        {
+            if (b is not Paragraph p) return false;
+            if (ParagraphHasContent(p)) return false;
+        }
+        return true;
     }
 
     /// Splits a merged anchor back into 1×1 cells (covered cells become empty anchors).

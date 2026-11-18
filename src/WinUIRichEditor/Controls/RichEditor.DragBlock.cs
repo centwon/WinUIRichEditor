@@ -107,6 +107,7 @@ public partial class RichEditor
     internal static bool CanDropObject(object obj, TextPointer at, bool copy)
     {
         if (at.Paragraph is not { } p) return false;
+        if (!TableNesting.Fits(p, obj)) return false;
         if (copy) return true;
         var table = obj switch { TableBlock tb => tb, InlineTable it => it.Table, _ => null };
         return table == null || !BlockContains(table, p);

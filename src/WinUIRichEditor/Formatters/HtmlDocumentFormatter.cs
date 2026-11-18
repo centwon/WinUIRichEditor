@@ -185,6 +185,7 @@ public static class HtmlDocumentFormatter
         var flowDoc = new FlowDocument();
         var root = doc.DocumentNode.Descendants("body").FirstOrDefault() ?? doc.DocumentNode;
         WalkBlocks(root, flowDoc);
+        TableNesting.Flatten(flowDoc.Blocks, TableNesting.Max);
 
         if (flowDoc.Blocks.Count == 0)
         {
@@ -1486,7 +1487,7 @@ public static class HtmlDocumentFormatter
         t = t.Replace("\n", "<br/>");
 
         var styles = new List<string>();
-        if (!string.IsNullOrEmpty(r.FontFamily)) styles.Add($"font-family:'{AttrEscape(r.FontFamily).Replace("'", "")}'");
+        if (!string.IsNullOrEmpty(r.FontFamily)) styles.Add($"font-family:'{AttrEscape(r.FontFamily).Replace("'", "").Replace(";", "")}'");
         // A size goes out when it differs from what the reader assumes for this element: the body default,
         // or inside <h1>..<h6> the heading's size, which the reader gives everything in it. 10pt in a
         // heading used to be dropped as "the default" and came back at the heading's size.
