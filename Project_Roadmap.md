@@ -22,6 +22,15 @@ WinUI 3 + Win2D 리치텍스트 에디터. `AvaloniaRichEditor`의 WinUI 포트�
 | AOT | self-contained 게시 성공(2026-09-29): 네이티브 exe **15.2MB**, 게시 **74.7MB**(pdb 제외), CoreCLR·관리 dll 없음 |
 | 공개 표면 | **670**줄 — `PublicAPI.Shipped.txt`로 추적, 1.3.0은 추가 + **개명 하나**(`TextForeground`→`DefaultForeground`, SemVer 예외로 CHANGELOG에 기록), Unshipped 비어 있음 |
 
+### 상류 #92 대조 (2026-11-18, 미릴리스) — 포트 PR #84·#85·#86·#89, 테스트 1180(main, 11-23)
+상류 centwon/AvaloniaRichEditor#92(표·직렬화 정합성)를 들여왔다. #84가 코드만 옮겼고(새 테스트 0), 재현 테스트는 #85
+(`EditingAndTableImprovementsTests` 8개, #84 이전 소스로 되돌려 8개 모두 빨강). #86: 셀 안 TSV가 열을 덧붙이던 것을 상류처럼
+버리게(`TsvCellFillTests`, 반증 완료). #89: #84에 빠진 #92 항목을 실측하니 저장 JSON이 다른 곳이 둘 — 고른 인라인 그림 삭제 뒤
+런 병합, 셀 블록 추출의 `RowHeights` 0(`Upstream92ParityTests`, 수정 전 3/4 빨강). 나머지 항목은 포트에 이미 있었다.
+- **교훈**: 상류 PR을 옮길 때 테스트까지 같이 옮길 것 — #84는 테스트 없이 들어가 #86·#89의 차이를 놓쳤다.
+- 같은 날 #88: #83(es 표)의 `VAlignCenter` 수정 커밋이 병합 뒤 브랜치에 푸시돼 main에 빠졌던 것을 다시 올림.
+- **남은 것**: 실기 확인 — 표 셀 안 TSV 붙여넣기, 셀 안 여러 문단 복사. 게시(1.4.0, 링크 API로 공개 표면 추가) 전 AOT 동등성 스윕.
+
 ### 상류 미측정 항목 대조 (2026-11-08, 미릴리스)
 상류 로드맵에 "포트에 있는지 미측정"으로 남았던 셋을 쟀다. 라운드35(크기·깊이)는 이미 PR #62로 대조 끝(20건 중 14건 백포트) —
 상류 기록만 늦었다. 1d 호스트 직접 편집(`NotifyDocumentChanged`·`InsertText` undo)도 이미 들어와 있다(`HostModelMutationTests`).
