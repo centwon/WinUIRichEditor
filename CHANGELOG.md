@@ -6,16 +6,24 @@ and follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### 바뀜 — 셀 안 TSV 붙여넣기는 열을 늘리지 않는다 (상류 centwon/AvaloniaRichEditor#92와 같게, 2026-11-18)
+### 고침 — 표 병합·셀 안 복사·TSV 붙여넣기·중첩 상한·저장 (상류 centwon/AvaloniaRichEditor#92와 같게, 2026-11-18)
 
-- 캐럿이 표 셀에 있을 때 TSV(엑셀 범위 등)를 붙이면 표를 채우고 모자란 행만 더한다. 표 오른쪽 끝을 넘는 열은 버린다
-  (열을 덧붙여 표 폭이 바뀌었다). 테스트 `TsvCellFillTests`, 반증 완료(되돌리면 열 3).
+- 셀 병합: 여러 문단인 셀을 합치면 문단·블록이 셀 순서대로 남는다. 병합·분할 뒤 표 체인과 측정을 무효화한다.
+- 한 셀 안 여러 문단을 골라 복사하면 문단 구조와 목록 서식이 남는다.
+- TSV(엑셀 범위 등) 붙여넣기: 행 사이 빈 줄은 행이 아니다. 캐럿이 표 셀에 있으면 그 셀 안에 표를 중첩하지 않고 기존 표를
+  채우며 모자란 행만 더한다. 표 오른쪽 끝을 넘는 열은 버린다(셀 안에 새 표가 생겼다).
+- 표 중첩은 32단까지: 그 깊이에서 표 넣기는 아무것도 하지 않고(실행 취소 단계도 없음), HTML 가져오기는 32단에서 자른다.
+- 저장: 비유한(`NaN`/`Infinity`) 숫자를 JSON에 쓰지 않아 예외 없이 왕복한다. HTML 글꼴 이름의 `;`가 다른 CSS 선언을 시작하지 못한다.
+- 저장 JSON을 상류와 같게: 고른 인라인 그림을 지우면 양옆 런이 하나로 합쳐진다(둘로 남았다). 셀 블록 복사로 뽑은 표는 높이가
+  정해진 행이 있을 때만 `RowHeights`를 쓴다(`[0,0]`이 저장됐다). 화면·편집 동작은 같다.
+- 공개 API 변화 없음. 테스트 `EditingAndTableImprovementsTests`(8)·`TsvCellFillTests`(1)·`Upstream92ParityTests`(4), 모두 반증 완료.
+  #92의 나머지(Undo/Redo 뒤 타이핑, 인라인 표 서명, Backspace 그림 삭제, 표 그리기 폭, 텍스트 끌기)는 포트에 이미 있었다.
 
 ### 추가 — 내장 스페인어(es) (상류 centwon/AvaloniaRichEditor#91과 같은 표, 2026-11-17)
 
 - `RichEditorLocalization`에 스페인어 표. 상류 기여(NobilisSolace)의 번역을 그대로 쓰고, 포트에만 있는 `FitWidth`는 "Ajustar al ancho".
   두 곳은 상류와 다르게 손봄: `CharacterFormat`은 글꼴 이름 칸(`FontFamily` "Fuente")과 겹치지 않게 "Formato de fuente",
-  `ImageLimitWarning`은 다른 언어처럼 `⚠`를 붙임.
+  `ImageLimitWarning`은 다른 언어처럼 `⚠`를 붙임. `VAlignCenter`는 상류와 같은 "En medio"(처음 들어갈 때 영어로 남았던 것을 고침).
 - 내장 표(ko·es)의 키가 영어 표와 같은지 확인하는 테스트 `BuiltInLanguage_HasSameKeysAsEnglish` — 그래서 `Tables`가 internal.
 
 ### 바뀜 — 선택·편집 규칙을 상류와 같게 (2026-11-09)
